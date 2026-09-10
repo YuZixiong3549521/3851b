@@ -1,0 +1,36 @@
+:root:has(.customer-theme), .customer-theme {
+  --background: #f7f9fb;
+  --foreground: #191c1e;
+  --card: #ffffff;
+  --card-foreground: #191c1e;
+  --popover: #ffffff;
+  --popover-foreground: #191c1e;
+  --primary: #0050cb;
+  --primary-foreground: #ffffff;
+  --secondary: #006b5c;
+  --secondary-foreground: #ffffff;
+  --muted: #f0f3f6;
+  --muted-foreground: #5d6572;
+  --accent: #e9f1ff;
+  --accent-foreground: #003fa4;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #dfe4ea;
+  --input: #d7dde5;
+  --ring: #0066ff;
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.75rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #191c1e;
+  --sidebar-primary: #0050cb;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e9f1ff;
+  --sidebar-accent-foreground: #003fa4;
+  --sidebar-border: #dfe4ea;
+  --sidebar-ring: #0066ff;
+}
+
+.customer-theme { font-family: var(--font-inter), Arial, Helvetica, sans-serif; }

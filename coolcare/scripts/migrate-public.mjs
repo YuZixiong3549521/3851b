@@ -1,0 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { offers } from '../server/public-site.mjs';
+const root=resolve(import.meta.dirname,'..');
+process.loadEnvFile(resolve(root,'.env.local'));
+const quote=s=>"'"+s.replaceAll("'","''")+"'";
+const user=process.env.DB_USER;
+if(!/^[a-zA-Z0-9_]+$/.test(user))throw new Error('Invalid DB user');
+let sql=readFileSync(resolve(root,'database/05-public-site.sql'),'utf8');
+for(const [name,base] of offers) sql+=`\nINSERT INTO service_catalog(service_name,description,base_price,estimated_duration_minutes) VALUES (${quote(name)},'AC Care website service',${base},90) ON DUPLICATE KEY UPDATE service_name=VALUES(service_name);\n`;
+for(const table of ['user_account','customer','service_address','aircon_unit','web_customer_profile','web_booking_details','web_legacy_import','booking_change_request'])sql+=`GRANT INSERT ON coolcare_service_app.${table} TO '${user}'@'%';\n`;
+sql+=`GRANT UPDATE ON coolcare_service_app.booking TO '${user}'@'%';\n`;
+const result=spawnSync('docker',['compose','--env-file','.env.local','exec','-T','database','sh','-c','exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD"'],{cwd:root,input:sql,encoding:'utf8',windowsHide:true});
+if(result.status!==0){console.error(result.stderr);process.exit(1);}console.log('Public site tables, service catalog and application grants are ready. Existing data preserved.');

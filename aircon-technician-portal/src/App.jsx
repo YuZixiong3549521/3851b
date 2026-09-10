@@ -1,0 +1,9 @@
+import {useEffect,useState} from 'react';
+import Sidebar from './components/Sidebar.jsx';
+import Header from './components/Header.jsx';
+import JobDrawer from './components/JobDrawer.jsx';
+import TechnicianDashboard from './pages/TechnicianDashboard.jsx';
+import MyJobs from './pages/MyJobs.jsx';
+import {getJobs,getPortalDate,useMock} from './services/jobService.js';
+const readPage=()=>location.hash==='#jobs'?'jobs':'dashboard';
+export default function App(){const [page,setPage]=useState(readPage);const [jobs,setJobs]=useState([]);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const [retry,setRetry]=useState(0);const [selected,setSelected]=useState(null);const today=getPortalDate();useEffect(()=>{const change=()=>{setPage(readPage());setSelected(null);};window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change);},[]);useEffect(()=>{const controller=new AbortController();setLoading(true);setError('');getJobs({signal:controller.signal}).then(data=>{if(!controller.signal.aborted)setJobs(data);}).catch(e=>{if(e.name!=='AbortError')setError(e.message);}).finally(()=>{if(!controller.signal.aborted)setLoading(false);});return()=>controller.abort();},[retry]);return <><Sidebar page={page}/><div className="workspace"><Header page={page} total={jobs.length} today={today}/><main>{loading?<div className="panel empty" role="status">Loading your jobs…</div>:error?<div className="panel empty" role="alert"><p>{error}</p><button className="detail-button" onClick={()=>setRetry(r=>r+1)}>Try again</button></div>:page==='jobs'?<MyJobs jobs={jobs} today={today} onSelect={setSelected}/>:<TechnicianDashboard jobs={jobs} today={today} onSelect={setSelected}/>}<footer className="app-footer">AirCon Maintenance{useMock?' · Demo data · 1 September 2026':''}</footer></main></div>{selected&&<JobDrawer job={selected} onClose={()=>setSelected(null)}/>}</>;}

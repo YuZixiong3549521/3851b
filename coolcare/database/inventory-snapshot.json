@@ -1,0 +1,77 @@
+{
+  "exported_at": "2026-09-08T07:00:47.610Z",
+  "note": "Inventory-only reference snapshot, not a complete database restore. No database credentials or user password hashes are included.",
+  "parts": [
+    {
+      "part_id": 1,
+      "part_name": "Aircon Filter",
+      "unit_price": "18.00",
+      "status": "Active",
+      "current_stock": 25
+    },
+    {
+      "part_id": 2,
+      "part_name": "Drain Hose",
+      "unit_price": "12.50",
+      "status": "Active",
+      "current_stock": 40
+    },
+    {
+      "part_id": 3,
+      "part_name": "Capacitor 35uF",
+      "unit_price": "35.00",
+      "status": "Active",
+      "current_stock": 12
+    },
+    {
+      "part_id": 9,
+      "part_name": "111",
+      "unit_price": "10.00",
+      "status": "Active",
+      "current_stock": 0
+    }
+  ],
+  "transactions": [
+    {
+      "transaction_id": 1,
+      "job_id": null,
+      "part_id": 1,
+      "transaction_type": "Stock In",
+      "quantity": 30,
+      "remarks": "Initial demonstration stock.",
+      "admin_user_id": 5,
+      "created_at": "2026-09-08 14:00:30"
+    },
+    {
+      "transaction_id": 2,
+      "job_id": 1,
+      "part_id": 1,
+      "transaction_type": "Stock Out",
+      "quantity": 5,
+      "remarks": "Filters used during scheduled maintenance.",
+      "admin_user_id": 6,
+      "created_at": "2026-09-08 14:00:30"
+    },
+    {
+      "transaction_id": 3,
+      "job_id": null,
+      "part_id": 2,
+      "transaction_type": "Stock In",
+      "quantity": 40,
+      "remarks": "Initial demonstration stock.",
+      "admin_user_id": 5,
+      "created_at": "2026-09-08 14:00:30"
+    },
+    {
+      "transaction_id": 4,
+      "job_id": null,
+      "part_id": 3,
+      "transaction_type": "Stock In",
+      "quantity": 12,
+      "remarks": "Initial demonstration stock.",
+      "admin_user_id": 5,
+      "created_at": "2026-09-08 14:00:30"
+    }
+  ],
+  "operations": []
+}

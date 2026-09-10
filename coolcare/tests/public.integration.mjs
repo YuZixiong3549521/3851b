@@ -1,0 +1,41 @@
+import {test,after} from 'node:test';
+import assert from 'node:assert/strict';
+import mysql from 'mysql2/promise';
+import {randomUUID} from 'node:crypto';
+import {createApp} from '../server/app.mjs';
+const pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,dateStrings:true,decimalNumbers:true});
+after(()=>pool.end());
+test('public registration, sessions, booking, retry, cross-portal reads, ownership, reschedule and cancellation',async()=>{
+ const c=await pool.getConnection();await c.beginTransaction();
+ const handle={execute:c.execute.bind(c),query:c.query.bind(c),beginTransaction:()=>c.query('SAVEPOINT public_test'),commit:()=>c.query('RELEASE SAVEPOINT public_test'),rollback:()=>c.query('ROLLBACK TO SAVEPOINT public_test'),release:()=>{}};
+ const db={execute:c.execute.bind(c),query:c.query.bind(c),getConnection:async()=>handle};
+ const server=createApp({pool:db,secret:process.env.SESSION_SECRET}).listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+ const base=`http://127.0.0.1:${server.address().port}`;let cookie='',csrf='';
+ async function req(path,method='GET',body){const r=await fetch(base+path,{method,headers:{Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];return r;}
+ try{
+  assert.equal((await req('/api/public/bookings','POST',{})).status,403);
+  csrf=(await (await req('/api/session')).json()).csrf;
+  const account={fullName:'Integration Test',email:`test-${randomUUID()}@example.test`,phone:'12345678',password:'TestPassword2026!',confirmPassword:'TestPassword2026!',propertyType:'Apartment'};
+  assert.equal((await req('/api/public/register','POST',account)).status,201);
+  assert.equal((await req('/api/public/register','POST',account)).status,409);
+  assert.equal((await req('/api/public/login','POST',{email:account.email,password:'wrong'})).status,401);
+  const login=await (await req('/api/public/login','POST',account)).json();assert.equal(login.success,true);csrf=login.csrf;
+  assert.equal((await (await req('/api/public/session')).json()).user.email,account.email);
+  assert.equal((await req('/api/parts')).status,401);
+  assert.equal((await req('/api/technician/jobs')).status,403);
+  const tomorrow=new Date(Date.now()+86400000).toISOString().slice(0,10);
+  const input={serviceType:'Air Conditioning Cleaning',numberOfUnits:2,preferredDate:tomorrow,timeWindow:'09:00 AM - 11:00 AM',serviceAddress:'123 Integration Test Street',requestId:randomUUID(),userId:1};
+  const created=await (await req('/api/public/bookings','POST',input)).json();assert.equal(created.success,true);assert.equal(created.booking.totalAmount,110);
+  const repeat=await (await req('/api/public/bookings','POST',input)).json();assert.equal(repeat.booking.id,created.booking.id);
+  const oldPortal=await (await req('/api/customer/bookings')).json();assert.equal(oldPortal.bookings.length,1);assert.equal(oldPortal.bookings[0].bookingId,created.booking.id);
+  assert.equal((await req('/api/public/bookings/user/1')).status,403);
+  assert.equal((await req('/api/public/bookings/1/status','PATCH',{status:'Cancelled'})).status,404);
+  assert.equal((await req(`/api/public/bookings/${created.booking.id}/reschedule`,'PATCH',{preferredDate:'2027-02-30',timeWindow:input.timeWindow})).status,400);
+  assert.equal((await req(`/api/public/bookings/${created.booking.id}/reschedule`,'PATCH',{preferredDate:tomorrow,timeWindow:'02:00 PM - 04:00 PM'})).status,200);
+  assert.equal((await req(`/api/public/bookings/${created.booking.id}/status`,'PATCH',{status:'Cancelled'})).status,200);
+  const list=await (await req(`/api/public/bookings/user/${login.user.id}`)).json();assert.equal(list.bookings.length,1);assert.equal(list.bookings[0].booking_status,'Cancelled');
+  assert.equal((await req(`/api/public/bookings/${created.booking.id}/reschedule`,'PATCH',{preferredDate:tomorrow,timeWindow:input.timeWindow})).status,409);
+  assert.equal((await req('/api/public/logout','POST',{})).status,200);
+  assert.equal((await req('/api/customer/bookings')).status,401);
+ }finally{await new Promise(r=>server.close(r));await c.rollback();c.release();}
+});

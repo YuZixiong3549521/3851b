@@ -1,0 +1,12 @@
+.vs/
+**/node_modules/
+**/dist/
+**/.wrangler/
+**/.next/
+**/.local/
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+**/*.tsbuildinfo
+coolcare/public/technician/
