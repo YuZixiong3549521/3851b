@@ -1,3 +1,8 @@
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+
+import { SiteIcon } from '@/components/ui/site-icon';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { apiFetch as fetch } from '../api';
 import React, { useState, useEffect } from 'react';
 import { PageRoute, User } from '../types';
@@ -119,16 +124,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       <div className="w-full max-w-[460px] mx-auto relative z-10">
         {/* Working "Back to Home" button */}
         <div className="mb-5 flex items-center justify-between gap-3">
-          <button
+          <Button variant="ghost"
             type="button"
             onClick={handleBackToHome}
             className="inline-flex items-center gap-1.5 text-ac-primary hover:text-ac-on-primary-fixed-variant text-sm font-semibold transition-colors group cursor-pointer bg-ac-surface/90 backdrop-blur-sm px-4 py-2 rounded-full border border-ac-outline-variant/40 shadow-xs hover:shadow-sm"
           >
-            <span className="material-symbols-outlined text-[18px] group-hover:-translate-x-1 transition-transform">
+            <SiteIcon className=" text-[18px] group-hover:-translate-x-1 transition-transform">
               arrow_back
-            </span>
+            </SiteIcon>
             Back to Home
-          </button>
+          </Button>
           <span className="text-xs text-ac-on-surface-variant font-medium whitespace-nowrap">
             AC Care Secure Access
           </span>
@@ -137,9 +142,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         {/* Notice Banner (e.g. redirected from booking or registration) */}
         {initialNotice && (
           <div className="mb-4 p-3.5 rounded-xl bg-ac-primary-fixed text-ac-on-primary-fixed text-xs sm:text-sm font-medium flex items-start gap-2.5 border border-ac-primary-fixed-dim/60 shadow-xs animate-in fade-in">
-            <span className="material-symbols-outlined text-ac-primary text-[20px] shrink-0 mt-0.5">
+            <SiteIcon className=" text-ac-primary text-[20px] shrink-0 mt-0.5">
               info
-            </span>
+            </SiteIcon>
             <span className="flex-grow">{initialNotice}</span>
           </div>
         )}
@@ -148,14 +153,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         <div className="bg-ac-surface rounded-2xl shadow-md border border-ac-outline-variant/40 p-6 sm:p-8 backdrop-blur-sm">
           {/* Brand header */}
           <div className="text-center mb-6">
-            <button
+            <Button variant="ghost"
               type="button"
               onClick={handleBackToHome}
               className="inline-flex items-center gap-1.5 text-2xl font-bold text-ac-primary mb-1 cursor-pointer border-none bg-transparent"
             >
-              <span className="material-symbols-outlined text-ac-primary text-[32px]">ac_unit</span>
+              <SiteIcon className=" text-ac-primary text-[32px]">ac_unit</SiteIcon>
               AC Care
-            </button>
+            </Button>
             <h1 className="text-2xl font-bold text-ac-on-background mt-1">
               Welcome Back
             </h1>
@@ -167,7 +172,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           {/* Error Alert */}
           {errorMessage && (
             <div className="mb-4 p-3.5 rounded-lg bg-ac-error-container text-ac-on-error-container text-sm flex items-start gap-2 animate-in fade-in">
-              <span className="material-symbols-outlined text-[20px] shrink-0 mt-0.5 text-ac-error">error</span>
+              <SiteIcon className=" text-[20px] shrink-0 mt-0.5 text-ac-error">error</SiteIcon>
               <span className="flex-grow">{errorMessage}</span>
             </div>
           )}
@@ -179,10 +184,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 Email Address
               </label>
               <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
+                <SiteIcon className=" absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
                   mail
-                </span>
-                <input
+                </SiteIcon>
+                <Input
                   id="login-email"
                   type="email"
                   required
@@ -199,19 +204,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <label className="block text-sm font-medium text-ac-on-surface" htmlFor="login-password">
                   Password
                 </label>
-                <button
+                <Button variant="ghost"
                   type="button"
                   onClick={() => setShowForgotModal(true)}
                   className="text-xs text-ac-primary hover:underline bg-transparent border-none p-0 cursor-pointer"
                 >
                   Forgot password?
-                </button>
+                </Button>
               </div>
               <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
+                <SiteIcon className=" absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
                   lock
-                </span>
-                <input
+                </SiteIcon>
+                <Input
                   id="login-password"
                   type={showPassword ? 'text' : 'password'}
                   required
@@ -220,22 +225,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-10 pr-10 py-2.5 rounded-lg border border-ac-outline-variant bg-ac-surface-container-lowest text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20 text-sm transition-all"
                 />
-                <button
+                <Button variant="ghost"
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-ac-outline hover:text-ac-on-surface bg-transparent border-none p-0 cursor-pointer flex items-center"
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  <span className="material-symbols-outlined text-[20px]">
+                  <SiteIcon className=" text-[20px]">
                     {showPassword ? 'visibility_off' : 'visibility'}
-                  </span>
-                </button>
+                  </SiteIcon>
+                </Button>
               </div>
             </div>
 
             <div className="flex items-center justify-between pt-1">
               <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
+                <Input
                   type="checkbox"
                   checked={rememberMe}
                   onChange={(e) => setRememberMe(e.target.checked)}
@@ -245,7 +250,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </label>
             </div>
 
-            <button
+            <Button variant="ghost"
               type="submit"
               disabled={isLoading}
               className="w-full h-12 bg-ac-primary text-ac-on-primary font-semibold rounded-lg shadow-sm hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer border-none disabled:opacity-50 mt-2"
@@ -255,10 +260,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               ) : (
                 <>
                   Sign In
-                  <span className="material-symbols-outlined text-[18px]">login</span>
+                  <SiteIcon className=" text-[18px]">login</SiteIcon>
                 </>
               )}
-            </button>
+            </Button>
           </form>
 
           {/* Quick Demo Fill Options */}
@@ -267,20 +272,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               Demo Fast Sign-In:
             </p>
             <div className="grid grid-cols-2 gap-2">
-              <button
+              <Button variant="ghost"
                 type="button"
                 onClick={() => handleQuickLogin('Alex Taylor', 'alice.tan@coolcare.demo')}
                 className="py-2 px-2 bg-ac-surface-container-low hover:bg-ac-primary-fixed/40 text-ac-primary border border-ac-outline-variant/40 rounded-lg text-xs font-semibold transition-colors text-center cursor-pointer"
               >
                 Alice Tan (Customer)
-              </button>
-              <button
+              </Button>
+              <Button variant="ghost"
                 type="button"
                 onClick={() => handleQuickLogin('Jamie Lee', 'chris.lim@coolcare.demo')}
                 className="py-2 px-2 bg-ac-surface-container-low hover:bg-ac-primary-fixed/40 text-ac-primary border border-ac-outline-variant/40 rounded-lg text-xs font-semibold transition-colors text-center cursor-pointer"
               >
                 Chris Lim (Technician)
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -296,7 +301,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
           {/* Social Buttons */}
           <div className="grid grid-cols-2 gap-3">
-            <button
+            <Button variant="ghost"
               type="button"
               onClick={() => handleQuickLogin('Google User', 'user@gmail.com')}
               className="flex items-center justify-center gap-2 py-2.5 px-3 border border-ac-outline-variant rounded-lg bg-ac-surface-container-lowest hover:bg-ac-surface-container-low text-ac-on-surface text-xs font-medium transition-colors cursor-pointer"
@@ -320,8 +325,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 />
               </svg>
               Google
-            </button>
-            <button
+            </Button>
+            <Button variant="ghost"
               type="button"
               onClick={() => handleQuickLogin('Apple User', 'user@icloud.com')}
               className="flex items-center justify-center gap-2 py-2.5 px-3 border border-ac-outline-variant rounded-lg bg-ac-surface-container-lowest hover:bg-ac-surface-container-low text-ac-on-surface text-xs font-medium transition-colors cursor-pointer"
@@ -330,20 +335,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.37c.63-.77 1.06-1.85.94-2.93-.91.04-2.02.61-2.67 1.37-.58.67-1.1 1.77-.96 2.82 1.02.08 2.06-.49 2.69-1.26z" />
               </svg>
               Apple
-            </button>
+            </Button>
           </div>
 
           {/* Link to Registration */}
           <div className="mt-6 text-center pt-4 border-t border-ac-outline-variant/30">
             <p className="text-sm text-ac-on-surface-variant">
               Don't have an account yet?{' '}
-              <button
+              <Button variant="ghost"
                 type="button"
                 onClick={() => onNavigate('register')}
                 className="text-ac-primary font-bold hover:underline bg-transparent border-none p-0 cursor-pointer inline"
               >
                 Create an account
-              </button>
+              </Button>
             </p>
           </div>
         </div>
@@ -351,16 +356,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         {/* Security and reassurance badge */}
         <div className="mt-6 flex items-center justify-center gap-4 text-xs text-ac-on-surface-variant">
           <span className="flex items-center gap-1">
-            <span className="material-symbols-outlined text-[16px] text-ac-tertiary-container">
+            <SiteIcon className=" text-[16px] text-ac-tertiary-container">
               lock
-            </span>
+            </SiteIcon>
             256-bit SSL Encrypted
           </span>
           <span>•</span>
           <span className="flex items-center gap-1">
-            <span className="material-symbols-outlined text-[16px] text-ac-primary">
+            <SiteIcon className=" text-[16px] text-ac-primary">
               verified_user
-            </span>
+            </SiteIcon>
             Official AC Care Portal
           </span>
         </div>
@@ -368,22 +373,20 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
       {/* Forgot Password Modal */}
       {showForgotModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-ac-surface w-full max-w-sm rounded-2xl shadow-xl border border-ac-outline-variant p-6 relative">
-            <button
+        <Dialog open onOpenChange={open=>{if(!open){setShowForgotModal(false);setForgotSubmitted(false);}}}>
+          <DialogContent showCloseButton={false} className="ac-site bg-ac-surface rounded-2xl shadow-xl border border-ac-outline-variant p-6" aria-describedby={undefined}>
+            <Button variant="ghost"
               type="button"
               onClick={() => {
                 setShowForgotModal(false);
                 setForgotSubmitted(false);
               }}
-              className="absolute top-4 right-4 text-ac-outline hover:text-ac-on-surface bg-transparent border-none cursor-pointer"
+              aria-label="Close password recovery" className="absolute top-4 right-4 text-ac-outline hover:text-ac-on-surface bg-transparent border-none cursor-pointer"
             >
-              <span className="material-symbols-outlined">close</span>
-            </button>
+              <SiteIcon className="">close</SiteIcon>
+            </Button>
 
-            <h3 className="text-lg font-bold text-ac-on-background mb-1">
-              Reset Password
-            </h3>
+            <DialogTitle className="text-lg font-bold text-ac-on-background mb-1">Reset Password</DialogTitle>
             <p className="text-xs text-ac-on-surface-variant mb-4">
               Email password recovery is not configured for this local installation. Contact your administrator.
             </p>
@@ -391,12 +394,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             {forgotSubmitted ? (
               <div className="text-center py-4 space-y-3">
                 <div className="w-12 h-12 rounded-full bg-ac-tertiary-fixed text-ac-tertiary-container mx-auto flex items-center justify-center">
-                  <span className="material-symbols-outlined text-[28px]">mark_email_read</span>
+                  <SiteIcon className=" text-[28px]">mark_email_read</SiteIcon>
                 </div>
                 <p className="text-sm font-medium text-ac-on-background">
                   No email was sent. Contact your administrator for <span className="font-bold text-ac-primary">{forgotEmail}</span>
                 </p>
-                <button
+                <Button variant="ghost"
                   type="button"
                   onClick={() => {
                     setShowForgotModal(false);
@@ -405,7 +408,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   className="w-full py-2.5 bg-ac-primary text-ac-on-primary rounded-lg text-sm font-semibold cursor-pointer border-none"
                 >
                   Return to Sign In
-                </button>
+                </Button>
               </div>
             ) : (
               <form onSubmit={handleForgotPasswordSubmit} className="space-y-4">
@@ -413,7 +416,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   <label className="block text-xs font-medium text-ac-on-surface mb-1">
                     Email Address
                   </label>
-                  <input
+                  <Input
                     type="email"
                     required
                     placeholder="name@example.com"
@@ -423,26 +426,25 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   />
                 </div>
                 <div className="flex gap-2">
-                  <button
+                  <Button variant="ghost"
                     type="button"
                     onClick={() => setShowForgotModal(false)}
                     className="flex-1 py-2 border border-ac-outline-variant rounded-lg text-sm text-ac-on-surface bg-transparent cursor-pointer"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button variant="ghost"
                     type="submit"
                     className="flex-1 py-2 bg-ac-primary text-ac-on-primary rounded-lg text-sm font-semibold cursor-pointer border-none"
                   >
                     Send Link
-                  </button>
+                  </Button>
                 </div>
               </form>
             )}
-          </div>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );
 };
-

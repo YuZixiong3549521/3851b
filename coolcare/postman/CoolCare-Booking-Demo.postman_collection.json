@@ -1,0 +1,224 @@
+{
+  "info": {
+    "name": "CoolCare - Create and Verify a Real MySQL Booking",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Run requests 01–06 in order. Uses local demo data and writes one real booking. Keep Postman cookies enabled. Repeat 03 with the same requestId to reuse the same booking; rerun 02 for a new demo. No database credentials are included."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001",
+      "type": "string"
+    },
+    {
+      "key": "email",
+      "value": "alice.tan@coolcare.demo",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "CoolCareDemo2026!",
+      "type": "string"
+    },
+    {
+      "key": "csrf",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "bookingId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "requestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "serviceDate",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Get session and CSRF token",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP success',()=>pm.expect(pm.response.code).to.be.within(200,299));",
+              "pm.collectionVariables.set('csrf',pm.response.json().csrf);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/session"
+      }
+    },
+    {
+      "name": "02 - Login as demo customer",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP success',()=>pm.expect(pm.response.code).to.be.within(200,299));",
+              "const d=pm.response.json(); pm.collectionVariables.set('csrf',d.csrf); pm.collectionVariables.set('userId',String(d.user.id)); pm.collectionVariables.set('requestId',pm.variables.replaceIn('{{$guid}}')); const date=new Date();date.setDate(date.getDate()+2);pm.collectionVariables.set('serviceDate',date.toISOString().slice(0,10));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-CSRF-Token",
+            "value": "{{csrf}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/public/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "03 - Create real booking in MySQL",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP success',()=>pm.expect(pm.response.code).to.be.within(200,299));",
+              "const b=pm.response.json().booking;pm.collectionVariables.set('bookingId',String(b.id));pm.test('Booking saved as Submitted',()=>pm.expect(b.status).to.eql('Submitted'));console.log('Saved booking ID:',b.id);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-CSRF-Token",
+            "value": "{{csrf}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/public/bookings",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"serviceType\": \"Air Conditioning Cleaning\",\n  \"servicePackage\": \"Classroom demonstration\",\n  \"numberOfUnits\": 2,\n  \"preferredDate\": \"{{serviceDate}}\",\n  \"timeWindow\": \"09:00 AM - 11:00 AM\",\n  \"serviceAddress\": \"Classroom demo address - no service required\",\n  \"specialNotes\": \"POSTMAN-DEMO {{requestId}} - classroom test only\",\n  \"requestId\": \"{{requestId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "04 - Read booking from database through API",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP success',()=>pm.expect(pm.response.code).to.be.within(200,299));",
+              "const b=pm.response.json().bookings.find(b=>String(b.id)===pm.collectionVariables.get('bookingId'));pm.test('Created booking exists in a fresh GET',()=>{pm.expect(b).to.exist;pm.expect(b.special_notes).to.include(pm.collectionVariables.get('requestId'));});console.log('Persisted booking:',b);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/public/bookings/user/{{userId}}"
+      }
+    },
+    {
+      "name": "05 - Verify same booking in customer portal API",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP success',()=>pm.expect(pm.response.code).to.be.within(200,299));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/customer/bookings"
+      }
+    },
+    {
+      "name": "06 - Repeat creation to verify no duplicate",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP success',()=>pm.expect(pm.response.code).to.be.within(200,299));",
+              "pm.test('Same request returns same booking ID',()=>pm.expect(String(pm.response.json().booking.id)).to.eql(pm.collectionVariables.get('bookingId')));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-CSRF-Token",
+            "value": "{{csrf}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/public/bookings",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"serviceType\": \"Air Conditioning Cleaning\",\n  \"servicePackage\": \"Classroom demonstration\",\n  \"numberOfUnits\": 2,\n  \"preferredDate\": \"{{serviceDate}}\",\n  \"timeWindow\": \"09:00 AM - 11:00 AM\",\n  \"serviceAddress\": \"Classroom demo address - no service required\",\n  \"specialNotes\": \"POSTMAN-DEMO {{requestId}} - classroom test only\",\n  \"requestId\": \"{{requestId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

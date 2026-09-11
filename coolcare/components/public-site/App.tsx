@@ -1,4 +1,7 @@
 'use client';
+import { SiteIcon } from '@/components/ui/site-icon';
+
+import { Button } from '@/components/ui/button';
 import { apiFetch } from './api';
 /**
  * @license
@@ -321,25 +324,25 @@ export default function App() {
       {toastMessage && (
         <div className="fixed top-24 right-4 sm:right-6 z-50 bg-ac-primary text-ac-on-primary px-4 py-3 rounded-xl shadow-xl flex items-center gap-3 text-sm font-medium animate-in slide-in-from-top-4 duration-300 max-w-md">
 
-          <span className="material-symbols-outlined text-ac-tertiary-fixed text-[22px] shrink-0">
+          <SiteIcon className=" text-ac-tertiary-fixed text-[22px] shrink-0">
             info
-          </span>
+          </SiteIcon>
 
           <span className="flex-grow">
             {toastMessage}
           </span>
 
-          <button
+          <Button variant="ghost"
             onClick={() =>
               setToastMessage(null)
             }
             className="text-ac-on-primary/80 hover:text-white bg-transparent border-none cursor-pointer p-1 shrink-0"
             aria-label="Close notification"
           >
-            <span className="material-symbols-outlined text-[18px]">
+            <SiteIcon className=" text-[18px]">
               close
-            </span>
-          </button>
+            </SiteIcon>
+          </Button>
         </div>
       )}
 

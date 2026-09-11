@@ -1,0 +1,11 @@
+$kind: collection
+description: Run requests 01–06 in order. Uses local demo data and writes one real booking. Keep Postman cookies enabled. Repeat 03 with the same requestId to reuse the same booking; rerun 02 for a new demo. No database credentials are included.
+variables:
+  baseUrl: http://localhost:3001
+  email: alice.tan@coolcare.demo
+  password: CoolCareDemo2026!
+  csrf: ""
+  userId: ""
+  bookingId: ""
+  requestId: ""
+  serviceDate: ""

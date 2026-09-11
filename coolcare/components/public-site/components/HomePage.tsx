@@ -1,3 +1,6 @@
+
+import { SiteIcon } from '@/components/ui/site-icon';
+import { Button } from '@/components/ui/button';
 import React, { useState } from 'react';
 import { PageRoute, ProblemItem } from '../types';
 
@@ -76,7 +79,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             {/* Hero Text */}
             <div className="flex flex-col gap-md max-w-2xl">
               <div className="inline-flex items-center gap-xs bg-ac-surface-container text-ac-primary font-label-sm text-label-sm px-sm py-xs rounded-full w-fit mb-xs">
-                <span className="material-symbols-outlined text-[16px]">verified</span>
+                <SiteIcon className=" text-[16px]">verified</SiteIcon>
                 <span>Certified Professionals</span>
               </div>
               <h1 className="font-display-lg-mobile md:font-display-lg text-display-lg-mobile md:text-display-lg text-ac-on-background font-bold tracking-tight">
@@ -86,13 +89,13 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
                 Professional air conditioning cleaning, maintenance and repair services designed to keep your home comfortable all year round. Fast, reliable, and transparent.
               </p>
               <div className="flex flex-col sm:flex-row gap-sm mt-sm">
-                <button
+                <Button variant="ghost"
                   onClick={() => onOpenBooking()}
                   className="inline-flex items-center justify-center bg-ac-primary text-ac-on-primary font-label-md text-label-md h-12 px-md rounded-full shadow-sm hover:shadow-md hover:bg-ac-on-primary-fixed transition-all active:scale-95 cursor-pointer border-none"
                 >
                   Book a Service
-                  <span className="material-symbols-outlined ml-xs text-[20px]">arrow_forward</span>
-                </button>
+                  <SiteIcon className=" ml-xs text-[20px]">arrow_forward</SiteIcon>
+                </Button>
                 <a
                   href="#services"
                   className="inline-flex items-center justify-center bg-transparent text-ac-primary border-2 border-ac-primary font-label-md text-label-md h-12 px-md rounded-full hover:bg-ac-primary-fixed/20 transition-all active:scale-95 text-decoration-none cursor-pointer"
@@ -136,22 +139,22 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               <div className="absolute bottom-md left-md right-md flex gap-sm justify-between items-end">
                 <div className="bg-ac-surface/90 backdrop-blur-sm p-sm rounded-xl shadow-md border border-ac-outline-variant/20 max-w-[200px]">
                   <div className="flex items-center gap-xs text-ac-tertiary-container mb-xs">
-                    <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                    <SiteIcon className=" text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
                       star
-                    </span>
+                    </SiteIcon>
                     <span className="font-label-md text-label-md font-bold">4.9/5 Rating</span>
                   </div>
                   <p className="font-label-sm text-label-sm text-ac-on-surface-variant leading-tight">
                     Consistently highly rated by our community.
                   </p>
                 </div>
-                <button
+                <Button variant="ghost"
                   onClick={() => onOpenBooking('Customer Support / Diagnostic Inquiry')}
                   className="bg-ac-primary-container text-ac-on-primary-container p-sm rounded-full shadow-md flex items-center justify-center w-14 h-14 cursor-pointer border-none hover:scale-105 transition-transform"
                   title="Contact Support"
                 >
-                  <span className="material-symbols-outlined text-[28px]">support_agent</span>
-                </button>
+                  <SiteIcon className=" text-[28px]">support_agent</SiteIcon>
+                </Button>
               </div>
             </div>
           </div>
@@ -171,7 +174,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             {/* Feature 1 */}
             <div className="bg-ac-surface p-md rounded-xl shadow-sm border border-ac-outline-variant/30 hover:shadow-md transition-shadow group flex flex-col h-full">
               <div className="w-12 h-12 rounded-full bg-ac-primary-fixed flex items-center justify-center text-ac-primary mb-md group-hover:scale-110 transition-transform">
-                <span className="material-symbols-outlined text-[24px]">touch_app</span>
+                <SiteIcon className=" text-[24px]">touch_app</SiteIcon>
               </div>
               <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-xs font-semibold">Simple Booking</h3>
               <p className="font-body-md text-body-md text-ac-on-surface-variant flex-grow">
@@ -181,7 +184,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             {/* Feature 2 */}
             <div className="bg-ac-surface p-md rounded-xl shadow-sm border border-ac-outline-variant/30 hover:shadow-md transition-shadow group flex flex-col h-full">
               <div className="w-12 h-12 rounded-full bg-ac-tertiary-fixed flex items-center justify-center text-ac-tertiary-container mb-md group-hover:scale-110 transition-transform">
-                <span className="material-symbols-outlined text-[24px]">engineering</span>
+                <SiteIcon className=" text-[24px]">engineering</SiteIcon>
               </div>
               <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-xs font-semibold">Professional Service</h3>
               <p className="font-body-md text-body-md text-ac-on-surface-variant flex-grow">
@@ -191,7 +194,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             {/* Feature 3 */}
             <div className="bg-ac-surface p-md rounded-xl shadow-sm border border-ac-outline-variant/30 hover:shadow-md transition-shadow group flex flex-col h-full">
               <div className="w-12 h-12 rounded-full bg-ac-secondary-fixed flex items-center justify-center text-ac-on-secondary-fixed-variant mb-md group-hover:scale-110 transition-transform">
-                <span className="material-symbols-outlined text-[24px]">description</span>
+                <SiteIcon className=" text-[24px]">description</SiteIcon>
               </div>
               <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-xs font-semibold">Digital Service Records</h3>
               <p className="font-body-md text-body-md text-ac-on-surface-variant flex-grow">
@@ -213,12 +216,12 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
                 From routine chemical washes to complex compressor repairs, we provide full-spectrum care for your cooling systems.
               </p>
             </div>
-            <button
+            <Button variant="ghost"
               onClick={() => onOpenBooking()}
               className="text-ac-primary font-label-md text-label-md hover:underline inline-flex items-center cursor-pointer border-none bg-transparent p-0"
             >
-              View All Services <span className="material-symbols-outlined ml-xs text-[18px]">arrow_forward</span>
-            </button>
+              View All Services <SiteIcon className=" ml-xs text-[18px]">arrow_forward</SiteIcon>
+            </Button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-md">
             {/* Service 1 */}
@@ -236,21 +239,21 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-sm font-semibold">Air Conditioning Cleaning</h3>
               <ul className="font-body-md text-body-md text-ac-on-surface-variant space-y-2 mb-md flex-grow">
                 <li className="flex items-start gap-xs">
-                  <span className="material-symbols-outlined text-ac-primary text-[20px]">check_circle</span> General Cleaning
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> General Cleaning
                 </li>
                 <li className="flex items-start gap-xs">
-                  <span className="material-symbols-outlined text-ac-primary text-[20px]">check_circle</span> Chemical Overhaul
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Chemical Overhaul
                 </li>
                 <li className="flex items-start gap-xs">
-                  <span className="material-symbols-outlined text-ac-primary text-[20px]">check_circle</span> Filter Replacement
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Filter Replacement
                 </li>
               </ul>
-              <button
+              <Button variant="ghost"
                 onClick={() => onOpenBooking('Air Conditioning Cleaning')}
                 className="w-full inline-flex items-center justify-center bg-ac-primary-fixed text-ac-on-primary-fixed font-label-md text-label-md h-12 rounded-lg hover:bg-ac-primary hover:text-ac-on-primary transition-colors cursor-pointer border-none"
               >
                 Book Cleaning
-              </button>
+              </Button>
             </div>
 
             {/* Service 2 */}
@@ -265,21 +268,21 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-sm font-semibold">Regular Maintenance</h3>
               <ul className="font-body-md text-body-md text-ac-on-surface-variant space-y-2 mb-md flex-grow">
                 <li className="flex items-start gap-xs">
-                  <span className="material-symbols-outlined text-ac-primary text-[20px]">check_circle</span> Bi-Annual Inspections
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Bi-Annual Inspections
                 </li>
                 <li className="flex items-start gap-xs">
-                  <span className="material-symbols-outlined text-ac-primary text-[20px]">check_circle</span> Gas Top-Up (Freon)
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Gas Top-Up (Freon)
                 </li>
                 <li className="flex items-start gap-xs">
-                  <span className="material-symbols-outlined text-ac-primary text-[20px]">check_circle</span> Performance Diagnostics
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Performance Diagnostics
                 </li>
               </ul>
-              <button
+              <Button variant="ghost"
                 onClick={() => onOpenBooking('Regular Maintenance')}
                 className="w-full inline-flex items-center justify-center bg-ac-primary-fixed text-ac-on-primary-fixed font-label-md text-label-md h-12 rounded-lg hover:bg-ac-primary hover:text-ac-on-primary transition-colors cursor-pointer border-none"
               >
                 Book Maintenance
-              </button>
+              </Button>
             </div>
 
             {/* Service 3 */}
@@ -294,21 +297,21 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-sm font-semibold">Air Conditioning Repair</h3>
               <ul className="font-body-md text-body-md text-ac-on-surface-variant space-y-2 mb-md flex-grow">
                 <li className="flex items-start gap-xs">
-                  <span className="material-symbols-outlined text-ac-primary text-[20px]">check_circle</span> Water Leak Fixes
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Water Leak Fixes
                 </li>
                 <li className="flex items-start gap-xs">
-                  <span className="material-symbols-outlined text-ac-primary text-[20px]">check_circle</span> Compressor Replacement
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Compressor Replacement
                 </li>
                 <li className="flex items-start gap-xs">
-                  <span className="material-symbols-outlined text-ac-primary text-[20px]">check_circle</span> Circuit Board Repairs
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Circuit Board Repairs
                 </li>
               </ul>
-              <button
+              <Button variant="ghost"
                 onClick={() => onOpenBooking('Air Conditioning Repair')}
                 className="w-full inline-flex items-center justify-center bg-ac-primary-fixed text-ac-on-primary-fixed font-label-md text-label-md h-12 rounded-lg hover:bg-ac-primary hover:text-ac-on-primary transition-colors cursor-pointer border-none"
               >
                 Book Repair
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -343,7 +346,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
                     <div
                       className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center mb-3.5 shrink-0 transition-transform duration-200 group-hover:scale-105 ${problem.colorClass}`}
                     >
-                      <span className="material-symbols-outlined text-[26px] sm:text-[28px]">{problem.icon}</span>
+                      <SiteIcon className=" text-[26px] sm:text-[28px]">{problem.icon}</SiteIcon>
                     </div>
                     <h3 className="font-bold text-sm sm:text-base text-ac-on-background mb-1.5 leading-snug">
                       {problem.name}
@@ -355,7 +358,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
 
                   {isSelected && (
                     <div className="mt-3 inline-flex items-center gap-1 text-[11px] font-bold text-ac-primary bg-ac-primary/10 px-2.5 py-0.5 rounded-full">
-                      <span className="material-symbols-outlined text-[14px]">check</span>
+                      <SiteIcon className=" text-[14px]">check</SiteIcon>
                       <span>Selected</span>
                     </div>
                   )}
@@ -365,14 +368,14 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
           </div>
 
           <div className="mt-10 sm:mt-12 text-center">
-            <button
+            <Button variant="ghost"
               type="button"
               onClick={() => onOpenBooking(selectedIssue ? `Inspection for: ${selectedIssue}` : 'General Inspection / Diagnostic')}
               className="inline-flex items-center justify-center gap-2 bg-ac-primary hover:bg-ac-primary/90 active:scale-[0.98] text-ac-on-primary font-semibold text-sm sm:text-base h-12 px-8 rounded-xl shadow-sm hover:shadow-md transition-all cursor-pointer border-none whitespace-nowrap"
             >
-              <span className="material-symbols-outlined text-[20px]">search</span>
+              <SiteIcon className=" text-[20px]">search</SiteIcon>
               <span>Request an Inspection</span>
-            </button>
+            </Button>
           </div>
         </div>
       </section>
@@ -397,7 +400,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               {/* Step 1 */}
               <div className="flex flex-col items-center text-center group">
                 <div className="w-20 h-20 rounded-full bg-ac-surface border-2 border-ac-primary/30 flex items-center justify-center text-ac-primary shadow-xs group-hover:border-ac-primary group-hover:shadow-md transition-all z-10 shrink-0 mb-3">
-                  <span className="material-symbols-outlined text-[32px]">touch_app</span>
+                  <SiteIcon className=" text-[32px]">touch_app</SiteIcon>
                 </div>
                 <span className="inline-block text-[11px] font-bold text-ac-primary bg-ac-primary/10 px-2.5 py-0.5 rounded-full mb-2">
                   01
@@ -413,7 +416,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               {/* Step 2 */}
               <div className="flex flex-col items-center text-center group">
                 <div className="w-20 h-20 rounded-full bg-ac-surface border-2 border-ac-primary/30 flex items-center justify-center text-ac-primary shadow-xs group-hover:border-ac-primary group-hover:shadow-md transition-all z-10 shrink-0 mb-3">
-                  <span className="material-symbols-outlined text-[32px]">calendar_month</span>
+                  <SiteIcon className=" text-[32px]">calendar_month</SiteIcon>
                 </div>
                 <span className="inline-block text-[11px] font-bold text-ac-primary bg-ac-primary/10 px-2.5 py-0.5 rounded-full mb-2">
                   02
@@ -429,7 +432,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               {/* Step 3 */}
               <div className="flex flex-col items-center text-center group">
                 <div className="w-20 h-20 rounded-full bg-ac-surface border-2 border-ac-primary/30 flex items-center justify-center text-ac-primary shadow-xs group-hover:border-ac-primary group-hover:shadow-md transition-all z-10 shrink-0 mb-3">
-                  <span className="material-symbols-outlined text-[32px]">person_check</span>
+                  <SiteIcon className=" text-[32px]">person_check</SiteIcon>
                 </div>
                 <span className="inline-block text-[11px] font-bold text-ac-primary bg-ac-primary/10 px-2.5 py-0.5 rounded-full mb-2">
                   03
@@ -445,7 +448,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               {/* Step 4 */}
               <div className="flex flex-col items-center text-center group">
                 <div className="w-20 h-20 rounded-full bg-ac-surface border-2 border-ac-primary/30 flex items-center justify-center text-ac-primary shadow-xs group-hover:border-ac-primary group-hover:shadow-md transition-all z-10 shrink-0 mb-3">
-                  <span className="material-symbols-outlined text-[32px]">build</span>
+                  <SiteIcon className=" text-[32px]">build</SiteIcon>
                 </div>
                 <span className="inline-block text-[11px] font-bold text-ac-primary bg-ac-primary/10 px-2.5 py-0.5 rounded-full mb-2">
                   04
@@ -461,7 +464,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               {/* Step 5 */}
               <div className="flex flex-col items-center text-center group">
                 <div className="w-20 h-20 rounded-full bg-ac-surface border-2 border-emerald-400 flex items-center justify-center text-emerald-600 shadow-xs group-hover:border-emerald-500 group-hover:shadow-md transition-all z-10 shrink-0 mb-3">
-                  <span className="material-symbols-outlined text-[32px]">task_alt</span>
+                  <SiteIcon className=" text-[32px]">task_alt</SiteIcon>
                 </div>
                 <span className="inline-block text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full mb-2">
                   05
@@ -501,12 +504,12 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               <p className="font-body-md text-body-md opacity-90 mb-lg relative z-10 flex-grow">
                 Welcome to AC Care! Get a significant discount on your first general cleaning service.
               </p>
-              <button
+              <Button variant="ghost"
                 onClick={() => onOpenBooking('20% Off First Cleaning Promo')}
                 className="inline-flex items-center justify-center bg-ac-on-primary text-ac-primary font-label-md text-label-md h-10 px-md rounded-lg w-fit hover:bg-ac-surface transition-colors relative z-10 cursor-pointer border-none font-semibold"
               >
                 Claim Offer
-              </button>
+              </Button>
             </div>
             {/* Promo 2 */}
             <div className="min-w-[300px] md:min-w-[350px] snap-start bg-ac-surface-container-high border border-ac-outline-variant/50 p-md rounded-2xl shadow-sm flex flex-col">
@@ -517,12 +520,12 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               <p className="font-body-md text-body-md text-ac-on-surface-variant mb-lg flex-grow">
                 Have multiple units? Clean 3 units in one visit and save $50 on the total bill.
               </p>
-              <button
+              <Button variant="ghost"
                 onClick={() => onOpenBooking('3-Unit Bundle Deal ($50 Off)')}
                 className="inline-flex items-center justify-center bg-ac-primary text-ac-on-primary font-label-md text-label-md h-10 px-md rounded-lg w-fit hover:bg-ac-primary-fixed hover:text-ac-on-primary-fixed transition-colors cursor-pointer border-none"
               >
                 Book Bundle
-              </button>
+              </Button>
             </div>
             {/* Promo 3 */}
             <div className="min-w-[300px] md:min-w-[350px] snap-start bg-ac-surface-container-high border border-ac-outline-variant/50 p-md rounded-2xl shadow-sm flex flex-col">
@@ -533,12 +536,12 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               <p className="font-body-md text-body-md text-ac-on-surface-variant mb-lg flex-grow">
                 Sign up for a 1-year maintenance plan (2 visits) and receive a 10% discount.
               </p>
-              <button
+              <Button variant="ghost"
                 onClick={() => onOpenBooking('Annual Maintenance Contract (10% Off)')}
                 className="inline-flex items-center justify-center bg-ac-primary text-ac-on-primary font-label-md text-label-md h-10 px-md rounded-lg w-fit hover:bg-ac-primary-fixed hover:text-ac-on-primary-fixed transition-colors cursor-pointer border-none"
               >
                 View Plans
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -558,9 +561,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             <div className="bg-ac-surface p-md rounded-2xl shadow-sm border border-ac-outline-variant/20">
               <div className="flex items-center gap-xs text-ac-tertiary-container mb-sm">
                 {[1, 2, 3, 4, 5].map((i) => (
-                  <span key={i} className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                  <SiteIcon key={i} className=" text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
                     star
-                  </span>
+                  </SiteIcon>
                 ))}
               </div>
               <p className="font-body-md text-body-md text-ac-on-surface mb-md">
@@ -580,9 +583,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             <div className="bg-ac-surface p-md rounded-2xl shadow-sm border border-ac-outline-variant/20">
               <div className="flex items-center gap-xs text-ac-tertiary-container mb-sm">
                 {[1, 2, 3, 4, 5].map((i) => (
-                  <span key={i} className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                  <SiteIcon key={i} className=" text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
                     star
-                  </span>
+                  </SiteIcon>
                 ))}
               </div>
               <p className="font-body-md text-body-md text-ac-on-surface mb-md">
@@ -602,11 +605,11 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             <div className="bg-ac-surface p-md rounded-2xl shadow-sm border border-ac-outline-variant/20">
               <div className="flex items-center gap-xs text-ac-tertiary-container mb-sm">
                 {[1, 2, 3, 4].map((i) => (
-                  <span key={i} className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                  <SiteIcon key={i} className=" text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
                     star
-                  </span>
+                  </SiteIcon>
                 ))}
-                <span className="material-symbols-outlined text-[20px]">star_half</span>
+                <SiteIcon className=" text-[20px]">star_half</SiteIcon>
               </div>
               <p className="font-body-md text-body-md text-ac-on-surface mb-md">
                 "The transparent pricing is what sold me. No hidden fees or surprise charges at the end. The technician explained exactly what was wrong before starting the repair."
@@ -637,27 +640,27 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               className="inline-flex items-center gap-xs text-ac-primary font-label-md text-label-md hover:underline font-semibold"
               href="#contact"
             >
-              Contact Support <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+              Contact Support <SiteIcon className=" text-[18px]">arrow_forward</SiteIcon>
             </a>
           </div>
           <div className="lg:w-2/3 flex flex-col gap-sm">
             {/* FAQ 1 */}
             <div className="bg-ac-surface border border-ac-outline-variant/30 rounded-xl overflow-hidden shadow-sm transition-colors">
-              <button
+              <Button variant="ghost"
                 className="w-full text-left px-md py-sm flex justify-between items-center bg-ac-surface hover:bg-ac-surface-container-low transition-colors cursor-pointer border-none"
                 onClick={() => toggleFaq(1)}
               >
                 <span className="font-label-md text-label-md text-ac-on-background font-semibold">
                   How often should I service my air conditioner?
                 </span>
-                <span
-                  className={`material-symbols-outlined text-ac-outline transition-transform duration-300 ${
+                <SiteIcon
+                  className={` text-ac-outline transition-transform duration-300 ${
                     openFaq === 1 ? 'rotate-180 text-ac-primary' : ''
                   }`}
                 >
                   expand_more
-                </span>
-              </button>
+                </SiteIcon>
+              </Button>
               {openFaq === 1 && (
                 <div className="bg-ac-surface-container-lowest border-t border-ac-outline-variant/10 px-md pb-sm pt-xs font-body-md text-body-md text-ac-on-surface-variant animate-in fade-in duration-200">
                   For optimal performance and energy efficiency, we recommend a general cleaning every 3 to 4 months, and a major service (like a chemical wash) once a year. High-usage units may require more frequent servicing.
@@ -667,21 +670,21 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
 
             {/* FAQ 2 */}
             <div className="bg-ac-surface border border-ac-outline-variant/30 rounded-xl overflow-hidden shadow-sm transition-colors">
-              <button
+              <Button variant="ghost"
                 className="w-full text-left px-md py-sm flex justify-between items-center bg-ac-surface hover:bg-ac-surface-container-low transition-colors cursor-pointer border-none"
                 onClick={() => toggleFaq(2)}
               >
                 <span className="font-label-md text-label-md text-ac-on-background font-semibold">
                   What is included in a General Cleaning?
                 </span>
-                <span
-                  className={`material-symbols-outlined text-ac-outline transition-transform duration-300 ${
+                <SiteIcon
+                  className={` text-ac-outline transition-transform duration-300 ${
                     openFaq === 2 ? 'rotate-180 text-ac-primary' : ''
                   }`}
                 >
                   expand_more
-                </span>
-              </button>
+                </SiteIcon>
+              </Button>
               {openFaq === 2 && (
                 <div className="bg-ac-surface-container-lowest border-t border-ac-outline-variant/10 px-md pb-sm pt-xs font-body-md text-body-md text-ac-on-surface-variant animate-in fade-in duration-200">
                   General cleaning includes washing the air filters, cleaning the indoor evaporator coil, clearing the drainage pipe to prevent water leaks, checking the gas pressure, and testing the overall system performance.
@@ -691,21 +694,21 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
 
             {/* FAQ 3 */}
             <div className="bg-ac-surface border border-ac-outline-variant/30 rounded-xl overflow-hidden shadow-sm transition-colors">
-              <button
+              <Button variant="ghost"
                 className="w-full text-left px-md py-sm flex justify-between items-center bg-ac-surface hover:bg-ac-surface-container-low transition-colors cursor-pointer border-none"
                 onClick={() => toggleFaq(3)}
               >
                 <span className="font-label-md text-label-md text-ac-on-background font-semibold">
                   Do I need to create an account to book?
                 </span>
-                <span
-                  className={`material-symbols-outlined text-ac-outline transition-transform duration-300 ${
+                <SiteIcon
+                  className={` text-ac-outline transition-transform duration-300 ${
                     openFaq === 3 ? 'rotate-180 text-ac-primary' : ''
                   }`}
                 >
                   expand_more
-                </span>
-              </button>
+                </SiteIcon>
+              </Button>
               {openFaq === 3 && (
                 <div className="bg-ac-surface-container-lowest border-t border-ac-outline-variant/10 px-md pb-sm pt-xs font-body-md text-body-md text-ac-on-surface-variant animate-in fade-in duration-200">
                   Yes, creating a free account allows us to save your property details, track your service history, provide digital reports, and manage your upcoming bookings efficiently.
@@ -727,18 +730,18 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             Join thousands of satisfied customers who trust AC Care for their home comfort.
           </p>
           <div className="flex flex-col sm:flex-row gap-md justify-center items-center">
-            <button
+            <Button variant="ghost"
               onClick={() => onOpenBooking()}
               className="inline-flex items-center justify-center bg-ac-on-primary text-ac-primary font-label-md text-label-md h-12 px-lg rounded-full shadow-md hover:bg-ac-surface transition-all active:scale-95 w-full sm:w-auto cursor-pointer border-none font-semibold"
             >
               Book a Service
-            </button>
-            <button
+            </Button>
+            <Button variant="ghost"
               onClick={() => onNavigate('register')}
               className="inline-flex items-center justify-center bg-transparent border-2 border-ac-on-primary text-ac-on-primary font-label-md text-label-md h-12 px-lg rounded-full hover:bg-ac-on-primary/10 transition-all active:scale-95 w-full sm:w-auto cursor-pointer font-semibold"
             >
               Create Account
-            </button>
+            </Button>
           </div>
         </div>
       </section>

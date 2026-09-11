@@ -1,3 +1,10 @@
+
+import { SiteIcon } from '@/components/ui/site-icon';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
+import { Textarea } from '@/components/ui/textarea';
 import { apiFetch as fetch } from '../api';
 import React, { useState, useEffect } from 'react';
 import { User, PageRoute } from '../types';
@@ -146,32 +153,33 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       'Unable to connect to the booking server. Please make sure the backend is running.'
     );
   } finally {setSubmitting(false);}
-}; 
+};
   const handleFinish = () => {
     setStep('form');
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-y-auto animate-in fade-in">
+    <Dialog open onOpenChange={(open) => { if (!open && !submitting) onClose(); }}>
       {/* Modal Container: 650px - 800px on desktop */}
-      <div className="bg-ac-surface w-full max-w-2xl sm:max-w-3xl rounded-2xl shadow-2xl border border-ac-outline-variant/40 p-5 sm:p-7 md:p-8 relative my-auto max-h-[92vh] flex flex-col">
+      <DialogContent showCloseButton={false} className="ac-site bg-ac-surface w-[calc(100%-2rem)] max-w-2xl sm:max-w-3xl rounded-2xl shadow-2xl border border-ac-outline-variant/40 p-5 sm:p-7 md:p-8 max-h-[92vh] flex flex-col" aria-describedby={undefined}>
+        <DialogTitle className="sr-only">Schedule an AC Care Service</DialogTitle>
         {/* Close button */}
-        <button
+        <Button variant="ghost"
           type="button"
           onClick={onClose}
           className="absolute top-4 right-4 sm:top-5 sm:right-5 text-ac-outline hover:text-ac-on-surface bg-ac-surface-container-low hover:bg-ac-surface-container border-none cursor-pointer flex items-center justify-center p-1.5 rounded-full transition-colors z-10"
           aria-label="Close booking modal"
         >
-          <span className="material-symbols-outlined text-[22px]">close</span>
-        </button>
+          <SiteIcon className=" text-[22px]">close</SiteIcon>
+        </Button>
 
         {step === 'form' ? (
           <div className="flex flex-col overflow-hidden">
             {/* Header */}
             <div className="flex items-center gap-3 mb-1 pr-10">
               <div className="w-10 h-10 rounded-xl bg-ac-primary/10 text-ac-primary flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-[24px]">calendar_month</span>
+                <SiteIcon className=" text-[24px]">calendar_month</SiteIcon>
               </div>
               <div>
                 <h2 className="text-xl sm:text-2xl font-bold text-ac-on-background">
@@ -189,7 +197,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               {currentUser && (
                 <div className="p-3 bg-ac-primary-fixed/50 rounded-xl border border-ac-primary-fixed-dim/60 text-xs flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-ac-primary text-[18px]">verified</span>
+                    <SiteIcon className=" text-ac-primary text-[18px]">verified</SiteIcon>
                     <span className="font-medium text-ac-on-primary-fixed">
                       Booking as <strong className="text-ac-primary">{currentUser.name}</strong> ({currentUser.email})
                     </span>
@@ -208,7 +216,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   1. Select Service Package
                 </label>
                 <div className="relative">
-                  <select
+                  <NativeSelect
                     value={serviceType}
                     onChange={(e) => setServiceType(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-ac-outline-variant bg-ac-surface-container-lowest text-sm text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20 cursor-pointer appearance-none"
@@ -219,10 +227,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     <option value="General Inspection / Diagnostic">General Inspection / Problem Diagnosis</option>
                     <option value="3-Unit Bundle Deal ($50 Off)">3-Unit Bundle Deal ($50 Special Savings)</option>
                     <option value="Annual Maintenance Contract">Annual Maintenance Contract (4 Visits + Priority)</option>
-                  </select>
-                  <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-ac-outline pointer-events-none text-[20px]">
-                    expand_more
-                  </span>
+                  </NativeSelect>
+
                 </div>
                 {currentPriceConfig.desc && (
                   <p className="text-xs text-ac-on-surface-variant mt-1">
@@ -238,23 +244,23 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     2. Number of AC Units
                   </label>
                   <div className="flex items-center border border-ac-outline-variant rounded-xl bg-ac-surface-container-lowest overflow-hidden h-[42px]">
-                    <button
+                    <Button variant="ghost"
                       type="button"
                       onClick={() => setUnitsCount(Math.max(1, unitsCount - 1))}
                       className="w-12 h-full bg-ac-surface-container-low hover:bg-ac-surface-container font-bold text-ac-primary text-lg cursor-pointer border-none transition-colors flex items-center justify-center"
                     >
                       -
-                    </button>
+                    </Button>
                     <span className="flex-1 text-center font-bold text-sm sm:text-base text-ac-on-surface">
                       {unitsCount} {unitsCount === 1 ? 'Unit' : 'Units'}
                     </span>
-                    <button
+                    <Button variant="ghost"
                       type="button"
                       onClick={() => setUnitsCount(unitsCount + 1)}
                       className="w-12 h-full bg-ac-surface-container-low hover:bg-ac-surface-container font-bold text-ac-primary text-lg cursor-pointer border-none transition-colors flex items-center justify-center"
                     >
                       +
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -262,7 +268,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
                     3. Preferred Date
                   </label>
-                  <input
+                  <Input
                     type="date"
                     required
                     value={date}
@@ -280,7 +286,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                   {['09:00 AM - 11:00 AM', '11:30 AM - 01:30 PM', '02:00 PM - 04:00 PM', '04:30 PM - 06:30 PM'].map(
                     (slot) => (
-                      <button
+                      <Button variant="ghost"
                         key={slot}
                         type="button"
                         onClick={() => setTimeSlot(slot)}
@@ -291,7 +297,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                         }`}
                       >
                         {slot}
-                      </button>
+                      </Button>
                     )
                   )}
                 </div>
@@ -303,7 +309,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
                     5. Service Address & Unit Location
                   </label>
-                  <input
+                  <Input
                     type="text"
                     required
                     placeholder="e.g. 742 Evergreen Terrace, Apt 4B"
@@ -317,7 +323,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
                     Contact Phone Number
                   </label>
-                  <input
+                  <Input
                     type="tel"
                     required
                     placeholder="+1 (555) 019-2834"
@@ -333,7 +339,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
                   Unit Symptoms / Technician Instructions (Optional)
                 </label>
-                <textarea
+                <Textarea
                   rows={2}
                   placeholder="e.g. Master bedroom unit has weak airflow, water drips occasionally from right drain..."
                   value={notes}
@@ -357,20 +363,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
 
                 <div className="flex items-center gap-3 w-full sm:w-auto">
-                  <button
+                  <Button variant="ghost"
                     type="button"
                     onClick={onClose}
                     className="flex-1 sm:flex-initial px-5 py-2.5 border border-ac-outline-variant rounded-full text-sm font-semibold text-ac-on-surface bg-transparent hover:bg-ac-surface-container-low cursor-pointer transition-colors"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button variant="ghost"
                     type="submit" disabled={submitting||!pricesReady}
                     className="flex-1 sm:flex-initial px-6 py-2.5 bg-ac-primary text-ac-on-primary rounded-full text-sm font-semibold hover:opacity-90 active:scale-95 cursor-pointer border-none shadow-sm transition-all flex items-center justify-center gap-1.5"
                   >
                     Confirm Booking
-                    <span className="material-symbols-outlined text-[18px]">check</span>
-                  </button>
+                    <SiteIcon className=" text-[18px]">check</SiteIcon>
+                  </Button>
                 </div>
               </div>
             </form>
@@ -378,7 +384,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         ) : (
           <div className="text-center py-6 sm:py-8 space-y-4 animate-in zoom-in-95 duration-200">
             <div className="w-16 h-16 rounded-full bg-ac-tertiary-fixed text-ac-tertiary-container mx-auto flex items-center justify-center shadow-sm">
-              <span className="material-symbols-outlined text-[36px]">task_alt</span>
+              <SiteIcon className=" text-[36px]">task_alt</SiteIcon>
             </div>
             <h3 className="text-2xl font-bold text-ac-on-background">
               Booking Submitted!
@@ -412,16 +418,16 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </span>
               </div>
             </div>
-            <button
+            <Button variant="ghost"
               type="button"
               onClick={handleFinish}
               className="px-8 py-3 bg-ac-primary text-ac-on-primary rounded-full text-sm font-semibold hover:opacity-90 active:scale-95 transition-all cursor-pointer border-none shadow-sm"
             >
               Done & Return to Home
-            </button>
+            </Button>
           </div>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 };

@@ -1,3 +1,8 @@
+
+import { SiteIcon } from '@/components/ui/site-icon';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
 import { apiFetch as fetch } from '../api';
 import React, { useState } from 'react';
 import { PageRoute, User } from '../types';
@@ -128,16 +133,16 @@ const handleSubmit = async (e: React.FormEvent) => {
       <div className="w-full max-w-[560px] mx-auto relative z-10">
         {/* Working "Back to Home" button */}
         <div className="mb-5 flex items-center justify-between gap-3">
-          <button
+          <Button variant="ghost"
             type="button"
             onClick={handleBackToHome}
             className="inline-flex items-center gap-1.5 text-ac-primary hover:text-ac-on-primary-fixed-variant text-sm font-semibold transition-colors group cursor-pointer bg-ac-surface/90 backdrop-blur-sm px-4 py-2 rounded-full border border-ac-outline-variant/40 shadow-xs hover:shadow-sm"
           >
-            <span className="material-symbols-outlined text-[18px] group-hover:-translate-x-1 transition-transform">
+            <SiteIcon className=" text-[18px] group-hover:-translate-x-1 transition-transform">
               arrow_back
-            </span>
+            </SiteIcon>
             Back to Home
-          </button>
+          </Button>
           <span className="text-xs text-ac-on-surface-variant font-medium whitespace-nowrap">
             New Customer Registration
           </span>
@@ -147,14 +152,14 @@ const handleSubmit = async (e: React.FormEvent) => {
         <div className="bg-ac-surface rounded-2xl shadow-md border border-ac-outline-variant/40 p-6 sm:p-8 backdrop-blur-sm">
           {/* Brand header */}
           <div className="text-center mb-6">
-            <button
+            <Button variant="ghost"
               type="button"
               onClick={handleBackToHome}
               className="inline-flex items-center gap-1.5 text-2xl font-bold text-ac-primary mb-1 cursor-pointer border-none bg-transparent"
             >
-              <span className="material-symbols-outlined text-ac-primary text-[32px]">ac_unit</span>
+              <SiteIcon className=" text-ac-primary text-[32px]">ac_unit</SiteIcon>
               AC Care
-            </button>
+            </Button>
             <h1 className="text-2xl font-bold text-ac-on-background mt-1">
               Create Your Account
             </h1>
@@ -166,7 +171,7 @@ const handleSubmit = async (e: React.FormEvent) => {
           {/* Error Alert */}
           {errorMessage && (
             <div className="mb-4 p-3.5 rounded-lg bg-ac-error-container text-ac-on-error-container text-sm flex items-start gap-2 animate-in fade-in">
-              <span className="material-symbols-outlined text-[20px] shrink-0 mt-0.5 text-ac-error">error</span>
+              <SiteIcon className=" text-[20px] shrink-0 mt-0.5 text-ac-error">error</SiteIcon>
               <span className="flex-grow">{errorMessage}</span>
             </div>
           )}
@@ -178,10 +183,10 @@ const handleSubmit = async (e: React.FormEvent) => {
                 Full Name
               </label>
               <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
+                <SiteIcon className=" absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
                   person
-                </span>
-                <input
+                </SiteIcon>
+                <Input
                   id="reg-name"
                   type="text"
                   required
@@ -199,10 +204,10 @@ const handleSubmit = async (e: React.FormEvent) => {
                   Email Address
                 </label>
                 <div className="relative">
-                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
+                  <SiteIcon className=" absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
                     mail
-                  </span>
-                  <input
+                  </SiteIcon>
+                  <Input
                     id="reg-email"
                     type="email"
                     required
@@ -219,10 +224,10 @@ const handleSubmit = async (e: React.FormEvent) => {
                   Phone Number
                 </label>
                 <div className="relative">
-                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
+                  <SiteIcon className=" absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
                     call
-                  </span>
-                  <input
+                  </SiteIcon>
+                  <Input
                     id="reg-phone"
                     type="tel"
                     required
@@ -240,10 +245,10 @@ const handleSubmit = async (e: React.FormEvent) => {
                 Property / Air Conditioning Units
               </label>
               <div className="relative">
-                <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
+                <SiteIcon className=" absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
                   home
-                </span>
-                <select
+                </SiteIcon>
+                <NativeSelect
                   id="reg-property"
                   value={propertyType}
                   onChange={(e) => setPropertyType(e.target.value)}
@@ -253,10 +258,8 @@ const handleSubmit = async (e: React.FormEvent) => {
                   <option value="Townhouse / Medium Residence (3-4 Units)">Townhouse / Medium Residence (3–4 Units)</option>
                   <option value="Landed House / Large Residence (5+ Units)">Landed House / Large Residence (5+ Units)</option>
                   <option value="Commercial Office / Retail Space">Commercial Office / Retail Space</option>
-                </select>
-                <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-ac-outline pointer-events-none text-[20px]">
-                  expand_more
-                </span>
+                </NativeSelect>
+
               </div>
             </div>
 
@@ -266,10 +269,10 @@ const handleSubmit = async (e: React.FormEvent) => {
                   Password
                 </label>
                 <div className="relative">
-                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
+                  <SiteIcon className=" absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
                     lock
-                  </span>
-                  <input
+                  </SiteIcon>
+                  <Input
                     id="reg-password"
                     type={showPassword ? 'text' : 'password'}
                     required
@@ -278,16 +281,16 @@ const handleSubmit = async (e: React.FormEvent) => {
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full pl-10 pr-10 py-2.5 rounded-lg border border-ac-outline-variant bg-ac-surface-container-lowest text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20 text-sm transition-all"
                   />
-                  <button
+                  <Button variant="ghost"
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-ac-outline hover:text-ac-on-surface bg-transparent border-none p-0 cursor-pointer flex items-center"
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
                   >
-                    <span className="material-symbols-outlined text-[18px]">
+                    <SiteIcon className=" text-[18px]">
                       {showPassword ? 'visibility_off' : 'visibility'}
-                    </span>
-                  </button>
+                    </SiteIcon>
+                  </Button>
                 </div>
               </div>
 
@@ -296,10 +299,10 @@ const handleSubmit = async (e: React.FormEvent) => {
                   Confirm Password
                 </label>
                 <div className="relative">
-                  <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
+                  <SiteIcon className=" absolute left-3 top-1/2 -translate-y-1/2 text-ac-outline text-[20px]">
                     lock_clock
-                  </span>
-                  <input
+                  </SiteIcon>
+                  <Input
                     id="reg-confirm-password"
                     type={showPassword ? 'text' : 'password'}
                     required
@@ -315,7 +318,7 @@ const handleSubmit = async (e: React.FormEvent) => {
             {/* Terms Checkbox */}
             <div className="pt-2">
               <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                <input
+                <Input
                   type="checkbox"
                   checked={agreeTerms}
                   onChange={(e) => setAgreeTerms(e.target.checked)}
@@ -330,7 +333,7 @@ const handleSubmit = async (e: React.FormEvent) => {
             </div>
 
             {/* Submit Button */}
-            <button
+            <Button variant="ghost"
               type="submit"
               disabled={isLoading}
               className="w-full h-12 bg-ac-primary text-ac-on-primary font-semibold rounded-lg shadow-sm hover:opacity-90 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer border-none disabled:opacity-50 mt-2"
@@ -340,23 +343,23 @@ const handleSubmit = async (e: React.FormEvent) => {
               ) : (
                 <>
                   Create Account
-                  <span className="material-symbols-outlined text-[18px]">how_to_reg</span>
+                  <SiteIcon className=" text-[18px]">how_to_reg</SiteIcon>
                 </>
               )}
-            </button>
+            </Button>
           </form>
 
           {/* Link to Login */}
           <div className="mt-6 text-center pt-4 border-t border-ac-outline-variant/30">
             <p className="text-sm text-ac-on-surface-variant">
               Already have an account?{' '}
-              <button
+              <Button variant="ghost"
                 type="button"
                 onClick={() => onNavigate('login')}
                 className="text-ac-primary font-bold hover:underline bg-transparent border-none p-0 cursor-pointer inline"
               >
                 Sign In
-              </button>
+              </Button>
             </p>
           </div>
         </div>
@@ -364,21 +367,21 @@ const handleSubmit = async (e: React.FormEvent) => {
         {/* Benefits list */}
         <div className="mt-6 grid grid-cols-3 gap-2 text-center text-xs text-ac-on-surface-variant">
           <div className="p-2.5 bg-ac-surface/80 rounded-xl border border-ac-outline-variant/30 backdrop-blur-xs">
-            <span className="material-symbols-outlined text-[20px] text-ac-primary block mb-1">
+            <SiteIcon className=" text-[20px] text-ac-primary block mb-1">
               verified
-            </span>
+            </SiteIcon>
             <span className="font-medium">Certified Techs</span>
           </div>
           <div className="p-2.5 bg-ac-surface/80 rounded-xl border border-ac-outline-variant/30 backdrop-blur-xs">
-            <span className="material-symbols-outlined text-[20px] text-ac-tertiary-container block mb-1">
+            <SiteIcon className=" text-[20px] text-ac-tertiary-container block mb-1">
               receipt_long
-            </span>
+            </SiteIcon>
             <span className="font-medium">Digital Reports</span>
           </div>
           <div className="p-2.5 bg-ac-surface/80 rounded-xl border border-ac-outline-variant/30 backdrop-blur-xs">
-            <span className="material-symbols-outlined text-[20px] text-ac-primary block mb-1">
+            <SiteIcon className=" text-[20px] text-ac-primary block mb-1">
               local_offer
-            </span>
+            </SiteIcon>
             <span className="font-medium">20% First Promo</span>
           </div>
         </div>

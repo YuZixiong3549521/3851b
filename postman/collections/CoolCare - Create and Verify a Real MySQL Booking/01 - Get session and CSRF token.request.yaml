@@ -1,0 +1,10 @@
+$kind: http-request
+url: "{{baseUrl}}/api/session"
+method: GET
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('HTTP success',()=>pm.expect(pm.response.code).to.be.within(200,299));
+      pm.collectionVariables.set('csrf',pm.response.json().csrf);
+    language: text/javascript
+order: 1000

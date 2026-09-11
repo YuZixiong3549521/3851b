@@ -1,0 +1,11 @@
+# Use this workspace to collaborate
+workspace:
+  id: 8f4603e9-aab7-4e69-8c46-54dafab21934
+
+localResources:
+  collections:
+    - ../coolcare/postman/CoolCare-Booking-Demo.postman_collection.json
+
+cloudResources:
+  collections:
+    ../postman/collections/CoolCare - Create and Verify a Real MySQL Booking: d1a17818-3ab4-464a-abbd-72251084fe4a

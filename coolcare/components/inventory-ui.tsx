@@ -87,11 +87,11 @@ export function PageTitle({
   return (
     <>
       <nav aria-label="Breadcrumb" className="breadcrumbs">
-        <button onClick={() => go(ROOT)}>Inventory</button>
+        <Button variant="ghost" onClick={() => go(ROOT)}>Inventory</Button>
         {crumb && (
           <>
             <ChevronRight size={13} />
-            <button onClick={() => go(ROOT + '/parts')}>Parts</button>
+            <Button variant="ghost" onClick={() => go(ROOT + '/parts')}>Parts</Button>
           </>
         )}
         <ChevronRight size={13} />

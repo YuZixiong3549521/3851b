@@ -5,18 +5,20 @@ import { ChevronDownIcon } from 'lucide-react';
 
 type NativeSelectProps = Omit<React.ComponentProps<'select'>, 'size'> & {
   size?: 'sm' | 'default';
+  wrapperClassName?: string;
 };
 
 function NativeSelect({
   className,
+  wrapperClassName,
   size = 'default',
   ...props
 }: NativeSelectProps) {
   return (
     <div
       className={cn(
-        'group/native-select relative w-fit has-[select:disabled]:opacity-50',
-        className,
+        'group/native-select relative has-[select:disabled]:opacity-50',
+        wrapperClassName,
       )}
       data-slot="native-select-wrapper"
       data-size={size}
@@ -24,7 +26,7 @@ function NativeSelect({
       <select
         data-slot="native-select"
         data-size={size}
-        className="border-input placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground dark:bg-input/30 dark:hover:bg-input/50 focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:aria-invalid:border-destructive/50 h-8 w-full min-w-0 appearance-none rounded-lg border bg-transparent py-1 pr-8 pl-2.5 text-sm transition-colors select-none focus-visible:ring-3 aria-invalid:ring-3 data-[size=sm]:h-7 data-[size=sm]:rounded-[min(var(--radius-md),10px)] data-[size=sm]:py-0.5 outline-none disabled:pointer-events-none disabled:cursor-not-allowed"
+        className={cn('border-input bg-card text-foreground focus-visible:border-ring focus-visible:ring-ring/20 aria-invalid:ring-destructive/20 aria-invalid:border-destructive h-10 w-full min-w-0 appearance-none rounded-lg border py-2 pr-8 pl-3 text-sm shadow-xs transition-colors focus-visible:ring-3 aria-invalid:ring-3 data-[size=sm]:h-8 outline-none disabled:cursor-not-allowed', className)}
         {...props}
       />
       <ChevronDownIcon

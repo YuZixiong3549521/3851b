@@ -78,6 +78,14 @@
 }
 
 @scope (.ac-site) {
+/* Shared controls must wrap long service/time labels on small screens. */
+[data-slot='button'] {
+  min-width: 0;
+  white-space: normal;
+  height: auto;
+  min-height: 2.5rem;
+}
+
 /* Custom Spacing and Container Utilities */
 .max-w-container-max {
   max-width: 1280px;

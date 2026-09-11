@@ -157,7 +157,7 @@ export function Overview() {
                 target: ROOT + '/parts?sort=stock&order=desc',
               },
             ].map(({ label, value, note, icon: Icon, target }) => (
-              <button
+              <Button variant="ghost"
                 className="stat text-left"
                 key={label}
                 onClick={() => go(target)}
@@ -168,7 +168,7 @@ export function Overview() {
                 </span>
                 <strong>{value}</strong>
                 <small>{note}</small>
-              </button>
+              </Button>
             ))}
           </div>
           <div className="dashboard-grid">
@@ -180,7 +180,7 @@ export function Overview() {
               {data.parts.length ? (
                 <div className="stock-chart">
                   {data.parts.map((p) => (
-                    <button
+                    <Button variant="ghost"
                       key={p.part_id}
                       className="stock-bar-row"
                       onClick={() => go(partPath(p.part_id))}
@@ -211,7 +211,7 @@ export function Overview() {
                         />
                       </span>
                       <b>{p.current_stock}</b>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               ) : (
@@ -241,14 +241,14 @@ export function Overview() {
                 .filter((p) => p.current_stock <= threshold)
                 .slice(0, 4)
                 .map((p) => (
-                  <button
+                  <Button variant="ghost"
                     className="attention-row"
                     key={p.part_id}
                     onClick={() => go(partPath(p.part_id))}
                   >
                     <span>{p.part_name}</span>
                     <b>{p.current_stock} left</b>
-                  </button>
+                  </Button>
                 ))}
               {!data.summary.low_stock && (
                 <p className="muted">
@@ -401,12 +401,12 @@ export function PartsPage({ params }: { params: URLSearchParams }) {
                   {result.data.rows.map((p) => (
                     <TableRow key={p.part_id}>
                       <TableCell>
-                        <button
+                        <Button variant="ghost"
                           className="part-name"
                           onClick={() => go(partPath(p.part_id, url))}
                         >
                           {p.part_name}
-                        </button>
+                        </Button>
                         <small className="record-id">
                           {code('PT', p.part_id)}
                         </small>
@@ -976,18 +976,18 @@ function TransactionTable({
         {rows.map((t) => (
           <TableRow key={t.transaction_id}>
             <TableCell>
-              <button className="part-name" onClick={() => onSelect(t)}>
+              <Button variant="ghost" className="part-name" onClick={() => onSelect(t)}>
                 {code('TX', t.transaction_id)}
-              </button>
+              </Button>
               <small className="record-id">{t.created_at}</small>
             </TableCell>
             <TableCell>
-              <button
+              <Button variant="ghost"
                 className="part-name"
                 onClick={() => go(partPath(t.part_id))}
               >
                 {t.part_name}
-              </button>
+              </Button>
               <small className="record-id">{code('PT', t.part_id)}</small>
             </TableCell>
             <TableCell>
@@ -1034,7 +1034,7 @@ function TransactionDrawer({
               {code('TX', t.transaction_id)}
               <Status value={t.transaction_type} />
             </div>
-            <button
+            <Button variant="ghost"
               className="part-name text-left"
               onClick={() => {
                 close();
@@ -1042,7 +1042,7 @@ function TransactionDrawer({
               }}
             >
               {t.part_name} <ArrowRight size={16} />
-            </button>
+            </Button>
             <dl className="data-list">
               <div>
                 <dt>Date / time</dt>
@@ -1248,13 +1248,13 @@ function TransactionEditor({
           {!options.parts.length && (
             <p className="notice">
               No parts exist yet.{' '}
-              <button
+              <Button variant="ghost"
                 type="button"
                 className="text-link"
                 onClick={() => go(ROOT + '/parts/new')}
               >
                 Add a part first
-              </button>
+              </Button>
               .
             </p>
           )}

@@ -1,3 +1,6 @@
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NativeSelect } from '@/components/ui/native-select';
 import { apiFetch as fetch } from '../api';
 import React, {
   useEffect,
@@ -428,7 +431,7 @@ const MyBookingsPage:
 
         {/* Back */}
 
-        <button
+        <Button variant="ghost"
           onClick={
             onBackHome
           }
@@ -450,7 +453,7 @@ const MyBookingsPage:
           }}
         >
           ← Back to Home
-        </button>
+        </Button>
 
         {/* Title */}
 
@@ -598,7 +601,7 @@ const MyBookingsPage:
                 appear here.
               </p>
 
-              <button
+              <Button variant="ghost"
                 onClick={
                   onBackHome
                 }
@@ -622,7 +625,7 @@ const MyBookingsPage:
                 }}
               >
                 Book a Service
-              </button>
+              </Button>
             </div>
           )}
 
@@ -793,7 +796,7 @@ const MyBookingsPage:
                       </strong>
 
                       {isEditing ? (
-                        <input
+                        <Input
                           type="date"
                           value={
                             editDate
@@ -851,7 +854,7 @@ const MyBookingsPage:
                       </strong>
 
                       {isEditing ? (
-                        <select
+                        <NativeSelect
                           value={
                             editTime
                           }
@@ -908,7 +911,7 @@ const MyBookingsPage:
                             04:00 PM
                             - 06:00 PM
                           </option>
-                        </select>
+                        </NativeSelect>
                       ) : (
                         <div
                           style={{
@@ -1056,7 +1059,7 @@ const MyBookingsPage:
 
                       {isEditing ? (
                         <>
-                          <button
+                          <Button variant="ghost"
                             onClick={
                               handleCancelReschedule
                             }
@@ -1082,9 +1085,9 @@ const MyBookingsPage:
                             }}
                           >
                             Cancel Edit
-                          </button>
+                          </Button>
 
-                          <button
+                          <Button variant="ghost"
                             onClick={() =>
                               handleSaveReschedule(
                                 booking.id
@@ -1120,11 +1123,11 @@ const MyBookingsPage:
                                 ? 'Saving...'
                                 : 'Save Changes'
                             }
-                          </button>
+                          </Button>
                         </>
                       ) : (
                         <>
-                          <button
+                          <Button variant="ghost"
                             onClick={() =>
                               handleStartReschedule(
                                 booking
@@ -1148,9 +1151,9 @@ const MyBookingsPage:
                             }}
                           >
                             Reschedule
-                          </button>
+                          </Button>
 
-                          <button
+                          <Button variant="ghost"
                             onClick={() =>
                               setConfirmCancelId(booking.id)
                             }
@@ -1187,12 +1190,12 @@ const MyBookingsPage:
                                 ? 'Cancelling...'
                                 : 'Cancel Booking'
                             }
-                          </button>
+                          </Button>
                           {confirmCancelId === booking.id && (
                             <div role="alert" style={{ width: '100%', color: '#b42318' }}>
                               <p>Are you sure you want to cancel this booking?</p>
-                              <button type="button" onClick={() => setConfirmCancelId(null)} style={{ marginRight: 16, padding: 12 }}>Keep Booking</button>
-                              <button type="button" disabled={cancellingBookingId === booking.id} onClick={() => handleCancelBooking(booking.id)} style={{ padding: 12, fontWeight: 600 }}>Confirm Cancellation</button>
+                              <Button variant="ghost" type="button" onClick={() => setConfirmCancelId(null)} style={{ marginRight: 16, padding: 12 }}>Keep Booking</Button>
+                              <Button variant="ghost" type="button" disabled={cancellingBookingId === booking.id} onClick={() => handleCancelBooking(booking.id)} style={{ padding: 12, fontWeight: 600 }}>Confirm Cancellation</Button>
                             </div>
                           )}
                         </>

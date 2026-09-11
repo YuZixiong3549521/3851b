@@ -3,12 +3,16 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 
+@source "../technician/src";
+@source "../components";
+@source "../app";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: 'Segoe UI', Arial, sans-serif;
+  --font-sans: 'Inter', 'Segoe UI', Arial, sans-serif;
   --font-mono: Consolas, monospace;
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
@@ -50,7 +54,7 @@
 }
 
 body {
-  font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
+  font-family: 'Inter', 'Segoe UI', Arial, Helvetica, sans-serif;
 }
 
 :root {
@@ -141,27 +145,27 @@ body {
   --card-foreground: #15263b;
   --popover: #fff;
   --popover-foreground: #15263b;
-  --primary: #007fac;
+  --primary: #003f87;
   --primary-foreground: #fff;
   --secondary: #e9f3f8;
-  --secondary-foreground: #126283;
+  --secondary-foreground: #003f87;
   --muted: #f0f4f8;
   --muted-foreground: #627286;
   --accent: #e4f3fa;
-  --accent-foreground: #075d80;
+  --accent-foreground: #003f87;
   --border: #dfe6ed;
   --input: #ccd6e0;
-  --ring: #0084b7;
+  --ring: #2563eb;
   --destructive: #bd3442;
   --sidebar: #08192c;
   --sidebar-foreground: #bfcfdf;
   --sidebar-accent: #103552;
   --sidebar-accent-foreground: #62d5ff;
-  --sidebar-primary: #0d92c4;
+  --sidebar-primary: #2563eb;
   --sidebar-primary-foreground: #fff;
   --sidebar-border: #21344a;
   --sidebar-ring: #46c3f1;
-  --chart-1: #007fac;
+  --chart-1: #003f87;
   --chart-2: #11a5a0;
   --chart-3: #ed9d30;
   --chart-4: #517aa5;

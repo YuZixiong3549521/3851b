@@ -1,0 +1,20 @@
+$kind: http-request
+url: "{{baseUrl}}/api/public/login"
+method: POST
+headers:
+  Content-Type: application/json
+  X-CSRF-Token: "{{csrf}}"
+body:
+  type: json
+  content: |-
+    {
+      "email": "{{email}}",
+      "password": "{{password}}"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('HTTP success',()=>pm.expect(pm.response.code).to.be.within(200,299));
+      const d=pm.response.json(); pm.collectionVariables.set('csrf',d.csrf); pm.collectionVariables.set('userId',String(d.user.id)); pm.collectionVariables.set('requestId',pm.variables.replaceIn('{{$guid}}')); const date=new Date();date.setDate(date.getDate()+2);pm.collectionVariables.set('serviceDate',date.toISOString().slice(0,10));
+    language: text/javascript
+order: 2000

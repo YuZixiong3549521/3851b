@@ -75,6 +75,24 @@ npm run build
 
 ## GitHub
 
+组员使用 Codex 时，先在各自电脑 clone 并打开这个仓库；根目录 `AGENTS.md` 提供统一的项目约定。实际开发目录为 `coolcare/`，原始项目目录保留作参考。
+
+首次获取：
+
+```powershell
+git clone https://github.com/YuZixiong3549521/3851b.git
+cd 3851b
+npm run setup
+npm run db:up
+npm start
+```
+
+日常协作建议从最新 `main` 新建各自的 `codex/任务名` 分支，通过 Pull Request 合并，避免多人直接修改同一个分支。拉取前先提交或妥善保存当前修改；依赖有变化时重新安装对应依赖，数据库迁移有变化时运行 `npm run db:up`。
+
+**每位组员的本机数据库是独立的。** GitHub 同步代码和建表/迁移文件，不会同步本机创建的订单、Docker 数据卷或登录会话。课堂演示可导入 `coolcare/postman/CoolCare-Booking-Demo.postman_collection.json`，在自己的机器上创建订单，再运行 `node coolcare/scripts/verify-booking.mjs <订单编号>` 直接查询 MySQL。详见 `coolcare/postman/README.md`。
+
+统一 UI 约定位于 `coolcare/UI-ARCHITECTURE.md`：各端复用 shadcn/ui、Base UI、Tailwind 和 Lucide。
+
 `.gitignore` 排除本机凭据、依赖、生成文件和 IDE 缓存。原先三个 ZIP 已用解压后的源代码目录替代。`accare.zip` 保留为上传的原始设计来源。同步更新使用 `git pull --ff-only origin main`，首次运行按上方安装步骤准备本机环境。
 
 公开部署前需要配置持久化会话、HTTPS、邮件及可选 OAuth 服务；当前服务只面向本机运行。

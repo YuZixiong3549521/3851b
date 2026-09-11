@@ -1,3 +1,6 @@
+
+import { SiteIcon } from '@/components/ui/site-icon';
+import { Button } from '@/components/ui/button';
 import React, { useState } from 'react';
 import { PageRoute, User } from '../types';
 
@@ -33,20 +36,20 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="flex justify-between items-center h-20 px-gutter max-w-container-max mx-auto">
 
         {/* Logo */}
-        <button
+        <Button variant="ghost"
           onClick={(e) => handleNavClick(e, 'home')}
           className="font-headline-sm text-headline-sm font-bold text-ac-primary flex items-center gap-xs cursor-pointer border-none bg-transparent p-0 text-left focus:outline-none"
         >
-          <span className="material-symbols-outlined text-ac-primary text-[32px]">
+          <SiteIcon className=" text-ac-primary text-[32px]">
             ac_unit
-          </span>
+          </SiteIcon>
           AC Care
-        </button>
+        </Button>
 
         {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-md">
 
-          <button
+          <Button variant="ghost"
             onClick={(e) => handleNavClick(e, 'home', 'home')}
             className={`font-label-md text-label-md transition-colors cursor-pointer bg-transparent border-none p-0 ${
               currentPage === 'home'
@@ -55,51 +58,51 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             Home
-          </button>
+          </Button>
 
-          <button
+          <Button variant="ghost"
             onClick={(e) => handleNavClick(e, 'home', 'about')}
             className="font-label-md text-label-md text-ac-on-surface-variant hover:text-ac-primary transition-colors cursor-pointer bg-transparent border-none p-0 pb-1"
           >
             About Us
-          </button>
+          </Button>
 
-          <button
+          <Button variant="ghost"
             onClick={(e) => handleNavClick(e, 'home', 'services')}
             className="font-label-md text-label-md text-ac-on-surface-variant hover:text-ac-primary transition-colors cursor-pointer bg-transparent border-none p-0 pb-1"
           >
             Services
-          </button>
+          </Button>
 
-          <button
+          <Button variant="ghost"
             onClick={(e) => handleNavClick(e, 'home', 'promotions')}
             className="font-label-md text-label-md text-ac-on-surface-variant hover:text-ac-primary transition-colors cursor-pointer bg-transparent border-none p-0 pb-1"
           >
             Promotions
-          </button>
+          </Button>
 
-          <button
+          <Button variant="ghost"
             onClick={(e) =>
               handleNavClick(e, 'home', 'how-it-works')
             }
             className="font-label-md text-label-md text-ac-on-surface-variant hover:text-ac-primary transition-colors cursor-pointer bg-transparent border-none p-0 pb-1"
           >
             How It Works
-          </button>
+          </Button>
 
-          <button
+          <Button variant="ghost"
             onClick={(e) => handleNavClick(e, 'home', 'faq')}
             className="font-label-md text-label-md text-ac-on-surface-variant hover:text-ac-primary transition-colors cursor-pointer bg-transparent border-none p-0 pb-1"
           >
             FAQ
-          </button>
+          </Button>
 
-          <button
+          <Button variant="ghost"
             onClick={(e) => handleNavClick(e, 'home', 'contact')}
             className="font-label-md text-label-md text-ac-on-surface-variant hover:text-ac-primary transition-colors cursor-pointer bg-transparent border-none p-0 pb-1"
           >
             Contact
-          </button>
+          </Button>
 
           {/* Logged In User */}
           {currentUser ? (
@@ -117,7 +120,7 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
 
               {/* My Bookings */}
-              <button
+              <Button variant="ghost"
                 onClick={(e) =>
                   handleNavClick(e, 'bookings')
                 }
@@ -129,20 +132,20 @@ export const Header: React.FC<HeaderProps> = ({
                 title="My Bookings"
               >
                 My Bookings
-              </button>
+              </Button>
 
               <a href={currentUser.role==='Technician'?'/technician/index.html':currentUser.role==='Admin'?'/admin/inventory':'/customer'} className="text-xs font-semibold text-ac-primary">Dashboard</a>
               {/* Sign Out */}
-              <button
+              <Button variant="ghost"
                 onClick={onLogout}
                 className="font-label-sm text-xs text-ac-on-surface-variant hover:text-ac-error transition-colors cursor-pointer bg-transparent border-none p-1"
                 title="Sign Out"
               >
                 Sign Out
-              </button>
+              </Button>
             </div>
           ) : (
-            <button
+            <Button variant="ghost"
               onClick={(e) =>
                 handleNavClick(e, 'login')
               }
@@ -153,32 +156,32 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               Login
-            </button>
+            </Button>
           )}
         </nav>
 
         {/* CTA & Mobile Toggle */}
         <div className="flex items-center gap-sm">
 
-          <button
+          <Button variant="ghost"
             onClick={() => onOpenBooking()}
             className="hidden md:inline-flex items-center justify-center bg-ac-primary text-ac-on-primary font-label-md text-label-md h-12 px-md rounded-full shadow-sm hover:opacity-90 active:scale-95 transition-all cursor-pointer border-none"
           >
             Book a Service
-          </button>
+          </Button>
 
           {/* Mobile Hamburger */}
-          <button
+          <Button variant="ghost"
             aria-label="Menu"
             onClick={() =>
               setMobileMenuOpen(!mobileMenuOpen)
             }
             className="md:hidden p-xs text-ac-primary bg-transparent border-none cursor-pointer flex items-center justify-center"
           >
-            <span className="material-symbols-outlined text-[32px]">
+            <SiteIcon className=" text-[32px]">
               {mobileMenuOpen ? 'close' : 'menu'}
-            </span>
-          </button>
+            </SiteIcon>
+          </Button>
         </div>
       </div>
 
@@ -188,7 +191,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <div className="flex flex-col gap-2">
 
-            <button
+            <Button variant="ghost"
               onClick={(e) =>
                 handleNavClick(e, 'home', 'home')
               }
@@ -199,27 +202,27 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               Home
-            </button>
+            </Button>
 
-            <button
+            <Button variant="ghost"
               onClick={(e) =>
                 handleNavClick(e, 'home', 'about')
               }
               className="text-left py-2 px-3 rounded-lg font-label-md text-ac-on-surface hover:bg-ac-surface-container-low"
             >
               About Us
-            </button>
+            </Button>
 
-            <button
+            <Button variant="ghost"
               onClick={(e) =>
                 handleNavClick(e, 'home', 'services')
               }
               className="text-left py-2 px-3 rounded-lg font-label-md text-ac-on-surface hover:bg-ac-surface-container-low"
             >
               Services
-            </button>
+            </Button>
 
-            <button
+            <Button variant="ghost"
               onClick={(e) =>
                 handleNavClick(
                   e,
@@ -230,9 +233,9 @@ export const Header: React.FC<HeaderProps> = ({
               className="text-left py-2 px-3 rounded-lg font-label-md text-ac-on-surface hover:bg-ac-surface-container-low"
             >
               Promotions
-            </button>
+            </Button>
 
-            <button
+            <Button variant="ghost"
               onClick={(e) =>
                 handleNavClick(
                   e,
@@ -243,25 +246,25 @@ export const Header: React.FC<HeaderProps> = ({
               className="text-left py-2 px-3 rounded-lg font-label-md text-ac-on-surface hover:bg-ac-surface-container-low"
             >
               How It Works
-            </button>
+            </Button>
 
-            <button
+            <Button variant="ghost"
               onClick={(e) =>
                 handleNavClick(e, 'home', 'faq')
               }
               className="text-left py-2 px-3 rounded-lg font-label-md text-ac-on-surface hover:bg-ac-surface-container-low"
             >
               FAQ
-            </button>
+            </Button>
 
-            <button
+            <Button variant="ghost"
               onClick={(e) =>
                 handleNavClick(e, 'home', 'contact')
               }
               className="text-left py-2 px-3 rounded-lg font-label-md text-ac-on-surface hover:bg-ac-surface-container-low"
             >
               Contact
-            </button>
+            </Button>
 
             {currentUser && <a href={currentUser.role==='Technician'?'/technician/index.html':currentUser.role==='Admin'?'/admin/inventory':'/customer'} className="px-3 py-2 text-ac-primary font-semibold">Dashboard</a>}
             {/* Mobile Logged In User */}
@@ -281,7 +284,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
 
                 {/* Mobile My Bookings */}
-                <button
+                <Button variant="ghost"
                   onClick={(e) =>
                     handleNavClick(e, 'bookings')
                   }
@@ -292,10 +295,10 @@ export const Header: React.FC<HeaderProps> = ({
                   }`}
                 >
                   My Bookings
-                </button>
+                </Button>
 
                 {/* Mobile Sign Out */}
-                <button
+                <Button variant="ghost"
                   onClick={() => {
                     setMobileMenuOpen(false);
                     onLogout();
@@ -303,12 +306,12 @@ export const Header: React.FC<HeaderProps> = ({
                   className="text-left py-2 px-3 rounded-lg font-label-md text-ac-error hover:bg-ac-surface-container-low"
                 >
                   Sign Out
-                </button>
+                </Button>
               </div>
             ) : (
               <div className="pt-2 border-t border-ac-outline-variant/30 flex flex-col gap-2">
 
-                <button
+                <Button variant="ghost"
                   onClick={(e) =>
                     handleNavClick(e, 'login')
                   }
@@ -319,9 +322,9 @@ export const Header: React.FC<HeaderProps> = ({
                   }`}
                 >
                   Login
-                </button>
+                </Button>
 
-                <button
+                <Button variant="ghost"
                   onClick={(e) =>
                     handleNavClick(e, 'register')
                   }
@@ -332,12 +335,12 @@ export const Header: React.FC<HeaderProps> = ({
                   }`}
                 >
                   Create Account
-                </button>
+                </Button>
               </div>
             )}
 
             {/* Mobile Booking */}
-            <button
+            <Button variant="ghost"
               onClick={() => {
                 setMobileMenuOpen(false);
                 onOpenBooking();
@@ -345,7 +348,7 @@ export const Header: React.FC<HeaderProps> = ({
               className="mt-2 w-full inline-flex items-center justify-center bg-ac-primary text-ac-on-primary font-label-md h-12 rounded-full shadow-sm"
             >
               Book a Service
-            </button>
+            </Button>
 
           </div>
         </div>

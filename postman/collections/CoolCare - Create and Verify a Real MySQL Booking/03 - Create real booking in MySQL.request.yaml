@@ -1,0 +1,26 @@
+$kind: http-request
+url: "{{baseUrl}}/api/public/bookings"
+method: POST
+headers:
+  Content-Type: application/json
+  X-CSRF-Token: "{{csrf}}"
+body:
+  type: json
+  content: |-
+    {
+      "serviceType": "Air Conditioning Cleaning",
+      "servicePackage": "Classroom demonstration",
+      "numberOfUnits": 2,
+      "preferredDate": "{{serviceDate}}",
+      "timeWindow": "09:00 AM - 11:00 AM",
+      "serviceAddress": "Classroom demo address - no service required",
+      "specialNotes": "POSTMAN-DEMO {{requestId}} - classroom test only",
+      "requestId": "{{requestId}}"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('HTTP success',()=>pm.expect(pm.response.code).to.be.within(200,299));
+      const b=pm.response.json().booking;pm.collectionVariables.set('bookingId',String(b.id));pm.test('Booking saved as Submitted',()=>pm.expect(b.status).to.eql('Submitted'));console.log('Saved booking ID:',b.id);
+    language: text/javascript
+order: 3000
