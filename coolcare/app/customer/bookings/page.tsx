@@ -9,20 +9,21 @@ import { EmptyState, PageError, PageLoading } from '@/components/page-state';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { coolcareApi } from '@/lib/coolcare-api';
-import { isActiveBooking } from '@/lib/customer-bookings';
+import { isActiveBooking, upcomingBookings } from '@/lib/customer-bookings';
+import { useBookingClock } from '@/lib/use-booking-clock';
 import type { Booking } from '@/lib/coolcare-types';
 
 export default function MyBookingsPage() {
   const [bookings, setBookings] = useState<Booking[] | null>(null);
   const [error, setError] = useState('');
+  const now = useBookingClock();
 
   useEffect(() => {
     coolcareApi.getBookings().then(setBookings).catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to load bookings.'));
   }, []);
 
   const active = bookings?.filter(isActiveBooking) ?? [];
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
-  const upcoming = active.filter((booking) => booking.preferredDate.slice(0, 10) >= today);
+  const upcoming = upcomingBookings(active, now);
 
   return (
     <CoolCareShell>

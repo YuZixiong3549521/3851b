@@ -10,6 +10,16 @@
 - Registered, signed-in customers choose exactly one of **Cleaning**, **Repair** and **Annual Cleaning Bundle**. The public booking dialog, customer booking page and assistant share this selection model. New requests cannot use retired services, memberships or old multi-service selections to bypass it.
 - Prices come from the database. Each booking stores service and price snapshots; historical single-service and multi-service orders remain readable. Current prices and the Singapore market references used to choose them are documented in [SERVICE-PRICING.md](SERVICE-PRICING.md).
 
+## Customer addresses and upcoming bookings
+
+The customer booking page accepts a typed service address and an AC count of 1–10. Customers do not need to select registered equipment. The count determines prices and the work order's unit/part allowance; server-side booking records retain the unit links required by existing technician workflows.
+
+**Add new address** saves an address to the signed-in customer through `POST /api/customer/addresses`. The JSON body contains `addressLine`, optional `label` and six-digit Singapore `postalCode`, and optional `expectedUserId` for account-change detection. The response contains `{ address: { addressId, label, addressLine, postalCode, isDefault } }`. Saving does not create a booking or require any existing AC units. Normalized duplicates return the customer's existing address, including safe retries, without rewriting addresses linked to historical orders. Authentication, CSRF and customer ownership are enforced.
+
+`POST /api/customer/bookings` additionally accepts `serviceAddress` and `numberOfUnits`, alongside the existing service/package, preferred date, `timeSlot`, notes and request ID fields. An optional saved `addressId` must belong to the customer and match the submitted address. The previous `addressId`/`unitIds` payload remains compatible. Both forms use the same transactional booking, pricing, schedule, address quota and request-id protections.
+
+Dashboard UPCOMING uses the nearest appointment start at or after the current Singapore time, excluding completed, cancelled and already-started bookings. The count and card use the same sorted set, refreshed on minute changes and when returning to the page. Older unfinished requests remain available in My Bookings under Active.
+
 ## Annual cleaning and historical packages
 
 The active catalogue has two service records and exactly one annual bundle. `simple_service_catalog` and `simple_package_catalog` identify these entries without renaming old services or rewriting old orders. `maintenance_package`, `package_service`, `web_package_details` and `web_service_pricing` hold the current price configuration; `booking_service` and `booking_package` preserve snapshots.

@@ -4,10 +4,11 @@ import { randomBytes } from 'node:crypto';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { AppError } from './inventory.mjs';
-import { lockCustomer, normalizeAddress, assertAddressBookingLimit, resolveBookingSelection, restoreMembershipVisit, attachBookingSelections,getBookingOptions } from './customer/booking-options.mjs';
+import { lockCustomer, assertAddressBookingLimit, resolveBookingSelection, restoreMembershipVisit, attachBookingSelections,getBookingOptions } from './customer/booking-options.mjs';
 import { writeSelectedBookings,describeCreatedBooking } from './customer/booking-writer.mjs';
 import { assertAnnualRescheduleWindow } from './customer/annual-bookings.mjs';
 import { isCalendarDate,assertBookableDate } from './customer/booking-schedule.mjs';
+import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './customer/address-service.mjs';
 
 export const offers = [
  ['Air Conditioning Cleaning',65,45],['Regular Maintenance',85,55],
@@ -27,7 +28,7 @@ export async function sessionUser(pool,req,role) {
  return user;
 }
 export async function createPublicBooking(pool,user,input,{legacy=false}={}) {
- const data=z.object({expectedUserId:z.coerce.number().int().positive().optional(),serviceType:z.string().min(1).max(120).optional(),serviceId:z.coerce.number().int().positive().optional(),serviceIds:z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),packageId:z.coerce.number().int().positive().optional(),subscriptionId:z.coerce.number().int().positive().optional(),servicePackage:z.string().max(120).optional(),numberOfUnits:z.coerce.number().int().min(1).max(10),preferredDate:legacy?z.string():date,timeWindow:legacy?z.string():z.enum(times),serviceAddress:z.string().trim().min(5).max(255),phone:z.string().max(30).optional(),symptoms:z.string().max(1000).optional(),specialNotes:z.string().max(1000).optional(),requestId:z.uuid().optional()}).parse(input);
+ const data=z.object({expectedUserId:z.coerce.number().int().positive().optional(),serviceType:z.string().min(1).max(120).optional(),serviceId:z.coerce.number().int().positive().optional(),serviceIds:z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),packageId:z.coerce.number().int().positive().optional(),subscriptionId:z.coerce.number().int().positive().optional(),servicePackage:z.string().max(120).optional(),numberOfUnits:z.coerce.number().int().min(1).max(10),preferredDate:legacy?z.string():date,timeWindow:legacy?z.string():z.enum(times),serviceAddress:addressLineSchema,addressId:z.coerce.number().int().positive().optional(),phone:z.string().max(30).optional(),symptoms:z.string().max(1000).optional(),specialNotes:z.string().max(1000).optional(),requestId:z.uuid().optional()}).parse(input);
  if(data.expectedUserId !== undefined && data.expectedUserId !== Number(user.id))throw new AppError('Your signed-in account changed. Reload before booking.',409);
  const conn=await pool.getConnection();
  try {
@@ -35,13 +36,10 @@ export async function createPublicBooking(pool,user,input,{legacy=false}={}) {
   const customer=await lockCustomer(conn,user.id);
   if(data.requestId){const [[existing]]=await conn.execute('SELECT b.booking_id FROM web_booking_details d JOIN booking b ON b.booking_id=d.booking_id WHERE d.request_id=? AND b.customer_id=?',[data.requestId,customer.customerId]);if(existing){const booking=await describeCreatedBooking(conn,existing.booking_id,{legacy});await conn.commit();return {...booking,id:booking.bookingId};}}
   const selection=await resolveBookingSelection(conn,customer.customerId,data,data.numberOfUnits,{legacy});
-  const [addresses]=await conn.execute('SELECT address_id,address_line FROM service_address WHERE customer_id=? ORDER BY address_id',[customer.customerId]);
-  const savedAddress=addresses.find(a=>normalizeAddress(a.address_line)===normalizeAddress(data.serviceAddress));
-  const addressId=savedAddress?.address_id??(await conn.execute("INSERT INTO service_address(customer_id,address_label,address_line,is_default) VALUES (?,'Service address',?,FALSE)",[customer.customerId,data.serviceAddress]))[0].insertId;
-  const [units]=await conn.execute('SELECT unit_id FROM aircon_unit WHERE customer_id=? AND address_id=? ORDER BY unit_id LIMIT 10',[customer.customerId,addressId]);
-  while(units.length<data.numberOfUnits){const [unit]=await conn.execute('INSERT INTO aircon_unit(customer_id,address_id,installation_location) VALUES (?,?,?)',[customer.customerId,addressId,`Unit ${units.length+1}`]);units.push({unit_id:unit.insertId});}
-  const booking=await writeSelectedBookings(conn,selection,{customerId:customer.customerId,userId:user.id,addressId,addressLine:data.serviceAddress,
-    unitIds:units.slice(0,data.numberOfUnits).map(unit=>unit.unit_id),preferredDate:data.preferredDate,timeSlot:data.timeWindow,
+  const address=await findOrCreateServiceAddress(conn,customer.customerId,data.serviceAddress,{addressId:data.addressId});
+  const unitIds=await addressUnitIds(conn,customer.customerId,address.addressId,data.numberOfUnits);
+  const booking=await writeSelectedBookings(conn,selection,{customerId:customer.customerId,userId:user.id,addressId:address.addressId,addressLine:address.addressLine,
+    unitIds,preferredDate:data.preferredDate,timeSlot:data.timeWindow,
     problemDescription:data.symptoms,phone:data.phone||user.phone,specialNotes:data.specialNotes,servicePackage:data.servicePackage,requestId:data.requestId,legacy,source:'Created from AC Care website.'});
   await conn.commit();return {...booking,id:booking.bookingId};
  }catch(e){await conn.rollback();throw e;}finally{conn.release();}

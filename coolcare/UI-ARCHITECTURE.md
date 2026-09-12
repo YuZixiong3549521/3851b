@@ -25,6 +25,8 @@ The authenticated customer Dashboard exposes **Ask CoolCare Assistant**. This is
 
 All booking and reschedule forms require at least 14 calendar days of notice in Asia/Singapore and Monday–Friday service dates, backed by server validation. Annual previews roll subsequent weekend visits forward to Monday without moving the original quarterly anchor. Both My Bookings pages show active requests only; Booking History keeps completed reports and cancelled requests in separate tabs. Existing data and list API contracts are preserved.
 
+The customer booking page retains four steps: Service, Address, Schedule and Review. Address entry is editable text with an optional saved-address chooser, **Add new address**, and an AC count instead of individual equipment checkboxes. The shared fields save addresses through the authenticated API and make the returned address immediately available for booking; customers with no registered equipment can complete the flow. UPCOMING uses appointment start times in Singapore, and its count and nearest-appointment card share the same filter, including same-day time handling and updates when the clock changes or the page regains focus.
+
 ## Data boundary (existing portals)
 
 React calls `/api/...`; Express validates the request and session, checks authorization and accesses MySQL. React never receives database credentials. Postman calls the same API. No database or API migration is required for the UI consolidation.
@@ -33,7 +35,9 @@ React calls `/api/...`; Express validates the request and session, checks author
 
 The booking workflow extension uses the same UI primitives and adds `booking-service-selection.tsx` shared by all three customer booking surfaces, plus `inventory-transaction-details.tsx` for admin corrections. API contracts, package snapshots, stock audit and mail setup are documented in [BOOKING-WORKFLOWS.md](BOOKING-WORKFLOWS.md).
 
-Current validation covers 40 unit/integration tests, TypeScript and both builds. Real MySQL checks cover rolling address limits, customer locks, the three-choice catalogue, 14-day lead time and weekdays, annual dates and price allocations, all-or-nothing four-visit creation/email queuing, expired-date retries, quarterly rescheduling, cancellation, historical data retention, stock audit and technician assessment authorization/versioning. Singapore midnight boundaries are unit-tested. Mutating automated fixtures roll back.
+Current validation covers 49 unit/integration tests, TypeScript and both builds. Real MySQL checks cover address saving/deduplication, count-based and legacy booking inputs, rolling address limits, customer locks, the three-choice catalogue, 14-day lead time and weekdays, annual dates and price allocations, all-or-nothing four-visit creation/email queuing, expired-date retries, quarterly rescheduling, cancellation, historical data retention, stock audit and technician assessment authorization/versioning. Singapore midnight boundaries and nearest upcoming appointment sorting are unit-tested. Mutating automated fixtures roll back.
+
+The address-flow browser check uses a new customer with no equipment, saves and rereads an address, creates four annual visits and a typed-address single visit, verifies their real MySQL quantities/prices/unit links, checks nearest-upcoming selection, and corrects a definitively rejected WebMCP request. Desktop and 390px layouts were inspected. The isolated QA account, addresses and bookings were removed afterward.
 
 The latest browser checks cover both active booking lists, completed/cancelled history, date rejection in all three creation forms, quarterly Monday previews and mobile rescheduling at desktop/390px widths. Nine live HTTP rejection checks cover day 13, Saturday and Sunday through both creation APIs and rescheduling; existing bookings remain unchanged.
 

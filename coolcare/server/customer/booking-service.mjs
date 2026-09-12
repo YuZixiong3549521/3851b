@@ -5,21 +5,35 @@ import { lockCustomer, resolveBookingSelection, attachBookingSelections } from '
 import { writeSelectedBookings,describeCreatedBooking } from './booking-writer.mjs';
 import { config } from './config.mjs';
 import { isCalendarDate } from './booking-schedule.mjs';
+import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './address-service.mjs';
 
 const timeSlots = ['09:00 - 11:00', '11:00 - 13:00', '14:00 - 16:00', '16:00 - 18:00'];
 
 export const createBookingSchema = z.object({
   expectedUserId: z.coerce.number().int().positive().optional(),
   serviceId: z.coerce.number().int().positive().optional(),
+  serviceType: z.string().trim().min(1).max(120).optional(),
   serviceIds: z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),
   packageId: z.coerce.number().int().positive().optional(),
   subscriptionId: z.coerce.number().int().positive().optional(),
   requestId: z.uuid().optional(),
-  addressId: z.coerce.number().int().positive(),
-  unitIds: z.array(z.coerce.number().int().positive()).min(1).max(10),
+  addressId: z.coerce.number().int().positive().optional(),
+  unitIds: z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),
+  serviceAddress: addressLineSchema.optional(),
+  numberOfUnits: z.coerce.number().int().min(1).max(10).optional(),
   preferredDate: z.string().refine(isCalendarDate, 'Choose a valid service date.'),
   timeSlot: z.enum(timeSlots),
   problemDescription: z.string().trim().max(1000).optional().default(''),
+}).superRefine((input,context)=>{
+  const countMode=input.serviceAddress!==undefined||input.numberOfUnits!==undefined;
+  if(countMode) {
+    if(input.serviceAddress===undefined)context.addIssue({code:'custom',path:['serviceAddress'],message:'Enter a service address.'});
+    if(input.numberOfUnits===undefined)context.addIssue({code:'custom',path:['numberOfUnits'],message:'Choose the number of aircon units.'});
+    if(input.unitIds!==undefined)context.addIssue({code:'custom',path:['unitIds'],message:'Choose a unit count or registered units, not both.'});
+  }else {
+    if(input.addressId===undefined)context.addIssue({code:'custom',path:['addressId'],message:'Choose a service address.'});
+    if(input.unitIds===undefined)context.addIssue({code:'custom',path:['unitIds'],message:'Choose at least one aircon unit.'});
+  }
 });
 
 export function bookingReference(bookingId, createdAt) {
@@ -53,24 +67,26 @@ export async function createBooking(pool, untrustedInput, userId) {
       }
     }
 
-    const [addressRows] = await connection.execute(
-      `SELECT address_id,address_line FROM service_address WHERE address_id = ? AND customer_id = ? LIMIT 1`,
-      [input.addressId, customer.customerId],
-    );
-    if (addressRows.length === 0) throw new HttpError(400, 'The selected service address is not available.');
-
-    const uniqueUnitIds = [...new Set(input.unitIds)];
-    if (uniqueUnitIds.length !== input.unitIds.length) throw new HttpError(400, 'An aircon unit was selected more than once.');
-    const placeholders = uniqueUnitIds.map(() => '?').join(', ');
-    const [unitRows] = await connection.execute(
-      `SELECT unit_id FROM aircon_unit WHERE customer_id = ? AND address_id = ? AND unit_id IN (${placeholders})`,
-      [customer.customerId, input.addressId, ...uniqueUnitIds],
-    );
-    if (unitRows.length !== uniqueUnitIds.length) throw new HttpError(400, 'One or more selected aircon units are not available.');
+    let address;
+    let uniqueUnitIds;
+    if(input.numberOfUnits!==undefined) {
+      address=await findOrCreateServiceAddress(connection,customer.customerId,input.serviceAddress,{addressId:input.addressId});
+      uniqueUnitIds=await addressUnitIds(connection,customer.customerId,address.addressId,input.numberOfUnits);
+    }else {
+      const [[savedAddress]]=await connection.execute(`SELECT address_id AS addressId,address_line AS addressLine FROM service_address
+        WHERE address_id=? AND customer_id=? LIMIT 1`,[input.addressId,customer.customerId]);
+      if(!savedAddress)throw new HttpError(400,'The selected service address is not available.');
+      address=savedAddress;
+      uniqueUnitIds=[...new Set(input.unitIds)];
+      if(uniqueUnitIds.length!==input.unitIds.length)throw new HttpError(400,'An aircon unit was selected more than once.');
+      const [unitRows]=await connection.execute(`SELECT unit_id FROM aircon_unit WHERE customer_id=? AND address_id=?
+        AND unit_id IN (${uniqueUnitIds.map(()=>'?').join(',')})`,[customer.customerId,address.addressId,...uniqueUnitIds]);
+      if(unitRows.length!==uniqueUnitIds.length)throw new HttpError(400,'One or more selected aircon units are not available.');
+    }
 
     const selection=await resolveBookingSelection(connection,customer.customerId,input,uniqueUnitIds.length);
     const booking=await writeSelectedBookings(connection,selection,{customerId:customer.customerId,userId:customer.userId,
-      addressId:input.addressId,addressLine:addressRows[0].address_line,unitIds:uniqueUnitIds,preferredDate:input.preferredDate,
+      addressId:address.addressId,addressLine:address.addressLine,unitIds:uniqueUnitIds,preferredDate:input.preferredDate,
       timeSlot:input.timeSlot,problemDescription:input.problemDescription,phone:customer.phone,requestId:input.requestId,source:'Created from customer portal.'});
     await connection.commit();
     return {

@@ -4,6 +4,7 @@ import { asyncRoute, HttpError } from './errors.mjs';
 import { getDemoCustomer } from './customer.mjs';
 import { createBooking, getBookingReport, listBookings } from './booking-service.mjs';
 import { getBookingOptions } from './booking-options.mjs';
+import { createCustomerAddress } from './address-service.mjs';
 
 export function createCustomerRouter(pool) {
 const app = express.Router();
@@ -36,6 +37,10 @@ app.get('/customer-context', asyncRoute(async (request, response) => {
 app.get('/services', asyncRoute(async (request, response) => {
   const {services}=await getBookingOptions(pool);
   response.json({services:services.map(service=>({...service,serviceName:service.name}))});
+}));
+
+app.post('/addresses',asyncRoute(async(request,response)=>{
+  response.status(201).json({address:await createCustomerAddress(pool,request.customerUser.id,request.body)});
 }));
 
 app.get('/booking-options', asyncRoute(async (request,response) => {

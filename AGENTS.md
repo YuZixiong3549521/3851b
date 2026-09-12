@@ -26,6 +26,6 @@
 - Use root setup/start scripts documented in README. Avoid starting duplicate local servers.
 - Run checks relevant to the changes: `npm test`, `npm --prefix coolcare run test:db`, `node coolcare/node_modules/typescript/bin/tsc --noEmit -p coolcare/tsconfig.json`, and `npm run build`.
 - Database integration tests need the local database running. For UI changes also check the affected pages and a narrow viewport; report the actual test scope and any untested areas.
-- Inspect Git status first and preserve other people's uncommitted work. For new team tasks, use a separate `codex/<short-task-name>` branch and submit a pull request; follow explicit user branch/push instructions when provided.
+- Inspect Git status first and preserve other people's uncommitted work. The repository owner's standing instruction is to commit validated updates directly to `main` and push to `origin/main`; do not require a feature branch or pull request unless the user explicitly requests one. Fetch and integrate upstream changes before pushing.
 - Never force-push shared branches. Check upstream changes before pushing, and do not commit local credentials or test session cookies.
 - Keep changes scoped to the assigned task. Update setup/API/UI documentation when changing those interfaces.

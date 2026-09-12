@@ -1,8 +1,10 @@
 import type {
+  Address,
   Booking,
   BookingInput,
   BookingOptions,
   CreatedBooking,
+  CreateAddressInput,
   CustomerContext,
   EmailNotification,
   Service,
@@ -40,6 +42,13 @@ export const coolcareApi = {
     (await apiRequest<{ customer: CustomerContext['customer']; addresses: CustomerContext['addresses']; units: CustomerContext['units'] }>('/customer-context')),
   getServices: async () => (await apiRequest<{ services: Service[] }>('/services')).services,
   getBookingOptions: async () => apiRequest<BookingOptions>('/booking-options'),
+  createAddress: async (input: CreateAddressInput) => {
+    const result = await apiRequest<{ address: Address }>('/addresses', { method: 'POST', body: JSON.stringify(input) });
+    if (!result.address || !Number.isInteger(Number(result.address.addressId)) || Number(result.address.addressId) < 1 || typeof result.address.addressLine !== 'string') {
+      throw new Error('The saved address could not be verified. Retry saving with the same details.');
+    }
+    return result.address;
+  },
   getBookings: async (scope?: 'upcoming') =>
     (await apiRequest<{ bookings: Booking[] }>(`/bookings${scope ? `?scope=${scope}` : ''}`)).bookings,
   getHistory: async () => (await apiRequest<{ bookings: Booking[] }>('/bookings/history')).bookings,

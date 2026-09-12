@@ -14,6 +14,14 @@ export type Address = {
   isDefault: number | boolean;
 };
 
+export type CreateAddressInput = {
+  addressLine: string;
+  label?: string;
+  postalCode?: string;
+  expectedUserId?: number;
+  requestId?: string;
+};
+
 export type AirconUnit = {
   unitId: number;
   addressId: number | null;
@@ -149,8 +157,10 @@ export type BookingInput = {
   serviceIds?: number[];
   packageId?: number;
   requestId?: string;
-  addressId: number;
-  unitIds: number[];
+  addressId?: number;
+  unitIds?: number[];
+  serviceAddress?: string;
+  numberOfUnits?: number;
   preferredDate: string;
   timeSlot: '09:00 - 11:00' | '11:00 - 13:00' | '14:00 - 16:00' | '16:00 - 18:00';
   problemDescription?: string;

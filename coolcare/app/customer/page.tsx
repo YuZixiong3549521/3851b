@@ -12,7 +12,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate } from '@/lib/format';
-import { nextUpcomingBooking } from '@/lib/customer-bookings';
+import { upcomingBookings } from '@/lib/customer-bookings';
+import { useBookingClock } from '@/lib/use-booking-clock';
 import type { Booking, CustomerContext } from '@/lib/coolcare-types';
 
 export default function Home() {
@@ -20,6 +21,7 @@ export default function Home() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [history, setHistory] = useState<Booking[]>([]);
   const [error, setError] = useState('');
+  const now = useBookingClock();
 
   useEffect(() => {
     Promise.all([coolcareApi.getCustomerContext(), coolcareApi.getBookings('upcoming'), coolcareApi.getHistory()])
@@ -31,7 +33,8 @@ export default function Home() {
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to load your dashboard.'));
   }, []);
 
-  const upcoming = nextUpcomingBooking(bookings, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }));
+  const futureBookings = upcomingBookings(bookings, now);
+  const upcoming = futureBookings[0];
   const firstName = context?.customer.fullName.split(' ')[0] ?? 'there';
   const annualBundles = [...new Map(bookings.flatMap(booking => booking.annualBundle ? [[booking.annualBundle.seriesId, booking.annualBundle] as const] : [])).values()];
 
@@ -63,8 +66,8 @@ export default function Home() {
             <section aria-labelledby="overview-heading" className="mt-8">
               <div className="mb-4"><p className="text-sm font-semibold text-primary">AT A GLANCE</p><h2 id="overview-heading" className="mt-1 text-2xl font-bold tracking-tight">Your home comfort</h2></div>
               <div className="grid gap-4 sm:grid-cols-3">
-                <MetricCard icon={Wind} label="Registered units" value={String(context.units.length)} detail={context.units.map((unit) => unit.brand).filter(Boolean).join(' · ') || 'No units'} />
-                <MetricCard icon={CalendarDays} label="Upcoming requests" value={String(bookings.length)} detail={bookings.length ? 'Active service requests' : 'Nothing scheduled'} />
+                <MetricCard icon={Wind} label="Registered units" value={String(context.units.length)} detail={context.units.map((unit) => unit.brand).filter(Boolean).join(' · ') || (context.units.length ? 'Linked to your service addresses' : 'No units')} />
+                <MetricCard icon={CalendarDays} label="Upcoming requests" value={String(futureBookings.length)} detail={futureBookings.length ? 'Future service requests' : 'Nothing upcoming'} />
                 <MetricCard icon={History} label="Completed services" value={String(history.length)} detail={history[0] ? `Last visit ${formatDate(history[0].preferredDate, { day: 'numeric', month: 'short' })}` : 'No previous visits'} />
               </div>
             </section>
@@ -72,7 +75,7 @@ export default function Home() {
             <section className="mt-8 grid gap-6 xl:grid-cols-[1.5fr_0.8fr]">
               <Card className="border-border/80 shadow-sm">
                 <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
-                  <div><p className="text-sm font-semibold text-primary">{upcoming ? 'UPCOMING' : 'READY WHEN YOU ARE'}</p><CardTitle className="mt-1 text-xl">{upcoming?.annualBundle ? upcoming.annualBundle.name + ' · Visit ' + upcoming.annualBundle.visitNumber + ' of 4' : upcoming?.serviceName ?? 'No active booking'}</CardTitle></div>
+                  <div><p className="text-sm font-semibold text-primary">{upcoming ? 'UPCOMING' : 'READY WHEN YOU ARE'}</p><CardTitle className="mt-1 text-xl">{upcoming?.annualBundle ? upcoming.annualBundle.name + ' · Visit ' + upcoming.annualBundle.visitNumber + ' of 4' : upcoming?.serviceName ?? 'No upcoming booking'}</CardTitle></div>
                   {upcoming && <StatusBadge status={upcoming.status} />}
                 </CardHeader>
                 <CardContent>
