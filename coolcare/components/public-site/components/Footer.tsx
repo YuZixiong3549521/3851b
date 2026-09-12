@@ -30,22 +30,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenBooking }) => 
           <p className="font-body-md text-body-md text-ac-on-surface-variant">
             Reliable Air Conditioning Service, Made Simple.
           </p>
-          <div className="flex gap-sm mt-sm">
-            <Button variant="ghost"
-              type="button"
-              className="w-10 h-10 rounded-full bg-ac-surface flex items-center justify-center text-ac-primary hover:bg-ac-primary hover:text-ac-on-primary transition-colors shadow-sm cursor-pointer border-none"
-              title="QR Code"
-            >
-              <SiteIcon className="">qr_code_2</SiteIcon>
-            </Button>
-            <Button variant="ghost"
-              type="button"
-              className="w-10 h-10 rounded-full bg-ac-surface flex items-center justify-center text-ac-primary hover:bg-ac-primary hover:text-ac-on-primary transition-colors shadow-sm cursor-pointer border-none"
-              title="Photo Camera"
-            >
-              <SiteIcon className="">photo_camera</SiteIcon>
-            </Button>
-          </div>
+
         </div>
 
         {/* Quick Links */}
@@ -73,7 +58,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenBooking }) => 
             onClick={(e) => handleNav(e, 'home', 'promotions')}
             className="font-body-md text-body-md text-ac-on-surface-variant hover:text-ac-primary transition-all text-left bg-transparent border-none p-0 cursor-pointer"
           >
-            Promotions
+            Pricing
           </Button>
         </div>
 
@@ -100,27 +85,18 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenBooking }) => 
           </Button>
         </div>
 
-        {/* Contact Info */}
+        {/* Booking help */}
         <div className="flex flex-col gap-sm">
-          <h4 className="font-label-md text-label-md font-semibold text-ac-on-background mb-xs">Contact Us</h4>
-          <div className="flex items-start gap-xs text-ac-on-surface-variant">
-            <SiteIcon className=" text-[20px] mt-1">call</SiteIcon>
-            <div>
-              <p className="font-body-md text-body-md font-medium text-ac-on-surface">1-800-AC-CARE</p>
-              <p className="font-label-sm text-label-sm opacity-80">Mon-Sat, 8am-8pm</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-xs text-ac-on-surface-variant mt-xs">
-            <SiteIcon className=" text-[20px]">mail</SiteIcon>
-            <p className="font-body-md text-body-md">support@accare.example.com</p>
-          </div>
+          <h4 className="font-label-md text-label-md font-semibold text-ac-on-background mb-xs">Booking Help</h4>
+          <p className="font-body-md text-body-md text-ac-on-surface-variant">Sign in to review your appointments. Unassigned requests can be cancelled or rescheduled in My Bookings.</p>
+          <Button variant="ghost" onClick={(event) => handleNav(event, 'bookings')} className="justify-start px-0 text-ac-primary">Open My Bookings</Button>
         </div>
       </div>
 
       {/* Copyright */}
       <div className="border-t border-ac-outline-variant/30 py-md px-gutter text-center">
         <p className="font-body-md text-body-md text-ac-on-surface-variant">
-          © 2024 AC Care. Reliable Air Conditioning Service, Made Simple.
+          © {new Date().getFullYear()} AC Care. Reliable Air Conditioning Service, Made Simple.
         </p>
       </div>
     </footer>

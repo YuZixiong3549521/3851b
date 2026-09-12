@@ -78,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={(e) => handleNavClick(e, 'home', 'promotions')}
             className="font-label-md text-label-md text-ac-on-surface-variant hover:text-ac-primary transition-colors cursor-pointer bg-transparent border-none p-0 pb-1"
           >
-            Promotions
+            Pricing
           </Button>
 
           <Button variant="ghost"
@@ -232,7 +232,7 @@ export const Header: React.FC<HeaderProps> = ({
               }
               className="text-left py-2 px-3 rounded-lg font-label-md text-ac-on-surface hover:bg-ac-surface-container-low"
             >
-              Promotions
+              Pricing
             </Button>
 
             <Button variant="ghost"

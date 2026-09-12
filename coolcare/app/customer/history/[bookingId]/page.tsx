@@ -27,7 +27,7 @@ export default function ServiceReportPage() {
   return (
     <CoolCareShell>
       <div className="mx-auto max-w-5xl px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
-        <Button render={<Link href="/customer/history" />} variant="ghost" className="mb-5 -ml-3"><ArrowLeft className="size-4" aria-hidden="true" />Back to maintenance history</Button>
+        <Button nativeButton={false} render={<Link href="/customer/history" />} variant="ghost" className="mb-5 -ml-3"><ArrowLeft className="size-4" aria-hidden="true" />Back to maintenance history</Button>
         {!report && !error && <PageLoading />}
         {!Number.isInteger(bookingId) && <PageError message="Invalid booking identifier." />}
         {error && <PageError message={error} />}
@@ -39,6 +39,8 @@ export default function ServiceReportPage() {
             </section>
 
             <div className="mt-6 grid gap-6 lg:grid-cols-2">
+              {report.cleaningMethod && <ReportSection icon={Snowflake} title="Technician cleaning assessment" text={report.cleaningMethod + ' cleaning recommended after inspection.'} />}
+              {report.assessmentNote && <ReportSection icon={ClipboardCheck} title="Assessment notes" text={report.assessmentNote} />}
               <ReportSection icon={Wrench} title="Work performed" text={report.workPerformed} />
               <ReportSection icon={Snowflake} title="Problem found" text={report.problemFound ?? 'No additional problem was recorded.'} />
               <ReportSection icon={CheckCircle2} title="Solution applied" text={report.solutionApplied ?? 'No additional solution was recorded.'} />

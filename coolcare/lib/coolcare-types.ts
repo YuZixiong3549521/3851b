@@ -39,6 +39,35 @@ export type Service = {
   durationMinutes: number;
 };
 
+export type BookingServiceOption = {
+  serviceId: number;
+  name: string;
+  description: string | null;
+  basePrice: number;
+  additionalUnitPrice: number;
+  code: 'cleaning' | 'repair';
+  pricingNote: string;
+};
+
+export type ServiceBundle = {
+  packageId: number;
+  name: string;
+  description: string | null;
+  price: number;
+  serviceIds: number[];
+  includedUnits: number;
+  additionalUnitPrice: number;
+  code: 'annual-cleaning';
+  includedVisits: number;
+  pricingNote: string;
+};
+
+export type BookingOptions = {
+  services: BookingServiceOption[];
+  bundles: ServiceBundle[];
+  subscriptions: [];
+};
+
 export type Booking = {
   bookingId: number;
   bookingReference: string;
@@ -55,7 +84,31 @@ export type Booking = {
   technicianName: string | null;
   reportId: number | null;
   units: AirconUnit[];
+  annualBundle?: AnnualBundle | null;
 };
+
+export type AnnualVisit = {
+  bookingId: number;
+  visitNumber: number;
+  preferredDate: string;
+  timeSlot: string;
+  totalAmount: number;
+  status: string;
+  windowStart?: string;
+  windowEnd?: string;
+};
+
+export type AnnualBundle = {
+  seriesId: number;
+  name: string;
+  totalAmount: number;
+  visitNumber?: number;
+  windowStart?: string;
+  windowEnd?: string;
+  visits: AnnualVisit[];
+};
+
+export type EmailNotification = { status: 'queued' | 'sent' | 'disabled'; mode: 'local' | 'smtp'; recipient: string };
 
 export type CreatedBooking = {
   bookingId: number;
@@ -63,6 +116,8 @@ export type CreatedBooking = {
   status: string;
   serviceName: string;
   totalAmount: number;
+  emailNotification?: EmailNotification;
+  annualBundle?: AnnualBundle | null;
 };
 
 export type ServiceReport = {
@@ -78,6 +133,8 @@ export type ServiceReport = {
   solutionApplied: string | null;
   checklistResult: string | null;
   submittedTime: string | null;
+  cleaningMethod?: 'Regular' | 'Chemical' | null;
+  assessmentNote?: string | null;
   photos: Array<{
     photoId: number;
     photoUrl: string;
@@ -87,7 +144,11 @@ export type ServiceReport = {
 };
 
 export type BookingInput = {
-  serviceId: number;
+  expectedUserId?: number;
+  serviceId?: number;
+  serviceIds?: number[];
+  packageId?: number;
+  requestId?: string;
   addressId: number;
   unitIds: number[];
   preferredDate: string;

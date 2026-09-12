@@ -15,6 +15,8 @@ test('public registration, sessions, booking, retry, cross-portal reads, ownersh
  try{
   assert.equal((await req('/api/public/bookings','POST',{})).status,403);
   csrf=(await (await req('/api/session')).json()).csrf;
+  assert.equal((await req('/api/customer/bookings')).status,401);
+  assert.equal((await req('/api/public/bookings','POST',{})).status,401);
   const account={fullName:'Integration Test',email:`test-${randomUUID()}@example.test`,phone:'12345678',password:'TestPassword2026!',confirmPassword:'TestPassword2026!',propertyType:'Apartment'};
   assert.equal((await req('/api/public/register','POST',account)).status,201);
   assert.equal((await req('/api/public/register','POST',account)).status,409);
@@ -24,10 +26,13 @@ test('public registration, sessions, booking, retry, cross-portal reads, ownersh
   assert.equal((await req('/api/parts')).status,401);
   assert.equal((await req('/api/technician/jobs')).status,403);
   const tomorrow=new Date(Date.now()+86400000).toISOString().slice(0,10);
-  const input={serviceType:'Air Conditioning Cleaning',numberOfUnits:2,preferredDate:tomorrow,timeWindow:'09:00 AM - 11:00 AM',serviceAddress:'123 Integration Test Street',requestId:randomUUID(),userId:1};
-  const created=await (await req('/api/public/bookings','POST',input)).json();assert.equal(created.success,true);assert.equal(created.booking.totalAmount,110);
+  const input={serviceType:'Cleaning',numberOfUnits:2,preferredDate:tomorrow,timeWindow:'09:00 AM - 11:00 AM',serviceAddress:'123 Integration Test Street',requestId:randomUUID(),userId:1};
+  const created=await (await req('/api/public/bookings','POST',input)).json();assert.equal(created.success,true);assert.equal(created.booking.totalAmount,75);
   const repeat=await (await req('/api/public/bookings','POST',input)).json();assert.equal(repeat.booking.id,created.booking.id);
   const oldPortal=await (await req('/api/customer/bookings')).json();assert.equal(oldPortal.bookings.length,1);assert.equal(oldPortal.bookings[0].bookingId,created.booking.id);
+  const [[persisted]]=await c.execute('SELECT COUNT(*) AS count FROM booking WHERE booking_id=?',[created.booking.id]);assert.equal(persisted.count,1);
+  assert.equal((await req('/api/public/bookings','POST',{...input,requestId:randomUUID(),preferredDate:'2027-02-30'})).status,400);
+  assert.equal((await req('/api/public/bookings','POST',{...input,requestId:randomUUID(),numberOfUnits:11})).status,400);
   assert.equal((await req('/api/public/bookings/user/1')).status,403);
   assert.equal((await req('/api/public/bookings/1/status','PATCH',{status:'Cancelled'})).status,404);
   assert.equal((await req(`/api/public/bookings/${created.booking.id}/reschedule`,'PATCH',{preferredDate:'2027-02-30',timeWindow:input.timeWindow})).status,400);
@@ -37,5 +42,16 @@ test('public registration, sessions, booking, retry, cross-portal reads, ownersh
   assert.equal((await req(`/api/public/bookings/${created.booking.id}/reschedule`,'PATCH',{preferredDate:tomorrow,timeWindow:input.timeWindow})).status,409);
   assert.equal((await req('/api/public/logout','POST',{})).status,200);
   assert.equal((await req('/api/customer/bookings')).status,401);
+  const second={...account,email:`other-${randomUUID()}@example.test`};
+  csrf=(await (await req('/api/session')).json()).csrf;
+  assert.equal((await req('/api/public/register','POST',second)).status,201);
+  csrf=(await (await req('/api/public/login','POST',second)).json()).csrf;
+  assert.deepEqual((await (await req('/api/customer/bookings')).json()).bookings,[]);
+  assert.equal((await req(`/api/customer/bookings/${created.booking.id}/report`)).status,404);
+  assert.equal((await req('/api/public/logout','POST',{})).status,200);
+  csrf=(await (await req('/api/session')).json()).csrf;
+  csrf=(await (await req('/api/public/login','POST',{email:'chris.lim@coolcare.demo',password:'CoolCareDemo2026!'})).json()).csrf;
+  assert.equal((await req('/api/customer/bookings')).status,403);
+  assert.equal((await req('/api/public/bookings','POST',input)).status,403);
  }finally{await new Promise(r=>server.close(r));await c.rollback();c.release();}
 });

@@ -216,7 +216,7 @@ export default function App() {
 
       setPendingBookingService(
         serviceName ||
-          'Air Conditioning Cleaning'
+          'Cleaning'
       );
 
       showToast(

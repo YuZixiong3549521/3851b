@@ -1,12 +1,19 @@
 import { z } from 'zod';
 import { getDemoCustomer } from './customer.mjs';
 import { HttpError } from './errors.mjs';
-import { offers } from '../public-site.mjs';
+import { lockCustomer, resolveBookingSelection, attachBookingSelections } from './booking-options.mjs';
+import { writeSelectedBookings,describeCreatedBooking } from './booking-writer.mjs';
+import { config } from './config.mjs';
 
 const timeSlots = ['09:00 - 11:00', '11:00 - 13:00', '14:00 - 16:00', '16:00 - 18:00'];
 
 export const createBookingSchema = z.object({
-  serviceId: z.coerce.number().int().positive(),
+  expectedUserId: z.coerce.number().int().positive().optional(),
+  serviceId: z.coerce.number().int().positive().optional(),
+  serviceIds: z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),
+  packageId: z.coerce.number().int().positive().optional(),
+  subscriptionId: z.coerce.number().int().positive().optional(),
+  requestId: z.uuid().optional(),
   addressId: z.coerce.number().int().positive(),
   unitIds: z.array(z.coerce.number().int().positive()).min(1).max(10),
   preferredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose a valid service date.'),
@@ -23,8 +30,8 @@ function assertFutureDate(dateText) {
   const selected = new Date(`${dateText}T00:00:00`);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  if (Number.isNaN(selected.getTime()) || selected < today) {
-    throw new HttpError(400, 'The preferred service date cannot be in the past.');
+  if (Number.isNaN(selected.getTime()) || selected < today || `${selected.getFullYear()}-${String(selected.getMonth()+1).padStart(2,'0')}-${String(selected.getDate()).padStart(2,'0')}` !== dateText) {
+    throw new HttpError(400, 'Choose a valid service date today or later.');
   }
 }
 
@@ -40,19 +47,23 @@ export async function createBooking(pool, untrustedInput, userId) {
 
   try {
     await connection.beginTransaction();
+    await lockCustomer(connection,userId,config.demoCustomerEmail);
     const customer = await getDemoCustomer(connection, userId);
-
-    const [serviceRows] = await connection.execute(
-      `SELECT service_id AS serviceId, service_name AS serviceName, base_price AS basePrice
-       FROM service_catalog
-       WHERE service_id = ? AND service_status = 'Active'
-       LIMIT 1`,
-      [input.serviceId],
-    );
-    if (serviceRows.length === 0) throw new HttpError(400, 'The selected service is not available.');
+    if (input.expectedUserId !== undefined && input.expectedUserId !== Number(customer.userId)) {
+      throw new HttpError(409, 'Your signed-in account changed. Reload before booking.');
+    }
+    if (input.requestId) {
+      const [[existing]] = await connection.execute(`SELECT b.booking_id AS bookingId,b.created_at AS createdAt,b.booking_status AS status,b.total_amount AS totalAmount
+        FROM booking b JOIN web_booking_details d ON d.booking_id=b.booking_id WHERE b.customer_id=? AND d.request_id=?`, [customer.customerId,input.requestId]);
+      if (existing) {
+        const booking=await describeCreatedBooking(connection,existing.bookingId);
+        await connection.commit();
+        return { ...booking, bookingReference:bookingReference(existing.bookingId,existing.createdAt) };
+      }
+    }
 
     const [addressRows] = await connection.execute(
-      `SELECT address_id FROM service_address WHERE address_id = ? AND customer_id = ? LIMIT 1`,
+      `SELECT address_id,address_line FROM service_address WHERE address_id = ? AND customer_id = ? LIMIT 1`,
       [input.addressId, customer.customerId],
     );
     if (addressRows.length === 0) throw new HttpError(400, 'The selected service address is not available.');
@@ -61,45 +72,19 @@ export async function createBooking(pool, untrustedInput, userId) {
     if (uniqueUnitIds.length !== input.unitIds.length) throw new HttpError(400, 'An aircon unit was selected more than once.');
     const placeholders = uniqueUnitIds.map(() => '?').join(', ');
     const [unitRows] = await connection.execute(
-      `SELECT unit_id FROM aircon_unit WHERE customer_id = ? AND unit_id IN (${placeholders})`,
-      [customer.customerId, ...uniqueUnitIds],
+      `SELECT unit_id FROM aircon_unit WHERE customer_id = ? AND address_id = ? AND unit_id IN (${placeholders})`,
+      [customer.customerId, input.addressId, ...uniqueUnitIds],
     );
     if (unitRows.length !== uniqueUnitIds.length) throw new HttpError(400, 'One or more selected aircon units are not available.');
 
-    const offer = offers.find(item => item[0] === serviceRows[0].serviceName);
-    const totalAmount = offer ? Number(serviceRows[0].basePrice) + Math.max(0, uniqueUnitIds.length - 1) * offer[2] : Number(serviceRows[0].basePrice) * uniqueUnitIds.length;
-    const [result] = await connection.execute(
-      `INSERT INTO booking
-        (customer_id, address_id, service_id, preferred_service_date, preferred_time_slot,
-         problem_description, booking_status, total_amount)
-       VALUES (?, ?, ?, ?, ?, ?, 'Submitted', ?)`,
-      [
-        customer.customerId,
-        input.addressId,
-        input.serviceId,
-        input.preferredDate,
-        input.timeSlot,
-        input.problemDescription || null,
-        totalAmount,
-      ],
-    );
-
-    const unitValues = uniqueUnitIds.map((unitId) => [result.insertId, unitId]);
-    await connection.query('INSERT INTO booking_aircon_unit (booking_id, unit_id) VALUES ?', [unitValues]);
-    await connection.execute(
-      `INSERT INTO booking_status_history
-        (booking_id, old_status, new_status, changed_by_user_id, change_note)
-       VALUES (?, NULL, 'Submitted', ?, 'Booking created from customer portal.')`,
-      [result.insertId, customer.userId],
-    );
-
+    const selection=await resolveBookingSelection(connection,customer.customerId,input,uniqueUnitIds.length);
+    const booking=await writeSelectedBookings(connection,selection,{customerId:customer.customerId,userId:customer.userId,
+      addressId:input.addressId,addressLine:addressRows[0].address_line,unitIds:uniqueUnitIds,preferredDate:input.preferredDate,
+      timeSlot:input.timeSlot,problemDescription:input.problemDescription,phone:customer.phone,requestId:input.requestId,source:'Created from customer portal.'});
     await connection.commit();
     return {
-      bookingId: result.insertId,
-      bookingReference: bookingReference(result.insertId, new Date().getFullYear()),
-      status: 'Submitted',
-      serviceName: serviceRows[0].serviceName,
-      totalAmount,
+      ...booking,
+      bookingReference: bookingReference(booking.bookingId,booking.createdAt),
     };
   } catch (error) {
     await connection.rollback();
@@ -166,11 +151,11 @@ export async function listBookings(pool, scope = 'all', userId) {
   );
   const unitsByBooking = Map.groupBy(unitRows, (row) => row.bookingId);
 
-  return rows.map((row) => ({
+  return attachBookingSelections(pool, rows.map((row) => ({
     ...row,
     bookingReference: bookingReference(row.bookingId, row.createdAt),
     units: unitsByBooking.get(row.bookingId) ?? [],
-  }));
+  })));
 }
 
 export async function getBookingReport(pool, bookingId, userId) {
@@ -188,11 +173,14 @@ export async function getBookingReport(pool, bookingId, userId) {
        sr.problem_found AS problemFound,
        sr.solution_applied AS solutionApplied,
        sr.checklist_result AS checklistResult,
-       sr.submitted_time AS submittedTime
+       sr.submitted_time AS submittedTime,
+       ca.cleaning_method AS cleaningMethod,
+       ca.assessment_note AS assessmentNote
      FROM booking b
      JOIN service_catalog sc ON sc.service_id = b.service_id
      JOIN work_order w ON w.booking_id = b.booking_id
      JOIN service_report sr ON sr.job_id = w.job_id
+     LEFT JOIN work_order_cleaning_assessment ca ON ca.job_id=w.job_id
      JOIN assignment a ON a.assignment_id = w.assignment_id
      JOIN technician t ON t.technician_id = a.technician_id
      JOIN user_account tech_user ON tech_user.user_id = t.user_id
@@ -211,9 +199,10 @@ export async function getBookingReport(pool, bookingId, userId) {
      ORDER BY p.captured_time`,
     [bookingId],
   );
-  return {
+  const [report] = await attachBookingSelections(pool,[{
     ...rows[0],
     bookingReference: bookingReference(rows[0].bookingId, rows[0].createdAt),
     photos,
-  };
+  }]);
+  return report;
 }

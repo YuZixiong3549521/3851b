@@ -27,7 +27,7 @@ export default function MyBookingsPage() {
       <div className="mx-auto max-w-5xl px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-semibold text-primary">MY BOOKINGS</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Service requests</h1><p className="mt-2 text-sm text-muted-foreground">Track every request from submission to completion.</p></div><Button render={<Link href="/customer/book" />}><Plus className="size-4" aria-hidden="true" />New booking</Button></div>
         {!bookings && !error && <PageLoading />}
-        {error && <PageError message={`${error} Start the database and customer API, then refresh this page.`} />}
+        {error && <PageError message={`${error} Please refresh this page to retry.`} />}
         {bookings && (
           <Tabs defaultValue="all">
             <TabsList className="mb-6 h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:w-fit"><TabsTrigger value="all" className="px-4">All ({bookings.length})</TabsTrigger><TabsTrigger value="upcoming" className="px-4">Upcoming ({upcoming.length})</TabsTrigger><TabsTrigger value="completed" className="px-4">Completed ({completed.length})</TabsTrigger></TabsList>

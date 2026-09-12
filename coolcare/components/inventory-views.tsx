@@ -18,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { TransactionDetails as TransactionDrawer } from './inventory-transaction-details';
 import {
   Table,
   TableBody,
@@ -33,12 +34,6 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
-import {
-  Sheet,
-  SheetContent,
-  SheetTitle,
-  SheetDescription,
-} from '@/components/ui/sheet';
 import {
   Choice,
   choices,
@@ -393,6 +388,7 @@ export function PartsPage({ params }: { params: URLSearchParams }) {
                     <TableHead>UNIT PRICE</TableHead>
                     <TableHead>STATUS</TableHead>
                     <TableHead>CURRENT STOCK</TableHead>
+                    <TableHead>RECOMMENDED / AC</TableHead>
                     <TableHead>STOCK VALUE</TableHead>
                     <TableHead className="text-right">ACTIONS</TableHead>
                   </TableRow>
@@ -433,6 +429,7 @@ export function PartsPage({ params }: { params: URLSearchParams }) {
                           </span>
                         </div>
                       </TableCell>
+                      <TableCell>{p.recommended_units_per_ac} {p.stock_unit}</TableCell>
                       <TableCell>{money(p.stock_value)}</TableCell>
                       <TableCell>
                         <div className="row-actions">
@@ -583,7 +580,9 @@ export function PartDetails({
                     <dt>Stock value</dt>
                     <dd>{money(p.stock_value)}</dd>
                   </div>
+                  <div><dt>Recommended per AC</dt><dd>{p.recommended_units_per_ac} {p.stock_unit}</dd></div>
                 </dl>
+                <p className="form-hint">{p.usage_note || 'Planning allowance; confirm actual usage on site.'}</p>
               </div>
             </section>
             <section className="panel stock-detail">
@@ -682,6 +681,9 @@ function PartEditor({
     part_name: part?.part_name || '',
     unit_price: part ? Number(part.unit_price).toFixed(2) : '',
     status: part?.status || 'Active',
+    recommended_units_per_ac: Number(part?.recommended_units_per_ac ?? 1),
+    stock_unit: part?.stock_unit || 'piece',
+    usage_note: part?.usage_note || '',
   };
   const [form, setForm] = useState(original),
     [busy, setBusy] = useState(false),
@@ -786,6 +788,11 @@ function PartEditor({
               />
             </label>
           </div>
+          <div className="form-columns">
+            <label>Recommended units per AC<Input type="number" min="0.01" step="0.01" max="999999" required disabled={busy} value={form.recommended_units_per_ac} onChange={e=>setForm({...form,recommended_units_per_ac:Number(e.target.value)})}/></label>
+            <label>Stock unit<Input required maxLength={30} disabled={busy} value={form.stock_unit} onChange={e=>setForm({...form,stock_unit:e.target.value})}/></label>
+          </div>
+          <label>Usage guidance<Textarea maxLength={255} disabled={busy} value={form.usage_note} onChange={e=>setForm({...form,usage_note:e.target.value})}/></label>
           <div className="form-actions">
             <Button
               type="button"
@@ -844,7 +851,7 @@ export function TransactionsPage({ params }: { params: URLSearchParams }) {
     <>
       <PageTitle
         title="Inventory Transactions"
-        subtitle="A read-only record of every stock movement."
+        subtitle="Stock movements with traceable inbound and outbound corrections."
         actions={
           <>
             <ExportButton
@@ -935,8 +942,8 @@ export function TransactionsPage({ params }: { params: URLSearchParams }) {
         )}
       </section>
       <p className="form-hint">
-        Newest first. Dates use the MySQL server’s local time. Saved
-        transactions cannot be edited or deleted.
+        Newest first. Dates use the MySQL server’s local time. Administrators can
+        correct inbound and outbound records; all corrections remain in the change history.
       </p>
       <TransactionDrawer
         transaction={selected}
@@ -969,7 +976,8 @@ function TransactionTable({
           <TableHead>TYPE</TableHead>
           <TableHead>CHANGE</TableHead>
           <TableHead>WORK ORDER</TableHead>
-          <TableHead>ADMIN</TableHead>
+          <TableHead>RECORDED BY</TableHead>
+          <TableHead>LAST MODIFIED</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -1004,89 +1012,11 @@ function TransactionTable({
             </TableCell>
             <TableCell>{t.job_id ? code('WO', t.job_id) : '—'}</TableCell>
             <TableCell>{t.admin_name || 'Not recorded'}</TableCell>
+            <TableCell>{t.modified_at || 'Never modified'}</TableCell>
           </TableRow>
         ))}
       </TableBody>
     </Table>
-  );
-}
-function TransactionDrawer({
-  transaction: t,
-  close,
-}: {
-  transaction: Transaction | null;
-  close: () => void;
-}) {
-  const { go } = useInventory();
-  return (
-    <Sheet
-      open={!!t}
-      onOpenChange={(open) => {
-        if (!open) close();
-      }}
-    >
-      <SheetContent className="transaction-drawer">
-        <SheetTitle>Transaction Details</SheetTitle>
-        <SheetDescription>Saved audit record · read only</SheetDescription>
-        {t && (
-          <>
-            <div className="drawer-id">
-              {code('TX', t.transaction_id)}
-              <Status value={t.transaction_type} />
-            </div>
-            <Button variant="ghost"
-              className="part-name text-left"
-              onClick={() => {
-                close();
-                go(partPath(t.part_id));
-              }}
-            >
-              {t.part_name} <ArrowRight size={16} />
-            </Button>
-            <dl className="data-list">
-              <div>
-                <dt>Date / time</dt>
-                <dd>{t.created_at}</dd>
-              </div>
-              <div>
-                <dt>Quantity</dt>
-                <dd>{t.quantity}</dd>
-              </div>
-              <div>
-                <dt>Stock change</dt>
-                <dd>{stockSign(t.stock_delta)}</dd>
-              </div>
-              <div>
-                <dt>Stock before</dt>
-                <dd>{t.stock_before ?? 'Not recorded'}</dd>
-              </div>
-              <div>
-                <dt>Stock after</dt>
-                <dd>{t.stock_after ?? 'Not recorded'}</dd>
-              </div>
-              <div>
-                <dt>Work order</dt>
-                <dd>
-                  {t.job_id ? code('WO', t.job_id) : 'Not linked to a job'}
-                </dd>
-              </div>
-              <div>
-                <dt>Admin</dt>
-                <dd>{t.admin_name || 'Not recorded'}</dd>
-              </div>
-            </dl>
-            <h2>Remarks</h2>
-            <p className="remarks">{t.remarks || 'No remarks.'}</p>
-            {t.stock_before === null && (
-              <p className="notice">
-                Before/after quantities were not stored for this imported
-                transaction.
-              </p>
-            )}
-          </>
-        )}
-      </SheetContent>
-    </Sheet>
   );
 }
 export function TransactionForm({ params }: { params: URLSearchParams }) {
@@ -1133,6 +1063,10 @@ function TransactionEditor({
   const payload = useRef<Record<string, unknown> | null>(null);
   const [freshPart, setFreshPart] = useState<Part | null>(null);
   const [stockBusy, setStockBusy] = useState(false);
+  const [acknowledgeExcess,setAcknowledgeExcess]=useState(false);
+  const recommendation=useResource<{acCount:number;issued:number;recommended:number}>(type==='Stock Out'&&partId&&job?`/parts/${partId}/recommendation?job=${job}`:null);
+  const excess=!!recommendation.data&&recommendation.data.issued+Number(quantity)>recommendation.data.recommended;
+  useEffect(()=>setAcknowledgeExcess(false),[partId,job,quantity,type]);
   const part =
     freshPart && String(freshPart.part_id) === partId
       ? freshPart
@@ -1179,7 +1113,7 @@ function TransactionEditor({
   }, [changed, uncertain, setDirty]);
   function openReview(e: React.FormEvent) {
     e.preventDefault();
-    if (!valid || !part) return;
+    if (!valid || !part || (excess&&!acknowledgeExcess) || (type==='Stock Out'&&job&&(recommendation.loading||recommendation.error))) return;
     setError('');
     requestId.current = crypto.randomUUID();
     payload.current = {
@@ -1190,6 +1124,7 @@ function TransactionEditor({
       expected_stock: part.current_stock,
       job_id: job ? Number(job) : null,
       remarks: remarks.trim(),
+      acknowledge_excess: acknowledgeExcess,
       ...(type === 'Adjustment' ? { direction } : {}),
     };
     setReview(true);
@@ -1337,6 +1272,10 @@ function TransactionEditor({
             />
             <small className="character-count">{remarks.length} / 500</small>
           </label>
+          {type==='Stock Out'&&job&&<div className="notice">
+            {recommendation.error?<p role="alert">{recommendation.error}</p>:recommendation.data?<p>Recommendation: {recommendation.data.recommended} {part?.stock_unit} for {recommendation.data.acCount} AC unit(s). Already issued: {recommendation.data.issued}.</p>:<p>Loading work order recommendation…</p>}
+            {excess&&<label className="flex gap-2 items-start"><input type="checkbox" checked={acknowledgeExcess} onChange={e=>setAcknowledgeExcess(e.target.checked)}/>This exceeds the recommendation. I have reviewed and acknowledge the extra usage.</label>}
+          </div>}
           <div className="form-actions">
             <Button
               type="button"
@@ -1389,8 +1328,7 @@ function TransactionEditor({
             </p>
           )}
           <p className="form-hint">
-            Recorded by {user.full_name}. Saving adds an immutable transaction
-            and updates stock together.
+            Recorded by {user.full_name}. Saving records the movement and updates stock together. Later corrections retain a change history.
           </p>
           <Button
             type="button"

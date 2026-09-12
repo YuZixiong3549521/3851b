@@ -1,5 +1,6 @@
 import mysql from 'mysql2/promise';
 import { createApp } from './app.mjs';
+import { startBookingEmailWorker } from './booking-email.mjs';
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT || 3306),
@@ -20,11 +21,13 @@ const app = createApp({
   threshold: Number(process.env.LOW_STOCK_THRESHOLD || 15),
 });
 const port = Number(process.env.API_PORT || 3001);
+const stopMailWorker = startBookingEmailWorker(pool);
 const server = app.listen(port, '127.0.0.1', () =>
   console.log(`CoolCare local API: http://127.0.0.1:${port}`),
 );
 async function stop() {
   server.close();
+  await stopMailWorker();
   await pool.end();
   process.exit(0);
 }

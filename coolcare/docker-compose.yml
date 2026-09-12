@@ -1,4 +1,15 @@
 services:
+  mailpit:
+    image: axllent/mailpit:v1.27.4
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${LOCAL_SMTP_PORT:-1025}:1025"
+      - "127.0.0.1:${LOCAL_MAIL_UI_PORT:-8025}:8025"
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: 5000
+    volumes:
+      - coolcare_mail_data:/data
   database:
     image: mysql:8.4
     restart: unless-stopped
@@ -20,4 +31,5 @@ services:
       retries: 30
       start_period: 30s
 volumes:
+  coolcare_mail_data:
   coolcare_unified_data:

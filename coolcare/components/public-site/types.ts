@@ -1,3 +1,5 @@
+import type { AnnualBundle } from '@/lib/coolcare-types';
+
 export type PageRoute = 'home' | 'login' | 'register' | 'bookings';
 
 export interface User {
@@ -21,6 +23,8 @@ export interface Booking {
   special_notes?: string;
   booking_status: string;
   created_at: string;
+  total_amount?: number | null;
+  annualBundle?: AnnualBundle | null;
 }
 
 export interface ServiceItem {

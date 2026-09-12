@@ -4,12 +4,15 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ArrowRight, CalendarDays, ClipboardCheck, Clock3, History, MapPin, Wind } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
+import { CustomerAssistant } from '@/components/customer-assistant';
+import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { PageError, PageLoading } from '@/components/page-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate } from '@/lib/format';
+import { nextUpcomingBooking } from '@/lib/customer-bookings';
 import type { Booking, CustomerContext } from '@/lib/coolcare-types';
 
 export default function Home() {
@@ -25,17 +28,18 @@ export default function Home() {
         setBookings(nextBookings);
         setHistory(nextHistory);
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to reach the CoolCare API.'));
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to load your dashboard.'));
   }, []);
 
-  const upcoming = bookings[0];
+  const upcoming = nextUpcomingBooking(bookings, new Date().toLocaleDateString('en-CA'));
   const firstName = context?.customer.fullName.split(' ')[0] ?? 'there';
+  const annualBundles = [...new Map(bookings.flatMap(booking => booking.annualBundle ? [[booking.annualBundle.seriesId, booking.annualBundle] as const] : [])).values()];
 
   return (
     <CoolCareShell>
       <div className="mx-auto max-w-[1320px] px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
         {!context && !error && <PageLoading />}
-        {error && <PageError message={`${error} Please start the MySQL database and customer API, then refresh this page.`} />}
+        {error && <PageError message={`${error} Please refresh this page to retry.`} />}
         {context && (
           <>
             <section className="relative overflow-hidden rounded-[28px] bg-[linear-gradient(115deg,#003f9f_0%,#0066ff_58%,#00a98f_125%)] px-6 py-8 text-white shadow-[0_24px_70px_rgba(0,80,203,0.18)] sm:px-9 sm:py-10">
@@ -45,9 +49,16 @@ export default function Home() {
                 <Badge className="mb-5 border-white/20 bg-white/15 text-white hover:bg-white/15">Welcome back, {firstName}</Badge>
                 <h1 className="text-3xl font-bold tracking-[-0.025em] sm:text-4xl">Comfort at home, without the guesswork.</h1>
                 <p className="mt-3 max-w-xl text-sm leading-6 text-blue-50 sm:text-base">Book maintenance, follow every request, and keep your service history together.</p>
-                <Button render={<Link href="/customer/book" />} size="lg" className="mt-7 bg-white text-primary shadow-lg hover:bg-blue-50">Book a service<ArrowRight className="size-4" aria-hidden="true" /></Button>
+                <Button nativeButton={false} render={<Link href="/customer/book" />} size="lg" className="mt-7 bg-white text-primary shadow-lg hover:bg-blue-50">Book a service<ArrowRight className="size-4" aria-hidden="true" /></Button>
+                <CustomerAssistant onBookingCreated={() => {
+                  Promise.all([coolcareApi.getCustomerContext(), coolcareApi.getBookings('upcoming')])
+                    .then(([nextContext, nextBookings]) => { setContext(nextContext); setBookings(nextBookings); })
+                    .catch(() => setError('Your booking was saved, but the dashboard could not refresh. Please reload.'));
+                }} />
               </div>
             </section>
+
+            {annualBundles.length > 0 && <section className="mt-8" aria-labelledby="annual-bookings-heading"><div className="mb-4"><p className="text-sm font-semibold text-primary">QUARTERLY CARE</p><h2 id="annual-bookings-heading" className="mt-1 text-2xl font-bold">Your annual cleaning visits</h2></div><div className="grid gap-4 lg:grid-cols-2">{annualBundles.map(bundle => <AnnualBookingSummary key={bundle.seriesId} saved={bundle} totalAmount={bundle.totalAmount} compact />)}</div></section>}
 
             <section aria-labelledby="overview-heading" className="mt-8">
               <div className="mb-4"><p className="text-sm font-semibold text-primary">AT A GLANCE</p><h2 id="overview-heading" className="mt-1 text-2xl font-bold tracking-tight">Your home comfort</h2></div>
@@ -61,7 +72,7 @@ export default function Home() {
             <section className="mt-8 grid gap-6 xl:grid-cols-[1.5fr_0.8fr]">
               <Card className="border-border/80 shadow-sm">
                 <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
-                  <div><p className="text-sm font-semibold text-primary">{upcoming ? 'UPCOMING' : 'READY WHEN YOU ARE'}</p><CardTitle className="mt-1 text-xl">{upcoming?.serviceName ?? 'No active booking'}</CardTitle></div>
+                  <div><p className="text-sm font-semibold text-primary">{upcoming ? 'UPCOMING' : 'READY WHEN YOU ARE'}</p><CardTitle className="mt-1 text-xl">{upcoming?.annualBundle ? upcoming.annualBundle.name + ' · Visit ' + upcoming.annualBundle.visitNumber + ' of 4' : upcoming?.serviceName ?? 'No active booking'}</CardTitle></div>
                   {upcoming && <StatusBadge status={upcoming.status} />}
                 </CardHeader>
                 <CardContent>
@@ -74,7 +85,7 @@ export default function Home() {
                       </div>
                       <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
                         <div><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Booking reference</p><p className="mt-1 font-mono text-sm font-semibold">{upcoming.bookingReference}</p></div>
-                        <Button render={<Link href="/customer/bookings" />} variant="outline">View booking</Button>
+                        <Button nativeButton={false} render={<Link href="/customer/bookings" />} variant="outline">View booking</Button>
                       </div>
                     </>
                   ) : (
@@ -85,7 +96,7 @@ export default function Home() {
 
               <Card className="border-border/80 bg-[#f7fffd] shadow-sm">
                 <CardHeader><div className="mb-1 grid size-11 place-items-center rounded-2xl bg-secondary/15 text-secondary"><ClipboardCheck className="size-5" aria-hidden="true" /></div><CardTitle className="text-xl">Maintenance history</CardTitle></CardHeader>
-                <CardContent><p className="text-sm leading-6 text-muted-foreground">{history[0] ? `Your latest visit was completed on ${formatDate(history[0].preferredDate)}.` : 'Completed maintenance visits will be kept here.'}</p><Button render={<Link href="/customer/history" />} variant="link" className="mt-4 h-auto p-0 text-secondary">View service history<ArrowRight className="size-4" aria-hidden="true" /></Button></CardContent>
+                <CardContent><p className="text-sm leading-6 text-muted-foreground">{history[0] ? `Your latest visit was completed on ${formatDate(history[0].preferredDate)}.` : 'Completed maintenance visits will be kept here.'}</p><Button nativeButton={false} render={<Link href="/customer/history" />} variant="link" className="mt-4 h-auto p-0 text-secondary">View service history<ArrowRight className="size-4" aria-hidden="true" /></Button></CardContent>
               </Card>
             </section>
           </>

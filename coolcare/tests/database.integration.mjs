@@ -233,7 +233,10 @@ test('HTTP session, authorization, searches, exports and validation', async () =
     assert.equal(technicianData.technician.name,'Chris Lim');
     assert.ok(technicianData.jobs.length>0);
     const jobDetail=await (await request(`/api/technician/jobs/${technicianData.jobs[0].jobId}`)).json();
-    assert.deepEqual(jobDetail.job,technicianData.jobs[0]);
+    for (const [key,value] of Object.entries(technicianData.jobs[0])) assert.deepEqual(jobDetail.job[key],value);
+    assert.ok(Array.isArray(jobDetail.job.inventory));
+    assert.ok(Array.isArray(jobDetail.addressHistory));
+    assert.ok(Array.isArray(jobDetail.packageHistory));
     assert.equal((await request('/api/technician/jobs/0')).status,400);
     assert.equal((await request('/api/technician/jobs/99999999')).status,404);
     const farah=await getTechnician(pool,'farah.ahmad@coolcare.demo');
@@ -310,8 +313,9 @@ test('customer booking writes and rereads from shared MySQL (rolled back)', asyn
       JOIN service_address a ON a.customer_id=c.customer_id
       JOIN aircon_unit au ON au.customer_id=c.customer_id AND au.address_id=a.address_id
       WHERE u.email='alice.tan@coolcare.demo' LIMIT 1`);
-    const [[service]] = await conn.query("SELECT service_id FROM service_catalog WHERE service_status='Active' LIMIT 1");
-    const date = new Date(Date.now()+7*86400000).toISOString().slice(0,10);
+    const [[service]] = await conn.query("SELECT service_id FROM service_catalog WHERE service_name='Cleaning' AND service_status='Active'");
+    const [[latest]] = await conn.execute('SELECT MAX(preferred_service_date) AS serviceDate FROM booking WHERE customer_id=?',[context.customer_id]);
+    const date = new Date(Math.max(Date.now(),latest.serviceDate ? Date.parse(latest.serviceDate) : 0)+14*86400000).toISOString().slice(0,10);
     const booking = await createBooking(testPool, {
       serviceId:service.service_id, addressId:context.address_id, unitIds:[context.unit_id],
       preferredDate:date, timeSlot:'09:00 - 11:00', problemDescription:'Integration verification (rolled back)',
