@@ -1,1 +1,13 @@
-{"name":"coolcare-workspace","private":true,"scripts":{"setup":"npm --prefix coolcare ci && npm --prefix coolcare/technician ci && npm --prefix coolcare run setup","start":"npm --prefix coolcare start","build":"npm --prefix coolcare run build","test":"npm --prefix coolcare test && npm --prefix coolcare/technician test","db:up":"npm --prefix coolcare run db:up","db:down":"npm --prefix coolcare run db:down"}}
+{
+  "name": "coolcare-workspace",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix coolcare ci && npm --prefix coolcare/technician ci && npm --prefix coolcare run setup",
+    "start": "npm --prefix coolcare start",
+    "build": "npm --prefix coolcare run build",
+    "test": "npm --prefix coolcare test && npm --prefix coolcare/technician test",
+    "db:up": "npm --prefix coolcare run db:up",
+    "db:down": "npm --prefix coolcare run db:down",
+    "db:sample": "node coolcare/scripts/seed-realistic.mjs"
+  }
+}

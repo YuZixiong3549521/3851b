@@ -41,11 +41,13 @@ async function rollbackTest(work) {
     conn.release();
   }
 }
-test('read imported inventory and verify seeded demo login hash', async () => {
+test('read the inventory catalogue by name and verify the documented local login', async () => {
   const [parts] = await pool.query(
-    'SELECT part_name,current_stock FROM part WHERE part_id IN (1,2,3) ORDER BY part_id',
+    'SELECT part_name,current_stock FROM part WHERE part_name IN (?,?,?) ORDER BY part_name',
+    ['Aircon Filter','Drain Hose','Capacitor 35uF'],
   );
-  assert.equal(parts.length, 3);
+  assert.deepEqual(parts.map(part=>part.part_name),['Aircon Filter','Capacitor 35uF','Drain Hose']);
+  assert.ok(parts.every(part=>Number.isInteger(part.current_stock)&&part.current_stock>=0));
   const [[admin]] = await pool.query(
     "SELECT u.user_id,u.password_hash FROM user_account u JOIN admin_profile a ON u.user_id=a.user_id WHERE email='norshida@coolcare.demo'",
   );
@@ -257,7 +259,9 @@ test('HTTP session, authorization, searches, exports and validation', async () =
     assert.equal((await request('/api/customer/bookings', 'POST', {})).status, 400);
     const history = await (await request('/api/customer/bookings/history')).json();
     assert.ok(history.bookings.length > 0);
-    const report = await request(`/api/customer/bookings/${history.bookings[0].bookingId}/report`);
+    const completed=history.bookings.find(booking=>booking.status==='Completed');
+    assert.ok(completed,'The documented customer has a completed service to demonstrate reports.');
+    const report = await request(`/api/customer/bookings/${completed.bookingId}/report`);
     assert.equal(report.status, 200);
     // Reading customer routes never authorizes inventory access.
     assert.equal((await request('/api/parts')).status, 401);
@@ -309,19 +313,19 @@ test('HTTP session, authorization, searches, exports and validation', async () =
 
 test('customer booking writes and rereads from shared MySQL (rolled back)', async () => {
   await rollbackTest(async (testPool, conn) => {
-    const [[context]] = await conn.query(`SELECT c.customer_id, a.address_id, au.unit_id
+    const [[context]] = await conn.query(`SELECT c.customer_id,c.user_id, a.address_id, au.unit_id
       FROM customer c JOIN user_account u ON u.user_id=c.user_id
       JOIN service_address a ON a.customer_id=c.customer_id
       JOIN aircon_unit au ON au.customer_id=c.customer_id AND au.address_id=a.address_id
-      WHERE u.email='alice.tan@coolcare.demo' LIMIT 1`);
+      WHERE u.email='alice.tan@coolcare.demo' AND a.is_archived=FALSE LIMIT 1`);
     const [[service]] = await conn.query("SELECT service_id FROM service_catalog WHERE service_name='Cleaning' AND service_status='Active'");
     const [[latest]] = await conn.execute('SELECT MAX(preferred_service_date) AS serviceDate FROM booking WHERE customer_id=?',[context.customer_id]);
     const date = nextWeekday([minimumBookingDate(),latest.serviceDate?addCalendarDays(latest.serviceDate,14):minimumBookingDate()].sort().at(-1));
     const booking = await createBooking(testPool, {
       serviceId:service.service_id, addressId:context.address_id, unitIds:[context.unit_id],
       preferredDate:date, timeSlot:'09:00 - 11:00', problemDescription:'Integration verification (rolled back)',
-    });
-    const rows = await listBookings(conn);
+    },context.user_id);
+    const rows = await listBookings(conn,'all',context.user_id);
     const reread = rows.find(row=>row.bookingId===booking.bookingId);
     assert.equal(reread.status,'Submitted');
     assert.equal(reread.units.length,1);

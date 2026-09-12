@@ -1,9 +1,18 @@
 import { DatabaseSync } from 'node:sqlite';
 import mysql from 'mysql2/promise';
 import { resolve } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
 import { createPublicBooking } from '../server/public-site.mjs';
+const source=process.argv[2];
+if(!source||source==='--help'){
+ console.log('Usage: node scripts/import-accare.mjs <path-to-legacy-ac-care.db>');
+ console.log('Optional migration only. The SQLite source is read-only; existing MySQL imports are skipped.');
+ process.exit(source==='--help'?0:1);
+}
+const sourcePath=resolve(process.cwd(),source);
+if(!existsSync(sourcePath)||!statSync(sourcePath).isFile())throw new Error('The supplied SQLite source file does not exist. No data was imported.');
 process.loadEnvFile(resolve(import.meta.dirname,'../.env.local'));
-const db=new DatabaseSync(resolve(import.meta.dirname,'../../accare/backend/ac-care.db'),{readOnly:true});
+const db=new DatabaseSync(sourcePath,{readOnly:true});
 const pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,dateStrings:true,decimalNumbers:true});
 let users=0,bookings=0;
 try{

@@ -2,7 +2,7 @@
 
 ## Active application
 
-- Work in `coolcare/`. The top-level `accare/`, `aircon-technician-portal/`, `CoolCare_Customer_App/` and `CoolCare_Website_20260908_150040/` directories are original source references, not the running application.
+- Work in `coolcare/`, the only maintained application. Setup, builds, database migrations and runtime assets must remain self-contained in that directory. Old uploaded source directories may exist as ignored local references; do not restore them to Git or depend on them.
 - Read `README.md` and `coolcare/UI-ARCHITECTURE.md` before changing application behavior or UI.
 - Keep all user-facing website text in English. Preserve the existing page layouts unless the task explicitly requests a redesign.
 - The frontend is React, the API is Node.js/Express, and business data is persisted in MySQL. Keep the existing routes and API contracts compatible.
@@ -20,6 +20,7 @@
 - Make schema changes through reviewed migration scripts in `coolcare/database/` and the existing migration flow. Preserve existing data; do not reset Docker volumes to resolve routine setup errors.
 - `.env.local`, dependency folders, runtime caches and generated technician assets must remain untracked.
 - Each developer has a separate local database. Git transfers code and migrations, not local orders, sessions or Docker data volumes. Demo order IDs differ between machines.
+- Connected synthetic scenarios are optional: see `coolcare/SAMPLE-DATA.md` and `npm run db:sample`. Never run `--replace` for a routine setup or migration; it replaces business data and requires a user request. Keep all generated backups and manifests local and ignored.
 
 ## Validation and collaboration
 

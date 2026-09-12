@@ -76,7 +76,7 @@ test('new customer can save an address without AC records and book by count thro
 
 test('address saving waits for the customer lock and returns an existing address without overwriting it',async()=>{
   const [[existing]]=await pool.query(`SELECT c.user_id,a.address_id,a.address_line FROM customer c
-    JOIN service_address a ON a.customer_id=c.customer_id ORDER BY a.address_id LIMIT 1`);
+    JOIN service_address a ON a.customer_id=c.customer_id WHERE a.is_archived=FALSE ORDER BY a.address_id LIMIT 1`);
   const blocker=await pool.getConnection();const worker=await pool.getConnection();let pending;let acquired=false;let signal;
   const attempted=new Promise(resolve=>{signal=resolve;});
   try {

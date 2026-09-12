@@ -2,6 +2,8 @@
 
 The running application uses React on the frontend, Node.js with Express for HTTP APIs, and MySQL for persisted business data. Vinext provides the main frontend routing/build; the technician portal retains its Vite entry point and existing URLs.
 
+`coolcare/` is self-contained: both frontend sources, shared UI, server code, runtime assets and database migrations are tracked here. Setup and builds do not copy files from the old uploaded projects. Those references are ignored locally and absent from new checkouts; see [ORIGINS.md](ORIGINS.md). The optional SQLite importer requires an explicit local source path and is not part of normal startup.
+
 ## UI foundation
 
 - `components/ui/`: shared shadcn/ui components built on Base UI. Buttons, text inputs, textareas, native selects, dialogs and technician badges are reused across the imported portals.

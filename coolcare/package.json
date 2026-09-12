@@ -16,8 +16,8 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "build:web": "vinext build",
-    "setup:legacy": "node scripts/prepare-local.mjs",
     "db:up": "docker compose --env-file .env.local up -d --wait && node scripts/migrate-public.mjs",
+    "db:sample": "node scripts/seed-realistic.mjs",
     "db:down": "docker compose --env-file .env.local down"
   },
   "dependencies": {

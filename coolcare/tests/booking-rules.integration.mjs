@@ -7,6 +7,7 @@ import { createBooking, listBookings } from '../server/customer/booking-service.
 import { getBookingOptions, lockCustomer } from '../server/customer/booking-options.mjs';
 import { addCalendarMonths } from '../server/customer/annual-bookings.mjs';
 import {addCalendarDays,singaporeToday,minimumBookingDate,nextWeekday,isWeekday} from '../server/customer/booking-schedule.mjs';
+import {openPrivilegedFixtureConnection} from './privileged-fixture.mjs';
 
 const pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,dateStrings:true,decimalNumbers:true,connectionLimit:4});
 after(()=>pool.end());
@@ -17,8 +18,8 @@ const date=offset=>{
 };
 const body=(overrides={})=>({serviceType:'Cleaning',numberOfUnits:2,preferredDate:date(0),timeWindow:'09:00 AM - 11:00 AM',serviceAddress:'42 Rules Test Avenue #02-10',requestId:randomUUID(),...overrides});
 
-async function rollbackFixture(work) {
-  const connection=await pool.getConnection();
+async function rollbackFixture(work,{privileged=false}={}) {
+  const connection=privileged?await openPrivilegedFixtureConnection():await pool.getConnection();
   await connection.beginTransaction();
   const handle={execute:connection.execute.bind(connection),query:connection.query.bind(connection),beginTransaction:()=>connection.query('SAVEPOINT booking_rules'),commit:()=>connection.query('RELEASE SAVEPOINT booking_rules'),rollback:()=>connection.query('ROLLBACK TO SAVEPOINT booking_rules'),release:()=>{}};
   const db={execute:connection.execute.bind(connection),query:connection.query.bind(connection),getConnection:async()=>handle};
@@ -26,7 +27,7 @@ async function rollbackFixture(work) {
     const [account]=await connection.execute("INSERT INTO user_account(role_id,full_name,email,password_hash,phone) SELECT role_id,'Booking Rules Test',?,'unusable-test-password','12345678' FROM role WHERE role_name='Customer'",[`rules-${randomUUID()}@example.test`]);
     const [customer]=await connection.execute('INSERT INTO customer(user_id) VALUES (?)',[account.insertId]);
     await work(db,connection,{id:account.insertId,customerId:customer.insertId});
-  } finally {await connection.rollback();connection.release();}
+  } finally {await connection.rollback();if(privileged)await connection.end();else connection.release();}
 }
 
 for(const route of ['public','customer'])test(`${route} enforces Singapore day-14 and weekdays for create/reschedule while expired-date retries return the receipt`,async t=>{
@@ -109,22 +110,36 @@ test('only three current choices are exposed, prices are authoritative and equip
 }));
 
 test('retired services and memberships reject new bookings while historical rows and import remain intact',async()=>rollbackFixture(async(db,c,user)=>{
-  const [subscriptions]=await c.query('SELECT * FROM customer_subscription ORDER BY subscription_id');
-  assert.ok(subscriptions.length>0);
-  await assert.rejects(createPublicBooking(db,user,body({subscriptionId:subscriptions[0].subscription_id})),error=>error.status===400);
-  await assert.rejects(createPublicBooking(db,user,body({packageId:subscriptions[0].package_id})),error=>error.status===400);
-  const [[oldService]]=await c.query("SELECT service_id FROM service_catalog WHERE service_name='Chemical Wash'");
-  await assert.rejects(createPublicBooking(db,user,body({serviceIds:[oldService.service_id]})),error=>error.status===400);
-  await assert.rejects(createPublicBooking(db,user,body({serviceType:'Air Conditioning Cleaning',legacy:true})),error=>error.status===400);
-  const legacy=await createPublicBooking(db,user,body({serviceType:'Air Conditioning Cleaning',preferredDate:'2020-01-31'}),{legacy:true});
+  // Compatibility belongs in a scoped historical fixture, not in today's
+  // business sample data or a specific old customer's subscription.
+  const serviceName='Retired cleaning '+randomUUID();
+  const [service]=await c.execute("INSERT INTO service_catalog(service_name,base_price,estimated_duration_minutes,service_status) VALUES (?,65,90,'Inactive')",[serviceName]);
+  await c.execute('INSERT INTO web_service_pricing(service_id,additional_unit_price,customer_visible) VALUES (?,45,FALSE)',[service.insertId]);
+  const packageName='Retired membership '+randomUUID();
+  const [pack]=await c.execute("INSERT INTO maintenance_package(package_name,package_price,billing_interval,included_service_count,package_status) VALUES (?,160,'Yearly',4,'Inactive')",[packageName]);
+  await c.execute("INSERT INTO web_package_details(package_id,package_kind,included_units) VALUES (?,'Membership',1)",[pack.insertId]);
+  await c.execute('INSERT INTO package_service(package_id,service_id,included_quantity) VALUES (?,?,4)',[pack.insertId,service.insertId]);
+  const [subscription]=await c.execute(`INSERT INTO customer_subscription(customer_id,package_id,start_date,end_date,remaining_service_count,subscription_status)
+    VALUES (?,?,'2020-01-01','2020-12-31',2,'Expired')`,[user.customerId,pack.insertId]);
+  const legacy=await createPublicBooking(db,user,body({serviceType:serviceName,preferredDate:'2020-01-31'}),{legacy:true});
+  await c.execute('UPDATE booking SET subscription_id=? WHERE booking_id=?',[subscription.insertId,legacy.id]);
+  await c.execute('INSERT INTO booking_package(booking_id,package_id,package_name,subscription_id,visit_reserved) VALUES (?,?,?,?,FALSE)',[legacy.id,pack.insertId,packageName,subscription.insertId]);
+  const [subscriptions]=await c.execute('SELECT * FROM customer_subscription WHERE subscription_id=?',[subscription.insertId]);
+  await assert.rejects(createPublicBooking(db,user,body({subscriptionId:subscription.insertId})),error=>error.status===400);
+  await assert.rejects(createPublicBooking(db,user,body({packageId:pack.insertId})),error=>error.status===400);
+  await assert.rejects(createPublicBooking(db,user,body({serviceIds:[service.insertId]})),error=>error.status===400);
+  await assert.rejects(createPublicBooking(db,user,body({serviceType:serviceName,legacy:true})),error=>error.status===400,'the browser cannot enable the internal legacy import exemption');
   const [[oldBooking]]=await c.execute('SELECT preferred_service_date,total_amount FROM booking WHERE booking_id=?',[legacy.id]);
   assert.equal(oldBooking.preferred_service_date,'2020-01-31');assert.equal(Number(oldBooking.total_amount),110);
   const [[mail]]=await c.execute('SELECT COUNT(*) AS n FROM booking_email_outbox WHERE booking_id=?',[legacy.id]);assert.equal(mail.n,0);
   const [[address]]=await c.execute('SELECT address_id FROM booking WHERE booking_id=?',[legacy.id]);
   const [units]=await c.execute('SELECT unit_id FROM booking_aircon_unit WHERE booking_id=?',[legacy.id]);
-  await assert.rejects(createBooking(db,{subscriptionId:subscriptions[0].subscription_id,addressId:address.address_id,unitIds:units.map(u=>u.unit_id),preferredDate:date(0),timeSlot:'09:00 - 11:00'},user.id),error=>error.status===400);
-  assert.deepEqual((await c.query('SELECT * FROM customer_subscription ORDER BY subscription_id'))[0],subscriptions);
-}));
+  await assert.rejects(createBooking(db,{subscriptionId:subscription.insertId,addressId:address.address_id,unitIds:units.map(u=>u.unit_id),preferredDate:date(0),timeSlot:'09:00 - 11:00'},user.id),error=>error.status===400);
+  assert.deepEqual((await c.execute('SELECT * FROM customer_subscription WHERE subscription_id=?',[subscription.insertId]))[0],subscriptions);
+  const [history]=await listBookings(db,'all',user.id);
+  assert.equal(history.bookingId,legacy.id);assert.equal(history.package.subscriptionId,subscription.insertId);assert.equal(history.package.name,packageName);
+  assert.equal(history.totalAmount,110);assert.equal(history.services[0].name,serviceName);
+},{privileged:true}));
 
 test('failure while queueing email rolls back order, links and quota usage',async()=>rollbackFixture(async(db,c,user)=>{
   const input=body();
@@ -209,7 +224,7 @@ test('public and customer requests wait for the same customer lock before readin
   const [[fixture]]=await pool.query(`SELECT c.user_id,c.customer_id,sa.address_id,au.unit_id,sc.service_id
     FROM customer c JOIN service_address sa ON sa.customer_id=c.customer_id
     JOIN aircon_unit au ON au.address_id=sa.address_id AND au.customer_id=c.customer_id
-    CROSS JOIN service_catalog sc WHERE sc.service_name='Cleaning' ORDER BY c.customer_id LIMIT 1`);
+    CROSS JOIN service_catalog sc WHERE sc.service_name='Cleaning' AND sa.is_archived=FALSE ORDER BY c.customer_id LIMIT 1`);
   for(const route of ['public','customer']) {
     const blocker=await pool.getConnection();
     const worker=await pool.getConnection();

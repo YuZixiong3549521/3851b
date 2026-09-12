@@ -12,13 +12,14 @@ import {getBookingOptions} from '../server/customer/booking-options.mjs';
 import {minimumBookingDate,addCalendarDays,singaporeToday} from '../server/customer/booking-schedule.mjs';
 import {changePublicBooking} from '../server/public-site.mjs';
 import {getOwnedReportPhoto,reportPhotoDirectory} from '../server/customer/report-photos.mjs';
+import {openPrivilegedFixtureConnection} from './privileged-fixture.mjs';
 
 const pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,dateStrings:true,decimalNumbers:true,connectionLimit:4});
 after(()=>pool.end());
 const monday=()=>{const date=minimumBookingDate();const weekday=new Date(`${date}T00:00:00Z`).getUTCDay();return addCalendarDays(date,(8-weekday)%7);};
 
-async function fixture(work) {
-  const c=await pool.getConnection();await c.beginTransaction();
+async function fixture(work,{privileged=false}={}) {
+  const c=privileged?await openPrivilegedFixtureConnection():await pool.getConnection();await c.beginTransaction();
   const handle={execute:c.execute.bind(c),query:c.query.bind(c),beginTransaction:()=>c.query('SAVEPOINT customer_management'),commit:()=>c.query('RELEASE SAVEPOINT customer_management'),rollback:()=>c.query('ROLLBACK TO SAVEPOINT customer_management'),release:()=>{}};
   const db={execute:c.execute.bind(c),query:c.query.bind(c),getConnection:async()=>handle};
   try {
@@ -29,7 +30,7 @@ async function fixture(work) {
     const user={id:account.insertId,customerId:customer.insertId};
     const create=(overrides={})=>createBooking(db,{serviceId:options.services[0].serviceId,serviceAddress:'78 Management Test Street #01-02',numberOfUnits:2,preferredDate:monday(),timeSlot:'09:00 - 11:00',requestId:randomUUID(),...overrides},user.id);
     await work(db,c,user,create,options);
-  }finally{await c.rollback();c.release();}
+  }finally{await c.rollback();if(privileged)await c.end();else c.release();}
 }
 
 test('address edits preserve historical bookings and annual locations; archive/default and profile changes remain owned',async()=>fixture(async(db,c,user,create,options)=>{
@@ -185,27 +186,25 @@ test('reports expose actual inventory usage without inferred duration or public 
 }));
 
 test('authenticated report image HTTP serves private dot-directory bytes only to the owning customer',async()=>fixture(async(db,c)=>{
-  const [[owned]]=await c.execute(`SELECT b.booking_id AS bookingId,p.photo_id AS photoId
-    FROM photo p JOIN work_order w ON w.job_id=p.job_id JOIN booking b ON b.booking_id=w.booking_id
+  const [[owned]]=await c.execute(`SELECT b.booking_id AS bookingId,w.job_id AS jobId
+    FROM service_report r JOIN work_order w ON w.job_id=r.job_id JOIN booking b ON b.booking_id=w.booking_id
     JOIN customer c ON c.customer_id=b.customer_id JOIN user_account u ON u.user_id=c.user_id
-    WHERE u.email='alice.tan@coolcare.demo' ORDER BY p.photo_id LIMIT 1`);
-  assert.ok(owned,'An owned seed photo metadata row is required.');
+    WHERE u.email='alice.tan@coolcare.demo' ORDER BY r.report_id LIMIT 1`);
+  assert.ok(owned,'The documented customer has a completed service report.');
   const filename=`http-photo-${randomUUID()}.png`;
   const path=join(reportPhotoDirectory,filename);
   const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7z0AAAAASUVORK5CYII=','base64');
   await mkdir(reportPhotoDirectory,{recursive:true});await writeFile(path,bytes);
-  // Only substitute missing historical image bytes in this test's executor.
-  // The real SQL still checks customer, booking and photo ownership first.
-  const testDb={...db,execute:async(sql,values)=>{
-    const [rows,fields]=await db.execute(sql,values);
-    if(sql.includes('SELECT p.photo_url AS photoUrl')&&sql.includes('p.photo_id=?'))return [rows.map(row=>({...row,photoUrl:filename})),fields];
-    return [rows,fields];
-  }};
-  const server=createApp({pool:testDb,secret:process.env.SESSION_SECRET}).listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+  let server;
   let cookie='',csrf='';
   const request=async(url,method='GET',body)=>{const response=await fetch(`http://127.0.0.1:${server.address().port}${url}`,{method,headers:{Cookie:cookie,'X-CSRF-Token':csrf,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});if(response.headers.get('set-cookie'))cookie=response.headers.get('set-cookie').split(';')[0];return response;};
-  const url=`/api/customer/bookings/${owned.bookingId}/photos/${owned.photoId}`;
   try {
+    // Real private metadata and bytes are isolated to this rollback fixture.
+    // The sample business dataset does not need invented or missing photo URLs.
+    const [photo]=await c.execute('INSERT INTO photo(job_id,photo_url,description) VALUES (?,?,?)',[owned.jobId,filename,'Private HTTP test image; removed after verification.']);
+    owned.photoId=photo.insertId;
+    server=createApp({pool:db,secret:process.env.SESSION_SECRET}).listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+    const url=`/api/customer/bookings/${owned.bookingId}/photos/${owned.photoId}`;
     assert.equal((await request(url)).status,401);
     csrf=(await(await request('/api/session')).json()).csrf;
     csrf=(await(await request('/api/public/login','POST',{email:'alice.tan@coolcare.demo',password:'CoolCareDemo2026!'})).json()).csrf;
@@ -216,5 +215,5 @@ test('authenticated report image HTTP serves private dot-directory bytes only to
     assert.equal((await request('/api/public/register','POST',account)).status,201);
     csrf=(await(await request('/api/public/login','POST',account)).json()).csrf;
     assert.equal((await request(url)).status,404,'another customer cannot read the private image');
-  }finally{await new Promise(resolve=>server.close(resolve));await unlink(path);}
-}));
+  }finally{if(server)await new Promise(resolve=>server.close(resolve));await unlink(path);}
+},{privileged:true}));

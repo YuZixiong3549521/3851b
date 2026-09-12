@@ -10,3 +10,12 @@
 **/*.log
 **/*.tsbuildinfo
 coolcare/public/technician/
+
+# Uploaded source references remain local; coolcare/ is the maintained application.
+/accare/
+/aircon-technician-portal/
+/CoolCare_Customer_App/
+/CoolCare_Website_20260908_150040/
+/accare.zip
+/coolcare/scripts/prepare-local.mjs
+/coolcare/database/inventory-snapshot.json

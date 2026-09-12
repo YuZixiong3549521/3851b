@@ -42,7 +42,7 @@ test('technician stock-out requires own work order, explicit excess acknowledgem
  try{
   assert.equal((await req('/api/technician/jobs')).status,401);csrf=(await(await req('/api/session')).json()).csrf;
   csrf=(await(await req('/api/public/login','POST',{email:'chris.lim@coolcare.demo',password:'CoolCareDemo2026!'})).json()).csrf;
-  const {jobs}=await(await req('/api/technician/jobs')).json();const job=jobs[0];assert.ok(job);
+  const {jobs}=await(await req('/api/technician/jobs')).json();const job=jobs.find(item=>!['Completed','Cancelled'].includes(item.status));assert.ok(job,'An active technician work order is required for stock issue.');
   const detail=await(await req(`/api/technician/jobs/${job.jobId}`)).json();assert.equal(detail.job.address,job.address);assert.ok(Array.isArray(detail.addressHistory));assert.ok(detail.addressHistory.length<=3);assert.ok(Array.isArray(detail.packageHistory));
   const options=await(await req(`/api/technician/jobs/${job.jobId}/parts`)).json();const selected=options.parts.find(p=>p.part_id===part.part_id);assert.equal(selected.recommended,job.acCount);
   const excess={request_id:randomUUID(),part_id:part.part_id,quantity:selected.recommended+1,expected_stock:20};

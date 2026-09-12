@@ -1,6 +1,6 @@
 # CoolCare 整合网站
 
-整合版位于 `coolcare/`，原来的项目和 `accare/` 保留为来源备份。网站界面全英文，主页沿用上传设计的蓝白配色、图片和卡片风格，品牌统一为 CoolCare。客户、技师、库存页面保留各自原设计。
+唯一维护和运行的应用位于 `coolcare/`。网站界面全英文，主页沿用上传设计的蓝白配色、图片和卡片风格，品牌统一为 CoolCare。客户、技师、库存页面保留各自原设计。旧上传项目及压缩包已退出 Git 跟踪，本机参考副本保留；来源记录见 [ORIGINS.md](coolcare/ORIGINS.md)。
 
 ## 启动
 
@@ -9,10 +9,15 @@
 ```powershell
 npm run setup
 npm run db:up
+npm run db:sample
 npm start
 ```
 
 打开 http://localhost:3000/ 。以后可在 Docker Desktop 运行后双击 `启动整合网站.cmd`。`npm run db:down` 仅停止数据库，保留数据卷。
+
+新电脑只需要当前仓库中的文件，不需要旧 ZIP、旧项目目录或 Git LFS。`coolcare/` 包含两端前端源码、共享组件、Node API、数据库结构和迁移；根目录保留统一启动脚本、团队约定及 Postman 工作区。
+
+`db:sample` 是可选的本机合成数据导入步骤：提供 28 笔相互关联的预约、2 份年度套餐、10 份维护报告和完整库存流水。已有业务数据时会拒绝覆盖；只有停止网站并明确使用 `--replace` 才会在备份后替换，日常 `db:up` 不清理数据。试运行、指定日期、账号和备份说明见 [SAMPLE-DATA.md](coolcare/SAMPLE-DATA.md)。
 
 ## 页面与账号
 
@@ -45,7 +50,7 @@ npm start
 
 ## 数据整合
 
-所有运行模块使用同一个 MySQL `coolcare_service_app`，地址为本机 `3307`。不再启动 accare 的独立 SQLite 后端。
+所有运行模块使用同一个 MySQL `coolcare_service_app`，地址为本机 `3307`。网站运行不依赖 SQLite 或旧项目后端。
 
 - 登录使用服务端 HttpOnly 会话、bcrypt 校验、CSRF 和登录频率限制，不保存浏览器模拟账号或密码。
 - 客户与技师身份来自登录会话，每个账号只能读取自己的预约或工单。管理员库存权限独立校验。
@@ -53,16 +58,16 @@ npm start
 - 主页支持预约提交、查询、取消和改期。只有尚未分配的 Submitted 预约可自助修改；已安排工单的预约需联系服务团队。
 - 预约写入、设备关联、备注、状态历史采用事务；重复请求 ID 防止重复预约。
 - `database/05-public-site.sql` 增加注册附加资料、预约补充资料、旧数据映射表。`npm run db:up` 自动执行非破坏性迁移与权限更新。
-- 上传 SQLite 的 4 个账号、3 条预约已在本机导入。原文件不变。旧库没有价格，因此导入预约的金额保留为未知，不编造历史价格。
+- 可选的旧 SQLite 导入保留来源映射和原始状态；旧库没有价格时，导入金额保留为未知。
 
-其他电脑如需导入上传的历史记录，启动数据库后执行：
+只有需要迁移自己持有的旧 SQLite 数据时，才运行以下可选命令，并将示例路径替换为实际源文件路径。旧数据库不随 GitHub 分发：
 
 ```powershell
 cd coolcare
-node scripts/import-accare.mjs
+node scripts/import-accare.mjs "C:/path/to/ac-care.db"
 ```
 
-导入通过来源映射去重，可重复运行；不会重复创建同一条历史预约。
+导入以只读方式打开源文件，通过来源映射去重，可重复运行；不会重复创建同一条历史预约。`--help` 仅显示用法，不访问数据库。普通安装无需运行导入。
 
 ## 范围说明
 
@@ -86,6 +91,8 @@ node scripts/import-accare.mjs
 
 ## 验证
 
+本轮仓库与数据整理已验证：脱离旧目录的安装配置、全新临时库建表与迁移、两次合成数据导入、旧数据替换前回滚试运行，以及本机替换后的 79 项回归测试、TypeScript 和完整构建。浏览器检查覆盖 390px 客户首页/历史/报告及桌面技师套餐历史、库存余额和修改审计。完整私人备份保存在本机 `.local/backups/`，不提交 GitHub。
+
 ```powershell
 npm test
 npm --prefix coolcare run test:db
@@ -101,7 +108,7 @@ PDF 功能调用浏览器打印窗口并提供专用打印样式；本轮未验�
 
 ## GitHub
 
-组员使用 Codex 时，先在各自电脑 clone 并打开这个仓库；根目录 `AGENTS.md` 提供统一的项目约定。实际开发目录为 `coolcare/`，原始项目目录保留作参考。
+组员使用 Codex 时，先在各自电脑 clone 并打开这个仓库；根目录 `AGENTS.md` 提供统一的项目约定。所有开发在 `coolcare/` 进行，旧项目不会出现在新的 clone 中。
 
 首次获取：
 
@@ -110,15 +117,16 @@ git clone https://github.com/YuZixiong3549521/3851b.git
 cd 3851b
 npm run setup
 npm run db:up
+npm run db:sample
 npm start
 ```
 
 按项目负责人的最新约定，后续通过验证的更新直接提交并推送到 `main`，除非另行要求使用分支或 Pull Request。推送前先获取并整合远端改动，不强制推送；拉取前先提交或妥善保存当前修改。依赖有变化时重新安装对应依赖，数据库迁移有变化时运行 `npm run db:up`。
 
-**每位组员的本机数据库是独立的。** GitHub 同步代码和建表/迁移文件，不会同步本机创建的订单、Docker 数据卷或登录会话。课堂演示可导入 `coolcare/postman/CoolCare-Booking-Demo.postman_collection.json`，在自己的机器上创建订单，再运行 `node coolcare/scripts/verify-booking.mjs <订单编号>` 直接查询 MySQL。详见 `coolcare/postman/README.md`。
+**每位组员的本机数据库是独立的。** GitHub 同步代码、建表/迁移文件和合成数据生成脚本，不会同步本机创建的订单、Docker 数据卷、登录会话或私人备份。课堂演示可导入 `coolcare/postman/CoolCare-Booking-Demo.postman_collection.json`，在自己的机器上创建订单，再运行 `node coolcare/scripts/verify-booking.mjs <订单编号>` 直接查询 MySQL。详见 `coolcare/postman/README.md`。
 
 统一 UI 约定位于 `coolcare/UI-ARCHITECTURE.md`：各端复用 shadcn/ui、Base UI、Tailwind 和 Lucide。
 
-`.gitignore` 排除本机凭据、依赖、生成文件和 IDE 缓存。原先三个 ZIP 已用解压后的源代码目录替代。`accare.zip` 保留为上传的原始设计来源。同步更新使用 `git pull --ff-only origin main`，首次运行按上方安装步骤准备本机环境。
+`.gitignore` 排除本机凭据、依赖、生成文件、IDE 缓存及旧上传参考目录。原上传文件可从历史提交查阅，不再占据当前分支的项目列表。同步更新使用 `git pull --ff-only origin main`，首次运行按上方安装步骤准备本机环境。
 
 公开部署前需要配置持久化会话、HTTPS、邮件及可选 OAuth 服务；当前服务只面向本机运行。
