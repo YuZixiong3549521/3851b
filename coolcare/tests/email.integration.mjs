@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import mysql from 'mysql2/promise';
 import { createPublicBooking } from '../server/public-site.mjs';
 import { deliverPendingBookingEmails } from '../server/booking-email.mjs';
+import {minimumBookingDate,nextWeekday} from '../server/customer/booking-schedule.mjs';
 const pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,dateStrings:true,decimalNumbers:true});
 after(()=>pool.end());
 test('booking email is queued once, survives delivery failure, retries with same message ID', async()=>{
@@ -12,7 +13,7 @@ test('booking email is queued once, survives delivery failure, retries with same
  const db={execute:c.execute.bind(c),query:c.query.bind(c),getConnection:async()=>handle};
  try {
    const [[user]]=await c.query("SELECT u.user_id AS id,u.email,u.phone FROM user_account u JOIN customer c ON c.user_id=u.user_id ORDER BY c.customer_id LIMIT 1");
-   const input={serviceType:'Cleaning',numberOfUnits:2,preferredDate:new Date(Date.now()+20*86400000).toISOString().slice(0,10),timeWindow:'09:00 AM - 11:00 AM',serviceAddress:`Email integration ${randomUUID()}`,requestId:randomUUID()};
+   const input={serviceType:'Cleaning',numberOfUnits:2,preferredDate:nextWeekday(minimumBookingDate()),timeWindow:'09:00 AM - 11:00 AM',serviceAddress:`Email integration ${randomUUID()}`,requestId:randomUUID()};
    const created=await createPublicBooking(db,user,input);
    const repeat=await createPublicBooking(db,user,input);assert.equal(repeat.id,created.id);
    const [[row]]=await c.execute('SELECT * FROM booking_email_outbox WHERE booking_id=?',[created.id]);

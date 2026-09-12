@@ -7,6 +7,7 @@ import { savePart, recordTransaction } from '../server/inventory.mjs';
 import { createApp } from '../server/app.mjs';
 import { createBooking, listBookings } from '../server/customer/booking-service.mjs';
 import { getTechnician, getTechnicianJobs } from '../server/technician.mjs';
+import {minimumBookingDate,nextWeekday,addCalendarDays} from '../server/customer/booking-schedule.mjs';
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -315,7 +316,7 @@ test('customer booking writes and rereads from shared MySQL (rolled back)', asyn
       WHERE u.email='alice.tan@coolcare.demo' LIMIT 1`);
     const [[service]] = await conn.query("SELECT service_id FROM service_catalog WHERE service_name='Cleaning' AND service_status='Active'");
     const [[latest]] = await conn.execute('SELECT MAX(preferred_service_date) AS serviceDate FROM booking WHERE customer_id=?',[context.customer_id]);
-    const date = new Date(Math.max(Date.now(),latest.serviceDate ? Date.parse(latest.serviceDate) : 0)+14*86400000).toISOString().slice(0,10);
+    const date = nextWeekday([minimumBookingDate(),latest.serviceDate?addCalendarDays(latest.serviceDate,14):minimumBookingDate()].sort().at(-1));
     const booking = await createBooking(testPool, {
       serviceId:service.service_id, addressId:context.address_id, unitIds:[context.unit_id],
       preferredDate:date, timeSlot:'09:00 - 11:00', problemDescription:'Integration verification (rolled back)',

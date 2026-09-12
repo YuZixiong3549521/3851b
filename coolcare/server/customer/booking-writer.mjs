@@ -1,5 +1,6 @@
 import { enqueueBookingEmail } from '../booking-email.mjs';
 import { annualVisitSchedule } from './annual-bookings.mjs';
+import { assertBookableDate } from './booking-schedule.mjs';
 import { assertAddressBookingLimit,saveBookingSelection,attachBookingSelections } from './booking-options.mjs';
 
 export async function describeCreatedBooking(connection,bookingId,{legacy=false}={}) {
@@ -23,6 +24,7 @@ export async function writeSelectedBookings(connection,selection,context) {
     {visitNumber:1,preferredDate:context.preferredDate,totalAmount:selection.totalAmount},
   ];
   if(!context.legacy)for(const visit of schedule) {
+    assertBookableDate(visit.preferredDate);
     await assertAddressBookingLimit(connection,context.customerId,context.addressLine,visit.preferredDate);
   }
   let seriesId;

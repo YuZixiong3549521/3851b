@@ -1,12 +1,14 @@
+import { isWeekday, nextWeekday } from './booking-schedule';
+
 function isCalendarDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(value + 'T00:00:00Z');
   return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-/** Dates are based on the original day, clamped to each target month's last day. */
+/** Clamp from the original day each quarter, then roll later weekend visits to Monday. */
 export function annualVisitDates(firstDate: string): string[] {
-  if (!isCalendarDate(firstDate)) return [];
+  if (!isCalendarDate(firstDate) || !isWeekday(firstDate)) return [];
   const [year, month, day] = firstDate.split('-').map(Number);
   // The fourth visit's exclusive quarterly window ends 12 months after the anchor.
   if (year + 1 > 9999) return [];
@@ -15,7 +17,8 @@ export function annualVisitDates(firstDate: string): string[] {
   return [0, 3, 6, 9].map(offset => {
     const targetMonth = month - 1 + offset;
     const lastDay = new Date(Date.UTC(year, targetMonth + 1, 0)).getUTCDate();
-    return new Date(Date.UTC(year, targetMonth, Math.min(day, lastDay))).toISOString().slice(0, 10);
+    const preferredDate = new Date(Date.UTC(year, targetMonth, Math.min(day, lastDay))).toISOString().slice(0, 10);
+    return offset === 0 ? preferredDate : nextWeekday(preferredDate);
   });
 }
 

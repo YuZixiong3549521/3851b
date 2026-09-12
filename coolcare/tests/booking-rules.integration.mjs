@@ -6,10 +6,15 @@ import { createPublicBooking, changePublicBooking } from '../server/public-site.
 import { createBooking, listBookings } from '../server/customer/booking-service.mjs';
 import { getBookingOptions, lockCustomer } from '../server/customer/booking-options.mjs';
 import { addCalendarMonths } from '../server/customer/annual-bookings.mjs';
+import {addCalendarDays,singaporeToday,minimumBookingDate,nextWeekday,isWeekday} from '../server/customer/booking-schedule.mjs';
 
 const pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,dateStrings:true,decimalNumbers:true,connectionLimit:4});
 after(()=>pool.end());
-const date=offset=>new Date(Date.now()+(30+offset)*86400000).toISOString().slice(0,10);
+const date=offset=>{
+  const candidate=addCalendarDays(singaporeToday(),30);
+  const day=new Date(`${candidate}T00:00:00Z`).getUTCDay();
+  return addCalendarDays(candidate,(8-day)%7+offset);
+};
 const body=(overrides={})=>({serviceType:'Cleaning',numberOfUnits:2,preferredDate:date(0),timeWindow:'09:00 AM - 11:00 AM',serviceAddress:'42 Rules Test Avenue #02-10',requestId:randomUUID(),...overrides});
 
 async function rollbackFixture(work) {
@@ -24,16 +29,41 @@ async function rollbackFixture(work) {
   } finally {await connection.rollback();connection.release();}
 }
 
+for(const route of ['public','customer'])test(`${route} enforces Singapore day-14 and weekdays for create/reschedule while expired-date retries return the receipt`,async t=>{
+  t.mock.timers.enable({apis:['Date'],now:new Date('2026-09-14T04:00:00Z')});
+  try {await rollbackFixture(async(db,c,user)=>{
+    const [address]=await c.execute("INSERT INTO service_address(customer_id,address_line) VALUES (?,'Schedule Boundary Address')",[user.customerId]);
+    const [unit]=await c.execute('INSERT INTO aircon_unit(customer_id,address_id) VALUES (?,?)',[user.customerId,address.insertId]);
+    const [[service]]=await c.execute("SELECT service_id FROM simple_service_catalog WHERE code='cleaning'");
+    const input=route==='public'?body({preferredDate:'2026-09-28',numberOfUnits:1,serviceAddress:'Schedule Boundary Address'}):{
+      serviceId:service.service_id,addressId:address.insertId,unitIds:[unit.insertId],preferredDate:'2026-09-28',timeSlot:'09:00 - 11:00',requestId:randomUUID(),
+    };
+    const create=payload=>route==='public'?createPublicBooking(db,user,payload):createBooking(db,payload,user.id);
+    await assert.rejects(create({...input,preferredDate:'2026-09-27'}),error=>error.status===400&&error.message.includes('14 calendar days'));
+    for(const weekend of ['2026-10-03','2026-10-04'])await assert.rejects(create({...input,preferredDate:weekend}),error=>error.status===400&&error.message.includes('closed'));
+    const booking=await create(input);
+    const id=booking.bookingId;
+    await assert.rejects(changePublicBooking(db,user,id,'reschedule',{preferredDate:'2026-09-27',timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===400&&error.message.includes('14 calendar days'));
+    for(const weekend of ['2026-10-03','2026-10-04'])await assert.rejects(changePublicBooking(db,user,id,'reschedule',{preferredDate:weekend,timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===400&&error.message.includes('closed'));
+    await changePublicBooking(db,user,id,'reschedule',{preferredDate:'2026-09-29',timeWindow:'09:00 AM - 11:00 AM'});
+    t.mock.timers.setTime(new Date('2026-09-29T16:00:00Z').getTime());
+    assert.equal((await create(input)).bookingId,id,'same request still returns its receipt even after the original date is past');
+    await assert.rejects(create({...input,requestId:randomUUID()}),error=>error.status===400&&error.message.includes('14 calendar days'));
+    const [[count]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(count.n,1);
+    const [[mail]]=await c.execute('SELECT COUNT(*) AS n FROM booking_email_outbox WHERE booking_id=?',[id]);assert.equal(mail.n,1);
+  });} finally {t.mock.timers.reset();}
+});
+
 test('both booking routes enforce normalized address limits, cancellation and rescheduling with real MySQL',async()=>rollbackFixture(async(db,c,user)=>{
   const first=await createPublicBooking(db,user,body());
-  const secondInput=body({preferredDate:date(6),serviceAddress:'  42 RULES TEST AVENUE, #02-10  '});
+  const secondInput=body({preferredDate:date(4),serviceAddress:'  42 RULES TEST AVENUE, #02-10  '});
   const second=await createPublicBooking(db,user,secondInput);
   assert.equal((await createPublicBooking(db,user,secondInput)).id,second.id,'retries succeed even when at the limit');
-  await assert.rejects(createPublicBooking(db,user,body({preferredDate:date(3)})),error=>error.status===409);
+  await assert.rejects(createPublicBooking(db,user,body({preferredDate:date(2)})),error=>error.status===409);
   const [[address]]=await c.execute('SELECT address_id FROM booking WHERE booking_id=?',[first.id]);
   const [units]=await c.execute('SELECT unit_id FROM booking_aircon_unit WHERE booking_id=?',[first.id]);
   const [[service]]=await c.execute("SELECT service_id FROM service_catalog WHERE service_name='Cleaning'");
-  const customerInput={serviceId:service.service_id,addressId:address.address_id,unitIds:units.map(u=>u.unit_id),preferredDate:date(3),timeSlot:'09:00 - 11:00',requestId:randomUUID()};
+  const customerInput={serviceId:service.service_id,addressId:address.address_id,unitIds:units.map(u=>u.unit_id),preferredDate:date(2),timeSlot:'09:00 - 11:00',requestId:randomUUID()};
   await assert.rejects(createPublicBooking(db,user,{...secondInput,expectedUserId:user.id+100000}),error=>error.status===409 && error.message.includes('signed-in account changed'));
   await assert.rejects(createBooking(db,{...customerInput,expectedUserId:user.id+100000},user.id),error=>error.status===409 && error.message.includes('signed-in account changed'));
   assert.equal((await createPublicBooking(db,user,{...secondInput,expectedUserId:String(user.id)})).id,second.id,'string user IDs match without changing retry behavior');
@@ -43,8 +73,8 @@ test('both booking routes enforce normalized address limits, cancellation and re
   assert.equal((await createBooking(db,customerInput,user.id)).bookingId,replacement.bookingId);
   await assert.rejects(createBooking(db,{...customerInput,expectedUserId:user.id+100000},user.id),error=>error.status===409 && error.message.includes('signed-in account changed'));
   assert.equal((await createBooking(db,{...customerInput,expectedUserId:String(user.id)},user.id)).bookingId,replacement.bookingId);
-  const later=await createPublicBooking(db,user,body({preferredDate:date(13)}));
-  await assert.rejects(changePublicBooking(db,user,later.id,'reschedule',{preferredDate:date(5),timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===409);
+  const later=await createPublicBooking(db,user,body({preferredDate:date(11)}));
+  await assert.rejects(changePublicBooking(db,user,later.id,'reschedule',{preferredDate:date(3),timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===409);
   await changePublicBooking(db,user,later.id,'reschedule',{preferredDate:date(14),timeWindow:'09:00 AM - 11:00 AM'});
   const other=await createPublicBooking(db,user,body({serviceAddress:'42 Rules Test Avenue #02-11'}));
   assert.ok(other.id,'another unit address has its own quota');
@@ -112,7 +142,7 @@ test('failure while queueing email rolls back order, links and quota usage',asyn
 for(const route of ['public','customer'])test(`${route} annual bundle creates four real quarterly visits and emails, supports retry and scoped changes`,async()=>rollbackFixture(async(db,c,user)=>{
   const options=await getBookingOptions(db,user.customerId);
   const bundle=options.bundles[0];
-  const firstDate=`${new Date().getFullYear()+1}-01-31`;
+  const firstDate=nextWeekday(`${new Date().getFullYear()+1}-01-31`);
   const [address]=await c.execute("INSERT INTO service_address(customer_id,address_line) VALUES (?,'Annual Test Address')",[user.customerId]);
   const [unit1]=await c.execute('INSERT INTO aircon_unit(customer_id,address_id) VALUES (?,?)',[user.customerId,address.insertId]);
   const [unit2]=await c.execute('INSERT INTO aircon_unit(customer_id,address_id) VALUES (?,?)',[user.customerId,address.insertId]);
@@ -127,7 +157,9 @@ for(const route of ['public','customer'])test(`${route} annual bundle creates fo
   assert.equal(series.totalAmount,expectedTotal);
   assert.equal(series.visits.reduce((sum,visit)=>sum+visit.totalAmount,0),expectedTotal);
   assert.equal(booking.totalAmount,series.visits[0].totalAmount,'first visit never repeats the whole-year charge');
-  assert.deepEqual(series.visits.map(visit=>visit.preferredDate),[0,3,6,9].map(month=>addCalendarMonths(firstDate,month)));
+  assert.deepEqual(series.visits.map(visit=>visit.preferredDate),[0,3,6,9].map(month=>nextWeekday(addCalendarMonths(firstDate,month))));
+  assert.ok(series.visits.every(visit=>isWeekday(visit.preferredDate)));
+  assert.deepEqual(series.visits.map(visit=>visit.windowStart),[0,3,6,9].map(month=>addCalendarMonths(firstDate,month)));
   assert.equal((await create()).annualBundle.seriesId,series.seriesId);
   const [[counts]]=await c.execute(`SELECT COUNT(DISTINCT b.booking_id) AS bookings,COUNT(bu.unit_id) AS units,COUNT(DISTINCT e.email_id) AS emails
     FROM booking b JOIN booking_aircon_unit bu ON bu.booking_id=b.booking_id JOIN booking_email_outbox e ON e.booking_id=b.booking_id WHERE b.customer_id=?`,[user.customerId]);
@@ -138,9 +170,9 @@ for(const route of ['public','customer'])test(`${route} annual bundle creates fo
     assert.match(message.body_text,/Amount allocated to this visit/);assert.match(message.body_text,/not an additional charge/);
   });
   const second=series.visits[1];
-  await assert.rejects(changePublicBooking(db,user,second.bookingId,'reschedule',{preferredDate:second.windowEnd,timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===409);
+  await assert.rejects(changePublicBooking(db,user,second.bookingId,'reschedule',{preferredDate:nextWeekday(second.windowEnd),timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===409);
   await assert.rejects(changePublicBooking(db,user,second.bookingId,'reschedule',{preferredDate:firstDate,timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===409);
-  const rescheduled=addCalendarMonths(firstDate,4);
+  const rescheduled=nextWeekday(addCalendarMonths(firstDate,4));
   await changePublicBooking(db,user,second.bookingId,'reschedule',{preferredDate:rescheduled,timeWindow:'09:00 AM - 11:00 AM'});
   await changePublicBooking(db,user,second.bookingId,'cancel',{status:'Cancelled'});
   const refreshed=(await create()).annualBundle;
@@ -155,7 +187,7 @@ test('annual later-visit quota failure and fourth-email failure roll back the co
   const options=await getBookingOptions(db,user.customerId);
   const bundle=options.bundles[0];
   const firstDate=date(0);
-  const thirdDate=addCalendarMonths(firstDate,6);
+  const thirdDate=nextWeekday(addCalendarMonths(firstDate,6));
   await createPublicBooking(db,user,body({preferredDate:thirdDate}));
   await createPublicBooking(db,user,body({preferredDate:thirdDate}));
   const annual=body({packageId:bundle.packageId,serviceIds:bundle.serviceIds,preferredDate:firstDate});

@@ -3,6 +3,7 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { formatDate, formatMoney } from '@/lib/format';
 import { dayBeforeDate } from '@/lib/annual-booking';
+import { bookingDateError, bookingScheduleNotice, earliestBookingDate, nextWeekday } from '@/lib/booking-schedule';
 import { apiFetch as fetch } from '../api';
 import React, {
   useEffect,
@@ -71,6 +72,7 @@ const MyBookingsPage:
     savingBookingId,
     setSavingBookingId
   ] = useState<number | null>(null);
+  const activeBookings = bookings.filter(booking => !['Completed', 'Cancelled'].includes(booking.booking_status));
 
   // =====================================
   // LOAD BOOKINGS
@@ -208,19 +210,25 @@ const MyBookingsPage:
   const handleStartReschedule = (
     booking: Booking
   ) => {
+    const visit = booking.annualBundle?.visits.find(item => item.bookingId === booking.id);
+    const windowStart = booking.annualBundle?.windowStart ?? visit?.windowStart;
+    const windowEnd = booking.annualBundle?.windowEnd ?? visit?.windowEnd;
+    const earliest = earliestBookingDate();
+    const firstAllowed = nextWeekday(windowStart && windowStart > earliest ? windowStart : earliest);
+    const available = !windowEnd || firstAllowed < windowEnd;
     setEditingBookingId(
       booking.id
     );
 
     setEditDate(
-      booking.preferred_date
+      !bookingDateError(booking.preferred_date) ? booking.preferred_date : available ? firstAllowed : ''
     );
 
     setEditTime(
       booking.time_window
     );
 
-    setError('');
+    setError(available ? '' : 'There is no eligible weekday remaining in this visit’s quarterly window. Please contact the service team.');
     setSuccessMessage('');
   };
 
@@ -258,6 +266,15 @@ const MyBookingsPage:
         );
 
         return;
+      }
+      const dateError = bookingDateError(editDate);
+      if (dateError) { setError(dateError); return; }
+      const current = bookings.find(booking => booking.id === bookingId);
+      const visit = current?.annualBundle?.visits.find(item => item.bookingId === bookingId);
+      const windowStart = current?.annualBundle?.windowStart ?? visit?.windowStart;
+      const windowEnd = current?.annualBundle?.windowEnd ?? visit?.windowEnd;
+      if ((windowStart && editDate < windowStart) || (windowEnd && editDate >= windowEnd)) {
+        setError('Keep this visit within its quarterly date window.'); return;
       }
 
       try {
@@ -486,11 +503,9 @@ const MyBookingsPage:
                 0
             }}
           >
-            View and manage
-            your AC Care
-            service
-            appointments.
+            View and manage your active service requests. Completed and cancelled bookings are kept in your booking history.
           </p>
+          <a href="/customer/history" className="mt-3 inline-block text-sm font-semibold text-primary underline">View booking history</a>
         </div>
 
         {/* Success */}
@@ -561,7 +576,7 @@ const MyBookingsPage:
 
         {!loading &&
           !error &&
-          bookings.length ===
+          activeBookings.length ===
             0 && (
             <div
               style={{
@@ -589,7 +604,7 @@ const MyBookingsPage:
               </div>
 
               <h2>
-                No bookings yet
+                No active bookings
               </h2>
 
               <p
@@ -634,7 +649,7 @@ const MyBookingsPage:
         {/* Booking Cards */}
 
         {!loading &&
-          bookings.map(
+          activeBookings.map(
             (booking) => {
 
               const statusStyle =
@@ -655,7 +670,9 @@ const MyBookingsPage:
               const annualVisit = booking.annualBundle?.visits.find(visit => visit.bookingId === booking.id);
               const windowStart = booking.annualBundle?.windowStart ?? annualVisit?.windowStart;
               const windowEnd = booking.annualBundle?.windowEnd ?? annualVisit?.windowEnd;
-              const today = new Date().toLocaleDateString('en-CA');
+              const earliest = earliestBookingDate();
+              const firstAllowed = nextWeekday(windowStart && windowStart > earliest ? windowStart : earliest);
+              const hasAvailableDate = !windowEnd || firstAllowed < windowEnd;
 
               return (
                 <div
@@ -805,19 +822,16 @@ const MyBookingsPage:
                       {isEditing ? (
                         <Input
                           type="date"
-                          min={windowStart && windowStart > today ? windowStart : today}
+                          disabled={!hasAvailableDate}
+                          min={firstAllowed}
+                          aria-invalid={Boolean(editDate && bookingDateError(editDate))}
                           max={windowEnd ? dayBeforeDate(windowEnd) : undefined}
                           value={
                             editDate
                           }
                           onChange={(
                             e
-                          ) =>
-                            setEditDate(
-                              e.target
-                                .value
-                            )
-                          }
+                          ) => { setEditDate(e.target.value); setError(bookingDateError(e.target.value)); }}
                           style={{
                             display:
                               'block',
@@ -959,6 +973,9 @@ const MyBookingsPage:
                     </div>
                   </div>
 
+                  {isEditing && <p className="mt-3 rounded-xl bg-primary/5 p-3 text-sm leading-6">{bookingScheduleNotice}</p>}
+                  {isEditing && !hasAvailableDate && <p role="alert" className="mt-2 text-sm text-red-700">There is no eligible weekday remaining in this visit’s quarterly window. Please contact the service team.</p>}
+                  {isEditing && editDate && bookingDateError(editDate) && <p role="alert" className="mt-2 text-sm text-red-700">{bookingDateError(editDate)}</p>}
                   <div className="mt-5 rounded-xl border border-primary/15 bg-primary/5 p-4 text-sm"><p className="font-semibold">{booking.annualBundle ? 'This visit estimate' : 'Visit estimate'}: {booking.total_amount == null ? 'To be confirmed' : formatMoney(booking.total_amount)}</p>{booking.annualBundle && <p className="mt-1 text-xs text-muted-foreground">{formatMoney(booking.annualBundle.totalAmount)} for all four visits. Pay after each service; additional work is quoted separately.</p>}</div>
                   {isEditing && windowStart && windowEnd && <p className="mt-3 text-sm text-muted-foreground">Keep this quarterly visit between {formatDate(windowStart)} and {formatDate(dayBeforeDate(windowEnd))}. Other visits retain their preferred dates.</p>}
 
@@ -1106,6 +1123,7 @@ const MyBookingsPage:
                               )
                             }
                             disabled={
+                              !hasAvailableDate || !editDate || Boolean(bookingDateError(editDate)) ||
                               savingBookingId ===
                               booking.id
                             }

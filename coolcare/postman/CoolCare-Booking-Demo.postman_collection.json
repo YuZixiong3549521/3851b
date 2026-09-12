@@ -76,7 +76,8 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('HTTP success',()=>pm.expect(pm.response.code).to.be.within(200,299));",
-              "const d=pm.response.json(); pm.collectionVariables.set('csrf',d.csrf); pm.collectionVariables.set('userId',String(d.user.id)); pm.collectionVariables.set('requestId',pm.variables.replaceIn('{{$guid}}')); const date=new Date();date.setDate(date.getDate()+2);pm.collectionVariables.set('serviceDate',date.toISOString().slice(0,10));"
+              "const d=pm.response.json(); pm.collectionVariables.set('csrf',d.csrf); pm.collectionVariables.set('userId',String(d.user.id)); pm.collectionVariables.set('requestId',pm.variables.replaceIn('{{$guid}}'));",
+              "const singaporeToday=new Date(Date.now()+8*60*60*1000).toISOString().slice(0,10); const date=new Date(singaporeToday+'T00:00:00.000Z'); date.setUTCDate(date.getUTCDate()+14); while([0,6].includes(date.getUTCDay())) date.setUTCDate(date.getUTCDate()+1); pm.collectionVariables.set('serviceDate',date.toISOString().slice(0,10));"
             ]
           }
         }

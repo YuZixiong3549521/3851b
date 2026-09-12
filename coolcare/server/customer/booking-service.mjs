@@ -4,6 +4,7 @@ import { HttpError } from './errors.mjs';
 import { lockCustomer, resolveBookingSelection, attachBookingSelections } from './booking-options.mjs';
 import { writeSelectedBookings,describeCreatedBooking } from './booking-writer.mjs';
 import { config } from './config.mjs';
+import { isCalendarDate } from './booking-schedule.mjs';
 
 const timeSlots = ['09:00 - 11:00', '11:00 - 13:00', '14:00 - 16:00', '16:00 - 18:00'];
 
@@ -16,7 +17,7 @@ export const createBookingSchema = z.object({
   requestId: z.uuid().optional(),
   addressId: z.coerce.number().int().positive(),
   unitIds: z.array(z.coerce.number().int().positive()).min(1).max(10),
-  preferredDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Choose a valid service date.'),
+  preferredDate: z.string().refine(isCalendarDate, 'Choose a valid service date.'),
   timeSlot: z.enum(timeSlots),
   problemDescription: z.string().trim().max(1000).optional().default(''),
 });
@@ -26,15 +27,6 @@ export function bookingReference(bookingId, createdAt) {
   return `BK-${year}-${String(bookingId).padStart(4, '0')}`;
 }
 
-function assertFutureDate(dateText) {
-  const selected = new Date(`${dateText}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  if (Number.isNaN(selected.getTime()) || selected < today || `${selected.getFullYear()}-${String(selected.getMonth()+1).padStart(2,'0')}-${String(selected.getDate()).padStart(2,'0')}` !== dateText) {
-    throw new HttpError(400, 'Choose a valid service date today or later.');
-  }
-}
-
 export async function createBooking(pool, untrustedInput, userId) {
   const parsed = createBookingSchema.safeParse(untrustedInput);
   if (!parsed.success) {
@@ -42,7 +34,6 @@ export async function createBooking(pool, untrustedInput, userId) {
   }
 
   const input = parsed.data;
-  assertFutureDate(input.preferredDate);
   const connection = await pool.getConnection();
 
   try {

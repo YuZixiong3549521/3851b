@@ -28,7 +28,7 @@ export function BookingCard({ booking, history = false }: { booking: Booking; hi
           <Info icon={CalendarDays} label="Service date" value={formatDate(booking.preferredDate)} />
           <Info icon={Clock3} label="Time" value={booking.timeSlot} />
           <Info icon={MapPin} label="Address" value={`${booking.addressLine}${booking.postalCode ? `, ${booking.postalCode}` : ''}`} />
-          <Info icon={Wind} label="Units" value={booking.units.map((unit) => `${unit.brand} · ${unit.location}`).join(', ') || 'No unit recorded'} />
+          <Info icon={Wind} label="Units" value={booking.units.map((unit) => [unit.brand, unit.location].filter(Boolean).join(' · ') || 'AC unit').join(', ') || 'No unit recorded'} />
         </div>
         {booking.technicianName && <div className="mt-5 rounded-xl bg-secondary/8 p-4"><Info icon={UserRound} label="Assigned technician" value={booking.technicianName} /></div>}
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-border/70 pt-5">

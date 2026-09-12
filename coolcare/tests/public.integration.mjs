@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import mysql from 'mysql2/promise';
 import {randomUUID} from 'node:crypto';
 import {createApp} from '../server/app.mjs';
+import {minimumBookingDate,nextWeekday} from '../server/customer/booking-schedule.mjs';
 const pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,dateStrings:true,decimalNumbers:true});
 after(()=>pool.end());
 test('public registration, sessions, booking, retry, cross-portal reads, ownership, reschedule and cancellation',async()=>{
@@ -25,7 +26,7 @@ test('public registration, sessions, booking, retry, cross-portal reads, ownersh
   assert.equal((await (await req('/api/public/session')).json()).user.email,account.email);
   assert.equal((await req('/api/parts')).status,401);
   assert.equal((await req('/api/technician/jobs')).status,403);
-  const tomorrow=new Date(Date.now()+86400000).toISOString().slice(0,10);
+  const tomorrow=nextWeekday(minimumBookingDate());
   const input={serviceType:'Cleaning',numberOfUnits:2,preferredDate:tomorrow,timeWindow:'09:00 AM - 11:00 AM',serviceAddress:'123 Integration Test Street',requestId:randomUUID(),userId:1};
   const created=await (await req('/api/public/bookings','POST',input)).json();assert.equal(created.success,true);assert.equal(created.booking.totalAmount,75);
   const repeat=await (await req('/api/public/bookings','POST',input)).json();assert.equal(repeat.booking.id,created.booking.id);

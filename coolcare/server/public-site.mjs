@@ -7,6 +7,7 @@ import { AppError } from './inventory.mjs';
 import { lockCustomer, normalizeAddress, assertAddressBookingLimit, resolveBookingSelection, restoreMembershipVisit, attachBookingSelections,getBookingOptions } from './customer/booking-options.mjs';
 import { writeSelectedBookings,describeCreatedBooking } from './customer/booking-writer.mjs';
 import { assertAnnualRescheduleWindow } from './customer/annual-bookings.mjs';
+import { isCalendarDate,assertBookableDate } from './customer/booking-schedule.mjs';
 
 export const offers = [
  ['Air Conditioning Cleaning',65,45],['Regular Maintenance',85,55],
@@ -14,11 +15,9 @@ export const offers = [
  ['3-Unit Bundle Deal ($50 Off)',145,35],['Annual Maintenance Contract',240,80],
 ];
 const times=['09:00 AM - 11:00 AM','11:30 AM - 01:30 PM','02:00 PM - 04:00 PM','04:30 PM - 06:30 PM','11:00 AM - 01:00 PM','04:00 PM - 06:00 PM','09:00 - 11:00','11:00 - 13:00','14:00 - 16:00','16:00 - 18:00'];
-const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(s=>{
- const d=new Date(s+'T00:00:00Z');
- const today=new Date(); const local=`${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
- return !isNaN(d.getTime()) && d.toISOString().slice(0,10)===s && s>=local;
-},'Choose a valid date today or later.');
+// Calendar validity is stable. Lead time and weekdays are checked only for new
+// writes, after looking up an owned request ID, so an old receipt remains retriable.
+const date=z.string().refine(isCalendarDate,'Choose a valid service date.');
 export async function sessionUser(pool,req,role) {
  const id=req.session.portalUser?.id;
  if(!id) throw new AppError('Please sign in to continue.',401);
@@ -57,6 +56,7 @@ export async function changePublicBooking(pool,user,id,action,input){
  const [[assigned]]=await c.execute('SELECT COUNT(*) AS count FROM assignment WHERE booking_id=?',[bookingId]);
  if(b.booking_status!=='Submitted'||assigned.count>0)throw new AppError('Only unassigned, submitted bookings can be changed. Please contact the service team.',409);
  if(action==='reschedule'){
+  assertBookableDate(patch.preferredDate);
   await assertAnnualRescheduleWindow(c,bookingId,patch.preferredDate);
   const [[address]]=await c.execute('SELECT address_line FROM service_address WHERE address_id=?',[b.address_id]);
   await assertAddressBookingLimit(c,customer.customerId,address.address_line,patch.preferredDate,bookingId);

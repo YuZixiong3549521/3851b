@@ -1,4 +1,5 @@
 import { HttpError } from './errors.mjs';
+import { isCalendarDate,nextWeekday } from './booking-schedule.mjs';
 
 // Each anniversary uses the original day, so Jan 31 -> Apr 30 -> Jul 31.
 export function addCalendarMonths(dateText, months) {
@@ -9,6 +10,7 @@ export function addCalendarMonths(dateText, months) {
 }
 
 export function annualVisitSchedule(firstDate,totalAmount) {
+  if(!isCalendarDate(firstDate))throw new HttpError(400,'Choose a valid first service date.');
   const cents=Math.round(Number(totalAmount)*100);
   const perVisit=Math.floor(cents/4);
   const visits=Array.from({length:4},(_,index)=>({
@@ -20,6 +22,14 @@ export function annualVisitSchedule(firstDate,totalAmount) {
   }));
   if(visits.some(visit=>![visit.preferredDate,visit.windowStart,visit.windowEnd].every(value=>/^\d{4}-\d{2}-\d{2}$/.test(value)))) {
     throw new HttpError(400,'Choose a first date whose four quarterly visits and final quarterly window fit within the supported calendar.');
+  }
+  // Keep the chosen first date and original quarter boundaries. Later anniversaries
+  // that fall on a closed weekend move to the following Monday within that quarter.
+  for(const visit of visits) {
+    if(visit.visitNumber>1)visit.preferredDate=nextWeekday(visit.preferredDate);
+    if(!isCalendarDate(visit.preferredDate)||visit.preferredDate<visit.windowStart||visit.preferredDate>=visit.windowEnd) {
+      throw new HttpError(400,'The annual visit dates must fit within their quarterly windows. Choose another first date.');
+    }
   }
   return visits;
 }

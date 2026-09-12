@@ -11,7 +11,7 @@ const navItems = [
   { label: 'Dashboard', shortLabel: 'Dashboard', href: '/customer', icon: Gauge },
   { label: 'Book Service', shortLabel: 'Book', href: '/customer/book', icon: CalendarDays },
   { label: 'My Bookings', shortLabel: 'Bookings', href: '/customer/bookings', icon: ClipboardCheck },
-  { label: 'Maintenance History', shortLabel: 'History', href: '/customer/history', icon: History },
+  { label: 'Booking History', shortLabel: 'History', href: '/customer/history', icon: History },
 ];
 
 export function CoolCareShell({ children }: { children: ReactNode }) {
@@ -23,9 +23,10 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
+    timeZone: 'Asia/Singapore',
   }).format(new Date());
 
-  const isActive = (href: string) => href === '/customer' ? pathname === '/customer' : pathname.startsWith(href);
+  const isActive = (href: string) => pathname === href || (href !== '/customer' && pathname.startsWith(`${href}/`));
 
   return (
     <div className="min-h-screen bg-background text-foreground">

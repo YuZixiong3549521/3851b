@@ -9,6 +9,7 @@ import { EmptyState, PageError, PageLoading } from '@/components/page-state';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { coolcareApi } from '@/lib/coolcare-api';
+import { isActiveBooking } from '@/lib/customer-bookings';
 import type { Booking } from '@/lib/coolcare-types';
 
 export default function MyBookingsPage() {
@@ -19,21 +20,21 @@ export default function MyBookingsPage() {
     coolcareApi.getBookings().then(setBookings).catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to load bookings.'));
   }, []);
 
-  const upcoming = bookings?.filter((booking) => !['Completed', 'Cancelled'].includes(booking.status)) ?? [];
-  const completed = bookings?.filter((booking) => booking.status === 'Completed') ?? [];
+  const active = bookings?.filter(isActiveBooking) ?? [];
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' });
+  const upcoming = active.filter((booking) => booking.preferredDate.slice(0, 10) >= today);
 
   return (
     <CoolCareShell>
       <div className="mx-auto max-w-5xl px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
-        <div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-semibold text-primary">MY BOOKINGS</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Service requests</h1><p className="mt-2 text-sm text-muted-foreground">Track every request from submission to completion.</p></div><Button render={<Link href="/customer/book" />}><Plus className="size-4" aria-hidden="true" />New booking</Button></div>
+        <div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-semibold text-primary">MY BOOKINGS</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Service requests</h1><p className="mt-2 text-sm text-muted-foreground">Track your active requests. Completed and cancelled bookings are in <Link href="/customer/history" className="font-medium text-primary underline underline-offset-4">Booking History</Link>.</p></div><Button render={<Link href="/customer/book" />}><Plus className="size-4" aria-hidden="true" />New booking</Button></div>
         {!bookings && !error && <PageLoading />}
         {error && <PageError message={`${error} Please refresh this page to retry.`} />}
         {bookings && (
-          <Tabs defaultValue="all">
-            <TabsList className="mb-6 h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:w-fit"><TabsTrigger value="all" className="px-4">All ({bookings.length})</TabsTrigger><TabsTrigger value="upcoming" className="px-4">Upcoming ({upcoming.length})</TabsTrigger><TabsTrigger value="completed" className="px-4">Completed ({completed.length})</TabsTrigger></TabsList>
-            <TabsContent value="all"><BookingList bookings={bookings} /></TabsContent>
+          <Tabs defaultValue="active">
+            <TabsList className="mb-6 h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:w-fit"><TabsTrigger value="active" className="px-4">Active ({active.length})</TabsTrigger><TabsTrigger value="upcoming" className="px-4">Upcoming ({upcoming.length})</TabsTrigger></TabsList>
+            <TabsContent value="active"><BookingList bookings={active} /></TabsContent>
             <TabsContent value="upcoming"><BookingList bookings={upcoming} /></TabsContent>
-            <TabsContent value="completed"><BookingList bookings={completed} /></TabsContent>
           </Tabs>
         )}
       </div>

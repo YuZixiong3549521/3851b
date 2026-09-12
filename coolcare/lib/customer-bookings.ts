@@ -1,5 +1,9 @@
 type ScheduledBooking = { preferredDate: string; timeSlot: string; status: string };
 
+export function isActiveBooking(booking: { status: string }) {
+  return !['completed', 'cancelled', 'canceled'].includes(booking.status.toLowerCase());
+}
+
 function arrivalMinutes(timeSlot: string) {
   const match = /^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i.exec(timeSlot.trim());
   if (!match) return Number.POSITIVE_INFINITY;
@@ -8,6 +12,6 @@ function arrivalMinutes(timeSlot: string) {
 }
 
 export function nextUpcomingBooking<T extends ScheduledBooking>(bookings: T[], today: string): T | undefined {
-  return bookings.filter(booking => booking.preferredDate.slice(0, 10) >= today && !['Completed', 'Cancelled'].includes(booking.status))
+  return bookings.filter(booking => booking.preferredDate.slice(0, 10) >= today && isActiveBooking(booking))
     .sort((a, b) => a.preferredDate.slice(0, 10).localeCompare(b.preferredDate.slice(0, 10)) || arrivalMinutes(a.timeSlot) - arrivalMinutes(b.timeSlot))[0];
 }

@@ -30,7 +30,7 @@ test('booking input rejects an empty aircon selection', () => {
   assert.equal(result.success, false);
 });
 
-test('rolling seven-day quota includes cross-week boundaries without imposing advance notice', () => {
+test('rolling seven-day quota includes cross-week boundaries independently of lead-time validation', () => {
   assert.equal(exceedsWeeklyLimit([], '2026-09-18'),false);
   assert.equal(exceedsWeeklyLimit(['2026-09-18'], '2026-09-18'),false);
   assert.equal(exceedsWeeklyLimit(['2026-09-18','2026-09-18'], '2026-09-18'),true);

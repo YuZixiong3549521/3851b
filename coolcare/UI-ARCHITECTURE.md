@@ -23,6 +23,8 @@ The authenticated customer Dashboard exposes **Ask CoolCare Assistant**. This is
 - Authentication, customer ownership and CSRF remain enforced by the existing API. A stable request UUID is reused after uncertain submission failures; editing is locked until the request is resolved, avoiding a second booking on retry. Closing/reopening preserves an unfinished draft for the same customer; switching customers clears it.
 - Successful creation displays the server booking ID, status and amount (all four visit IDs for an annual bundle), refreshes the Dashboard and offers to start another booking. Conversation state stays in memory; no chat transcript is stored in the seeded chatbot tables.
 
+All booking and reschedule forms require at least 14 calendar days of notice in Asia/Singapore and Monday–Friday service dates, backed by server validation. Annual previews roll subsequent weekend visits forward to Monday without moving the original quarterly anchor. Both My Bookings pages show active requests only; Booking History keeps completed reports and cancelled requests in separate tabs. Existing data and list API contracts are preserved.
+
 ## Data boundary (existing portals)
 
 React calls `/api/...`; Express validates the request and session, checks authorization and accesses MySQL. React never receives database credentials. Postman calls the same API. No database or API migration is required for the UI consolidation.
@@ -31,6 +33,8 @@ React calls `/api/...`; Express validates the request and session, checks author
 
 The booking workflow extension uses the same UI primitives and adds `booking-service-selection.tsx` shared by all three customer booking surfaces, plus `inventory-transaction-details.tsx` for admin corrections. API contracts, package snapshots, stock audit and mail setup are documented in [BOOKING-WORKFLOWS.md](BOOKING-WORKFLOWS.md).
 
-Current validation covers 36 unit/integration tests, TypeScript and both builds. Real MySQL checks cover rolling address limits, customer locks, the three-choice catalogue, annual dates and price allocations, all-or-nothing four-visit creation/email queuing, retries, quarterly rescheduling, cancellation, historical data retention, stock audit and technician assessment authorization/versioning. Mutating automated fixtures roll back.
+Current validation covers 40 unit/integration tests, TypeScript and both builds. Real MySQL checks cover rolling address limits, customer locks, the three-choice catalogue, 14-day lead time and weekdays, annual dates and price allocations, all-or-nothing four-visit creation/email queuing, expired-date retries, quarterly rescheduling, cancellation, historical data retention, stock audit and technician assessment authorization/versioning. Singapore midnight boundaries are unit-tested. Mutating automated fixtures roll back.
+
+The latest browser checks cover both active booking lists, completed/cancelled history, date rejection in all three creation forms, quarterly Monday previews and mobile rescheduling at desktop/390px widths. Nine live HTTP rejection checks cover day 13, Saturday and Sunday through both creation APIs and rescheduling; existing bookings remain unchanged.
 
 Browser checks cover login requirements, current homepage prices and booking prefill, the public booking dialog, customer Repair review, a real four-visit assistant submission/retry, the customer list and a technician assessment saved through the actual API. Desktop and 390px layouts were reviewed. Annual QA orders were cancelled afterward, and isolated technician QA fixtures were removed without changing existing reports or inventory. Earlier inventory tests remain in the suite; this is targeted workflow coverage, not a full public-launch acceptance test.

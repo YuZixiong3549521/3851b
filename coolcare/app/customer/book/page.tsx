@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CalendarCheck, Check, Clock3, MapPin, Snowflake, Wind } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
 import { BookingServiceSelection, bookingEmailMessage, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatMoney } from '@/lib/format';
 import { assertBookingConfirmation } from '@/lib/annual-booking';
+import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
 import type { BookingInput, BookingOptions, CreatedBooking, CustomerContext } from '@/lib/coolcare-types';
 
 const steps = ['Service', 'Aircon units', 'Schedule', 'Review'];
@@ -38,7 +39,7 @@ export default function BookServicePage() {
   const [context, setContext] = useState<CustomerContext | null>(null);
   const [options, setOptions] = useState<BookingOptions | null>(null);
   const [selection, setSelection] = useState<BookingSelection>(emptyBookingSelection);
-  const [form, setForm] = useState<FormState>(initialForm);
+  const [form, setForm] = useState<FormState>(() => ({ ...initialForm, preferredDate: earliestBookingDate() }));
   const [error, setError] = useState('');
   const [fieldError, setFieldError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -63,10 +64,14 @@ export default function BookServicePage() {
   const selectedUnits = context?.units.filter((unit) => form.unitIds.includes(unit.unitId)) ?? [];
   const selectedServices = getBookingSelection(options, selection, Math.max(1, selectedUnits.length));
   const total = selectedUnits.length ? selectedServices.estimate : 0;
-  const minimumDate = useMemo(() => new Date().toLocaleDateString('en-CA'), []);
+  const minimumDate = earliestBookingDate();
 
   const submitBooking = useCallback(async (input: BookingInput) => {
     if (!context) throw new Error('Wait for your account details to load before booking.');
+    if (!pendingRequest.current) {
+      const dateError = bookingDateError(input.preferredDate);
+      if (dateError) throw Object.assign(new Error(dateError), { status: 400 });
+    }
     if (!pendingRequest.current) pendingRequest.current = { ...input, expectedUserId: context.customer.userId, requestId: input.requestId || requestId.current };
     const result = await coolcareApi.createBooking(pendingRequest.current);
     assertBookingConfirmation(result, Boolean(pendingRequest.current.packageId));
@@ -114,7 +119,7 @@ export default function BookServicePage() {
     if (step === 1 && !selectedServices.valid) return 'Choose Cleaning, Repair or the Annual Cleaning Bundle to continue.';
     if (step === 2 && !form.addressId) return 'Select a service address.';
     if (step === 2 && form.unitIds.length === 0) return 'Select at least one aircon unit.';
-    if (step === 3 && !form.preferredDate) return 'Choose a preferred service date.';
+    if (step === 3 && bookingDateError(form.preferredDate)) return bookingDateError(form.preferredDate);
     if (step === 3 && !form.timeSlot) return 'Choose a preferred time slot.';
     return '';
   }
@@ -167,7 +172,7 @@ export default function BookServicePage() {
     setSelection(emptyBookingSelection);
     setRetryLocked(false);
     coolcareApi.getBookingOptions().then(setOptions).catch(() => setError('Unable to refresh booking options. Please reload before booking again.'));
-    setForm({ ...initialForm, addressId: context?.addresses.find((address) => address.isDefault)?.addressId ?? null });
+    setForm({ ...initialForm, preferredDate: earliestBookingDate(), addressId: context?.addresses.find((address) => address.isDefault)?.addressId ?? null });
     setStep(1);
     setCreated(null);
     setFieldError('');
@@ -210,8 +215,8 @@ export default function BookServicePage() {
               )}
 
               {step === 3 && (
-                <div><h2 className="text-xl font-bold">Choose a preferred schedule</h2><p className="mt-1 text-sm text-muted-foreground">An administrator will confirm availability after submission.</p><p className="mt-3 rounded-xl bg-primary/5 p-3 text-sm">{bookingFrequencyNotice}</p>
-                  <div className="mt-6 grid gap-5 sm:grid-cols-2"><div><FieldLabel htmlFor="preferred-date">{selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'}</FieldLabel><Input id="preferred-date" type="date" min={minimumDate} value={form.preferredDate} onChange={(event) => setForm((current) => ({ ...current, preferredDate: event.target.value }))} className="mt-2 h-12" /></div><div><FieldLabel htmlFor="time-slot">Preferred time</FieldLabel><Select value={form.timeSlot || undefined} onValueChange={(value) => setForm((current) => ({ ...current, timeSlot: value as BookingInput['timeSlot'] }))}><SelectTrigger id="time-slot" className="mt-2 h-12 w-full"><SelectValue placeholder="Choose a time slot" /></SelectTrigger><SelectContent>{timeSlots.map((slot) => <SelectItem key={slot} value={slot}>{slot}</SelectItem>)}</SelectContent></Select></div></div>
+                <div><h2 className="text-xl font-bold">Choose a preferred schedule</h2><p className="mt-1 text-sm text-muted-foreground">An administrator will confirm availability after submission.</p><p className="mt-3 rounded-xl bg-primary/5 p-3 text-sm">{bookingScheduleNotice}</p><p className="mt-3 text-xs text-muted-foreground">{bookingFrequencyNotice}</p>
+                  <div className="mt-6 grid gap-5 sm:grid-cols-2"><div><FieldLabel htmlFor="preferred-date">{selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'}</FieldLabel><Input id="preferred-date" type="date" min={minimumDate} aria-invalid={Boolean(bookingDateError(form.preferredDate))} value={form.preferredDate} onChange={(event) => { setForm((current) => ({ ...current, preferredDate: event.target.value })); setFieldError(bookingDateError(event.target.value)); }} className="mt-2 h-12" /></div><div><FieldLabel htmlFor="time-slot">Preferred time</FieldLabel><Select value={form.timeSlot || undefined} onValueChange={(value) => setForm((current) => ({ ...current, timeSlot: value as BookingInput['timeSlot'] }))}><SelectTrigger id="time-slot" className="mt-2 h-12 w-full"><SelectValue placeholder="Choose a time slot" /></SelectTrigger><SelectContent>{timeSlots.map((slot) => <SelectItem key={slot} value={slot}>{slot}</SelectItem>)}</SelectContent></Select></div></div>
                   {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} /></div>}
                   <div className="mt-6"><FieldLabel htmlFor="problem-description">Problem description <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Textarea id="problem-description" value={form.problemDescription} onChange={(event) => setForm((current) => ({ ...current, problemDescription: event.target.value }))} maxLength={1000} placeholder="Tell the technician about leaks, noise, weak cooling or other concerns." className="mt-2 min-h-28 resize-y" /><p className="mt-1 text-right text-xs text-muted-foreground">{form.problemDescription.length}/1000</p></div>
                 </div>

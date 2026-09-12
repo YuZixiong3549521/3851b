@@ -9,6 +9,7 @@ import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate, formatMoney } from '@/lib/format';
 import { assertBookingConfirmation } from '@/lib/annual-booking';
+import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
 import type { Address, AnnualBundle, BookingOptions, EmailNotification } from '@/lib/coolcare-types';
 import { apiFetch as fetch } from '../api';
 import React, { useState, useEffect, useRef } from 'react';
@@ -35,11 +36,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [options, setOptions] = useState<BookingOptions | null>(null);
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [unitsCount, setUnitsCount] = useState(2);
-  const [date, setDate] = useState(() => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return tomorrow.toLocaleDateString('en-CA');
-  });
+  const [date, setDate] = useState(() => earliestBookingDate());
   const [timeSlot, setTimeSlot] = useState('09:00 AM - 11:00 AM');
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
@@ -105,6 +102,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   }
 
   if(requestInFlight.current||(!pendingRequest.current && (!pricesReady||!selectedServices.valid)))return;
+  if (!pendingRequest.current && bookingDateError(date)) { setError(bookingDateError(date)); return; }
   requestInFlight.current = true;
   setSubmitting(true); setError('');
   if (!pendingRequest.current) pendingRequest.current = {
@@ -250,10 +248,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   </label>
                   <Input
                     type="date"
-                    min={new Date().toLocaleDateString('en-CA')}
+                    min={earliestBookingDate()}
+                    aria-invalid={!retryLocked && Boolean(bookingDateError(date))}
                     required
                     value={date}
-                    onChange={(e) => setDate(e.target.value)}
+                    onChange={(e) => { setDate(e.target.value); setError(bookingDateError(e.target.value)); }}
                     className="w-full px-3.5 py-2 rounded-xl border border-ac-outline-variant bg-ac-surface-container-lowest text-sm text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20 h-[42px]"
                   />
                 </div>
@@ -282,7 +281,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     )
                   )}
                 </div>
-                <p className="mt-3 rounded-xl bg-ac-primary/5 p-3 text-xs leading-5 text-ac-on-surface-variant">{bookingFrequencyNotice}</p>
+                <p className="mt-3 rounded-xl bg-ac-primary/5 p-3 text-sm leading-6 text-ac-on-surface-variant">{bookingScheduleNotice}</p><p className="mt-2 text-xs leading-5 text-ac-on-surface-variant">{bookingFrequencyNotice}</p>
               </div>
 
               {/* Address & Phone */}

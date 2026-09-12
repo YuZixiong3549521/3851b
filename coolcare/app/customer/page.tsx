@@ -31,7 +31,7 @@ export default function Home() {
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to load your dashboard.'));
   }, []);
 
-  const upcoming = nextUpcomingBooking(bookings, new Date().toLocaleDateString('en-CA'));
+  const upcoming = nextUpcomingBooking(bookings, new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Singapore' }));
   const firstName = context?.customer.fullName.split(' ')[0] ?? 'there';
   const annualBundles = [...new Map(bookings.flatMap(booking => booking.annualBundle ? [[booking.annualBundle.seriesId, booking.annualBundle] as const] : [])).values()];
 
