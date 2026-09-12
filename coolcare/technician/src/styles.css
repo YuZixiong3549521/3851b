@@ -18,3 +18,6 @@
 .tech-stock-form .tech-excess{display:flex;gap:10px;align-items:flex-start;background:#fff7df;padding:12px;border:1px solid #e8c765;border-radius:8px;font-size:13px}.tech-excess input{flex:0 0 auto;margin-top:5px}
 .tech-guidance{background:#eff6ff;border:1px solid #c8dced;border-radius:8px;padding:10px;font-size:12px;overflow-wrap:anywhere}.tech-error{color:#9f2424;background:#fff0f0;border-radius:8px;padding:10px;margin:10px 0}
 .drawer-inner .cell-icon{flex-wrap:wrap}.drawer-inner{overflow-wrap:anywhere}
+.tech-cleaning-assessment{border-top:1px solid var(--border);margin-top:20px}.tech-cleaning-assessment .tech-stock-form{border:0;margin-top:0}.tech-assessment-revision{border-top:1px solid var(--border);padding-top:10px;margin-top:10px}.drawer-inner .tech-assessment-revision p{display:block}
+.tech-stock-form fieldset{border:0;min-width:0;margin:0;padding:0}
+.drawer-inner .tech-cleaning-assessment>p{display:block}

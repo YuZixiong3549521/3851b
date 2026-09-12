@@ -26,8 +26,8 @@ test('public registration, sessions, booking, retry, cross-portal reads, ownersh
   assert.equal((await req('/api/parts')).status,401);
   assert.equal((await req('/api/technician/jobs')).status,403);
   const tomorrow=new Date(Date.now()+86400000).toISOString().slice(0,10);
-  const input={serviceType:'Air Conditioning Cleaning',numberOfUnits:2,preferredDate:tomorrow,timeWindow:'09:00 AM - 11:00 AM',serviceAddress:'123 Integration Test Street',requestId:randomUUID(),userId:1};
-  const created=await (await req('/api/public/bookings','POST',input)).json();assert.equal(created.success,true);assert.equal(created.booking.totalAmount,110);
+  const input={serviceType:'Cleaning',numberOfUnits:2,preferredDate:tomorrow,timeWindow:'09:00 AM - 11:00 AM',serviceAddress:'123 Integration Test Street',requestId:randomUUID(),userId:1};
+  const created=await (await req('/api/public/bookings','POST',input)).json();assert.equal(created.success,true);assert.equal(created.booking.totalAmount,75);
   const repeat=await (await req('/api/public/bookings','POST',input)).json();assert.equal(repeat.booking.id,created.booking.id);
   const oldPortal=await (await req('/api/customer/bookings')).json();assert.equal(oldPortal.bookings.length,1);assert.equal(oldPortal.bookings[0].bookingId,created.booking.id);
   const [[persisted]]=await c.execute('SELECT COUNT(*) AS count FROM booking WHERE booking_id=?',[created.booking.id]);assert.equal(persisted.count,1);

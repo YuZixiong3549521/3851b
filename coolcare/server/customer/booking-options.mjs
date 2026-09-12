@@ -1,30 +1,27 @@
 import { HttpError } from './errors.mjs';
+import { attachAnnualBundles } from './annual-bookings.mjs';
 
 const numeric = row => ({ ...row, basePrice: Number(row.basePrice), additionalUnitPrice: Number(row.additionalUnitPrice) });
 
 export async function getBookingOptions(executor, customerId) {
   const [rows] = await executor.query(`SELECT s.service_id AS serviceId,s.service_name AS name,s.description,
-    s.base_price AS basePrice,p.additional_unit_price AS additionalUnitPrice
+    s.base_price AS basePrice,p.additional_unit_price AS additionalUnitPrice,c.code,c.pricing_note AS pricingNote
     FROM service_catalog s JOIN web_service_pricing p ON p.service_id=s.service_id
+    JOIN simple_service_catalog c ON c.service_id=s.service_id
     WHERE s.service_status='Active' AND p.customer_visible=TRUE ORDER BY s.service_id`);
   const services = rows.map(numeric);
   const [packages] = await executor.query(`SELECT p.package_id AS packageId,p.package_name AS name,p.description,
-    p.package_price AS price,d.package_kind AS kind,d.included_units AS includedUnits,
-    d.additional_unit_price AS additionalUnitPrice,p.included_service_count AS includedVisits,
+    p.package_price AS price,d.package_kind AS kind,d.included_units AS includedUnits,c.code,c.pricing_note AS pricingNote,
+    d.additional_unit_price AS additionalUnitPrice,c.included_visits AS includedVisits,c.interval_months AS intervalMonths,
     p.billing_interval AS billingInterval FROM maintenance_package p JOIN web_package_details d ON d.package_id=p.package_id
+    JOIN simple_package_catalog c ON c.package_id=p.package_id
     WHERE p.package_status='Active' ORDER BY p.package_id`);
   const [links] = await executor.query('SELECT package_id AS packageId,service_id AS serviceId FROM package_service ORDER BY service_id');
   const packageServices = id => services.filter(service => links.some(link => link.packageId === id && link.serviceId === service.serviceId));
-  const [subscriptions] = await executor.execute(`SELECT cs.subscription_id AS subscriptionId,cs.package_id AS packageId,
-    p.package_name AS name,cs.remaining_service_count AS remainingVisits,cs.start_date AS startDate,cs.end_date AS endDate,
-    cs.subscription_status AS status FROM customer_subscription cs JOIN maintenance_package p ON p.package_id=cs.package_id
-    WHERE cs.customer_id=? AND cs.subscription_status='Active' AND p.package_status='Active'
-    AND cs.end_date >= CURRENT_DATE ORDER BY cs.end_date,cs.subscription_id`, [customerId]);
   return {
-    services,
+    currency:'SGD',services,
     bundles: packages.filter(p => p.kind === 'Bundle').map(p => ({ ...p, price: Number(p.price), additionalUnitPrice: Number(p.additionalUnitPrice), serviceIds: packageServices(p.packageId).map(s => s.serviceId) })),
-    memberships: packages.filter(p => p.kind === 'Membership').map(p => ({ ...p, price: Number(p.price), serviceIds: packageServices(p.packageId).map(s => s.serviceId) })),
-    subscriptions: subscriptions.map(s => ({ ...s, services: packageServices(s.packageId) })),
+    memberships:[],subscriptions:[],
   };
 }
 
@@ -63,31 +60,23 @@ export async function assertAddressBookingLimit(connection, customerId, addressL
   }
 }
 
-export async function resolveBookingSelection(connection, customerId, input, numberOfUnits) {
-  if (input.packageId && input.subscriptionId) throw new HttpError(400, 'Choose a bundle or a membership visit.');
+export async function resolveBookingSelection(connection, customerId, input, numberOfUnits, {legacy=false}={}) {
+  if (input.subscriptionId) throw new HttpError(400, 'Membership bookings are no longer available. Choose Cleaning, Repair or the Annual Cleaning Bundle.');
   let selectedIds = input.serviceIds?.length ? input.serviceIds : input.serviceId ? [input.serviceId] : [];
-  if (new Set(selectedIds).size !== selectedIds.length) throw new HttpError(400, 'A service was selected more than once.');
+  if (selectedIds.length > 1) throw new HttpError(400, 'Choose one option: Cleaning, Repair or the Annual Cleaning Bundle.');
   let selectedPackage;
-  let subscription;
-  if (input.subscriptionId) {
-    const [[row]] = await connection.execute(`SELECT subscription_id AS subscriptionId,package_id AS packageId,
-      remaining_service_count AS remainingVisits,start_date AS startDate,end_date AS endDate,subscription_status AS status
-      FROM customer_subscription WHERE subscription_id=? AND customer_id=? FOR UPDATE`, [input.subscriptionId,customerId]);
-    if (!row) throw new HttpError(403, 'This membership does not belong to your account.');
-    if (row.status !== 'Active' || row.remainingVisits < 1 || input.preferredDate < String(row.startDate).slice(0,10) || input.preferredDate > String(row.endDate).slice(0,10)) {
-      throw new HttpError(409, 'This membership has no available visits for the selected date.');
-    }
-    subscription = row;
-  }
-  if (input.packageId || subscription) {
+  if (input.packageId) {
     const [[row]] = await connection.execute(`SELECT p.package_id AS packageId,p.package_name AS name,p.package_price AS price,
-      d.package_kind AS kind,d.included_units AS includedUnits,d.additional_unit_price AS additionalUnitPrice
+      d.package_kind AS kind,d.included_units AS includedUnits,d.additional_unit_price AS additionalUnitPrice,c.included_visits AS includedVisits
       FROM maintenance_package p JOIN web_package_details d ON d.package_id=p.package_id
-      WHERE p.package_id=? AND p.package_status='Active'`, [subscription?.packageId ?? input.packageId]);
-    if (!row || row.kind !== (subscription ? 'Membership' : 'Bundle')) throw new HttpError(400, 'The selected package is not available.');
+      JOIN simple_package_catalog c ON c.package_id=p.package_id AND c.code='annual-cleaning'
+      WHERE p.package_id=? AND p.package_status='Active'`, [input.packageId]);
+    if (!row || row.kind !== 'Bundle') throw new HttpError(400, 'This package is no longer available. Choose the Annual Cleaning Bundle.');
+    if (!input.requestId) throw new HttpError(400, 'A request ID is required to safely create the four annual visits.');
     selectedPackage = row;
     const [links] = await connection.execute(`SELECT ps.service_id AS serviceId FROM package_service ps
       JOIN service_catalog s ON s.service_id=ps.service_id JOIN web_service_pricing p ON p.service_id=s.service_id
+      JOIN simple_service_catalog c ON c.service_id=s.service_id AND c.code='cleaning'
       WHERE ps.package_id=? AND s.service_status='Active' AND p.customer_visible=TRUE ORDER BY ps.service_id`, [row.packageId]);
     const included = links.map(s => s.serviceId);
     if (!included.length) throw new HttpError(400, 'This package has no available services.');
@@ -95,18 +84,19 @@ export async function resolveBookingSelection(connection, customerId, input, num
     selectedIds = included;
   }
   if (!selectedIds.length && input.serviceType) {
-    const [[legacy]] = await connection.execute("SELECT service_id AS serviceId FROM service_catalog WHERE service_name=? AND service_status='Active'", [input.serviceType]);
-    if (legacy) selectedIds = [legacy.serviceId];
+    const [[named]] = await connection.execute('SELECT service_id AS serviceId FROM service_catalog WHERE service_name=?', [input.serviceType]);
+    if (named) selectedIds = [named.serviceId];
   }
   if (!selectedIds.length) throw new HttpError(400, 'Choose at least one service.');
   const [rows] = await connection.execute(`SELECT s.service_id AS serviceId,s.service_name AS name,s.base_price AS basePrice,
     COALESCE(p.additional_unit_price,s.base_price) AS additionalUnitPrice FROM service_catalog s
     LEFT JOIN web_service_pricing p ON p.service_id=s.service_id
-    WHERE s.service_id IN (${selectedIds.map(() => '?').join(',')}) AND s.service_status='Active' ORDER BY s.service_id`, selectedIds);
+    ${legacy?'':'JOIN simple_service_catalog c ON c.service_id=s.service_id'}
+    WHERE s.service_id IN (${selectedIds.map(() => '?').join(',')}) ${legacy?'':"AND s.service_status='Active' AND p.customer_visible=TRUE"} ORDER BY s.service_id`, selectedIds);
   if (rows.length !== selectedIds.length) throw new HttpError(400, 'One or more selected services are not available.');
-  if (!subscription && rows.some(row => row.name === 'Maintenance Package Service')) throw new HttpError(400, 'Choose your membership to book an included visit.');
+  if (input.serviceId && !selectedIds.includes(input.serviceId)) throw new HttpError(400, 'The service selection does not match.');
   const services = rows.map(row => ({ ...numeric(row), quantity: numberOfUnits, lineTotal: Number(row.basePrice) + (numberOfUnits - 1) * Number(row.additionalUnitPrice) }));
-  const totalAmount = Number((subscription ? 0 : selectedPackage ? Number(selectedPackage.price) + Math.max(0,numberOfUnits - selectedPackage.includedUnits) * Number(selectedPackage.additionalUnitPrice) : services.reduce((total,s) => total + s.lineTotal,0)).toFixed(2));
+  const totalAmount = Number((selectedPackage ? Number(selectedPackage.price) + Math.max(0,numberOfUnits - selectedPackage.includedUnits) * Number(selectedPackage.additionalUnitPrice) : services.reduce((total,s) => total + s.lineTotal,0)).toFixed(2));
   // A bundle snapshot allocates its final charge proportionally across services.
   const fullTotal = services.reduce((total,s) => total + s.lineTotal,0);
   let allocated = 0;
@@ -114,7 +104,7 @@ export async function resolveBookingSelection(connection, customerId, input, num
     service.lineTotal = index === services.length - 1 ? Number((totalAmount - allocated).toFixed(2)) : Number((fullTotal ? service.lineTotal / fullTotal * totalAmount : 0).toFixed(2));
     allocated += service.lineTotal;
   });
-  return { services, totalAmount, package: selectedPackage, subscription, serviceName: services.map(s => s.name).join(' + ') };
+  return { services, totalAmount, package: selectedPackage, annual:Boolean(selectedPackage), serviceName: services.map(s => s.name).join(' + ') };
 }
 
 export async function saveBookingSelection(connection, bookingId, selection) {
@@ -144,9 +134,9 @@ export async function attachBookingSelections(executor, bookings, idKey='booking
     FROM booking_service WHERE booking_id IN (${placeholders}) ORDER BY service_id`, ids);
   const [packages] = await executor.execute(`SELECT booking_id AS bookingId,package_id AS packageId,package_name AS name,subscription_id AS subscriptionId,
     visit_reserved AS visitReserved FROM booking_package WHERE booking_id IN (${placeholders})`, ids);
-  return bookings.map(booking => {
+  return attachAnnualBundles(executor,bookings.map(booking => {
     const selected = services.filter(s => s.bookingId === booking[idKey]);
     const summary = selected.map(s => s.name).join(' + ');
     return { ...booking, ...(summary ? {serviceName: summary, service_type: summary} : {}), services: selected, package: packages.find(p => p.bookingId === booking[idKey]) ?? null };
-  });
+  }),idKey);
 }

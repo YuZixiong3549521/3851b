@@ -14,11 +14,11 @@ export async function getPortalData({signal}={}) {
  return data;
 }
 export async function getJobs(options) { return (await getPortalData(options)).jobs; }
-export async function technicianRequest(path,{signal,body}={}) {
+export async function technicianRequest(path,{signal,body,method='POST'}={}) {
  const base=(import.meta.env.VITE_API_BASE_URL||'/api').replace(/\/$/,'');
  let csrf='';
  if(body!==undefined){const session=await fetch(`${base}/session`,{credentials:'include'});csrf=(await session.json()).csrf;}
- const response=await fetch(`${base}/technician${path}`,{signal,credentials:'include',method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:body===undefined?undefined:JSON.stringify(body)});
+ const response=await fetch(`${base}/technician${path}`,{signal,credentials:'include',method:body===undefined?'GET':method,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:body===undefined?undefined:JSON.stringify(body)});
  const data=await response.json();
  if(!response.ok){const error=new Error(data.error||'The request could not be completed.');error.status=response.status;throw error;}
  return data;

@@ -2,24 +2,24 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { ArrowRight, CalendarDays, ClipboardCheck, Clock3, History, MapPin, WalletCards, Wind } from 'lucide-react';
+import { ArrowRight, CalendarDays, ClipboardCheck, Clock3, History, MapPin, Wind } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
 import { CustomerAssistant } from '@/components/customer-assistant';
+import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { PageError, PageLoading } from '@/components/page-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate } from '@/lib/format';
-import type { Booking, CustomerContext, CustomerSubscription } from '@/lib/coolcare-types';
+import { nextUpcomingBooking } from '@/lib/customer-bookings';
+import type { Booking, CustomerContext } from '@/lib/coolcare-types';
 
 export default function Home() {
   const [context, setContext] = useState<CustomerContext | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [history, setHistory] = useState<Booking[]>([]);
   const [error, setError] = useState('');
-  const [subscriptions, setSubscriptions] = useState<CustomerSubscription[]>([]);
-  const [membershipError, setMembershipError] = useState('');
 
   useEffect(() => {
     Promise.all([coolcareApi.getCustomerContext(), coolcareApi.getBookings('upcoming'), coolcareApi.getHistory()])
@@ -28,19 +28,18 @@ export default function Home() {
         setBookings(nextBookings);
         setHistory(nextHistory);
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to reach the CoolCare API.'));
-    coolcareApi.getBookingOptions().then(options => setSubscriptions(options.subscriptions))
-      .catch(() => setMembershipError('Your memberships could not be loaded. Please refresh to retry.'));
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to load your dashboard.'));
   }, []);
 
-  const upcoming = bookings[0];
+  const upcoming = nextUpcomingBooking(bookings, new Date().toLocaleDateString('en-CA'));
   const firstName = context?.customer.fullName.split(' ')[0] ?? 'there';
+  const annualBundles = [...new Map(bookings.flatMap(booking => booking.annualBundle ? [[booking.annualBundle.seriesId, booking.annualBundle] as const] : [])).values()];
 
   return (
     <CoolCareShell>
       <div className="mx-auto max-w-[1320px] px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
         {!context && !error && <PageLoading />}
-        {error && <PageError message={`${error} Please start the MySQL database and customer API, then refresh this page.`} />}
+        {error && <PageError message={`${error} Please refresh this page to retry.`} />}
         {context && (
           <>
             <section className="relative overflow-hidden rounded-[28px] bg-[linear-gradient(115deg,#003f9f_0%,#0066ff_58%,#00a98f_125%)] px-6 py-8 text-white shadow-[0_24px_70px_rgba(0,80,203,0.18)] sm:px-9 sm:py-10">
@@ -52,8 +51,6 @@ export default function Home() {
                 <p className="mt-3 max-w-xl text-sm leading-6 text-blue-50 sm:text-base">Book maintenance, follow every request, and keep your service history together.</p>
                 <Button nativeButton={false} render={<Link href="/customer/book" />} size="lg" className="mt-7 bg-white text-primary shadow-lg hover:bg-blue-50">Book a service<ArrowRight className="size-4" aria-hidden="true" /></Button>
                 <CustomerAssistant onBookingCreated={() => {
-                  coolcareApi.getBookingOptions().then(options => { setSubscriptions(options.subscriptions); setMembershipError(''); })
-                    .catch(() => setMembershipError('Your booking was saved. Refresh to see updated membership visits.'));
                   Promise.all([coolcareApi.getCustomerContext(), coolcareApi.getBookings('upcoming')])
                     .then(([nextContext, nextBookings]) => { setContext(nextContext); setBookings(nextBookings); })
                     .catch(() => setError('Your booking was saved, but the dashboard could not refresh. Please reload.'));
@@ -61,12 +58,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="mt-8" aria-labelledby="membership-heading">
-              <Card className="border-border/80 shadow-sm"><CardHeader><div className="flex items-center gap-3"><WalletCards className="size-6 text-primary" /><CardTitle id="membership-heading" className="text-xl">Your memberships</CardTitle></div></CardHeader><CardContent>
-                {membershipError ? <p role="status" className="text-sm text-muted-foreground">{membershipError}</p> : subscriptions.length === 0 ? <p className="text-sm text-muted-foreground">You have no active memberships. You can still build your own service or choose a service bundle when booking.</p> : <div className="grid gap-4 sm:grid-cols-2">{subscriptions.map(subscription => <div key={subscription.subscriptionId} className="rounded-2xl border border-primary/15 bg-primary/5 p-5"><p className="font-semibold">{subscription.name}</p><p className="mt-2 text-2xl font-bold text-primary">{subscription.remainingVisits}<span className="ml-2 text-sm font-normal text-muted-foreground">visit(s) remaining</span></p><p className="mt-2 text-xs text-muted-foreground">Valid until {formatDate(subscription.endDate)}</p><p className="mt-2 text-sm">{subscription.services.map(service => service.name).join(' + ')}</p></div>)}</div>}
-                <p className="mt-4 text-xs text-muted-foreground">Memberships belong to your account. Booking an included visit reserves one use; cancelling that booking returns the use.</p>
-              </CardContent></Card>
-            </section>
+            {annualBundles.length > 0 && <section className="mt-8" aria-labelledby="annual-bookings-heading"><div className="mb-4"><p className="text-sm font-semibold text-primary">QUARTERLY CARE</p><h2 id="annual-bookings-heading" className="mt-1 text-2xl font-bold">Your annual cleaning visits</h2></div><div className="grid gap-4 lg:grid-cols-2">{annualBundles.map(bundle => <AnnualBookingSummary key={bundle.seriesId} saved={bundle} totalAmount={bundle.totalAmount} compact />)}</div></section>}
 
             <section aria-labelledby="overview-heading" className="mt-8">
               <div className="mb-4"><p className="text-sm font-semibold text-primary">AT A GLANCE</p><h2 id="overview-heading" className="mt-1 text-2xl font-bold tracking-tight">Your home comfort</h2></div>
@@ -80,7 +72,7 @@ export default function Home() {
             <section className="mt-8 grid gap-6 xl:grid-cols-[1.5fr_0.8fr]">
               <Card className="border-border/80 shadow-sm">
                 <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
-                  <div><p className="text-sm font-semibold text-primary">{upcoming ? 'UPCOMING' : 'READY WHEN YOU ARE'}</p><CardTitle className="mt-1 text-xl">{upcoming?.serviceName ?? 'No active booking'}</CardTitle></div>
+                  <div><p className="text-sm font-semibold text-primary">{upcoming ? 'UPCOMING' : 'READY WHEN YOU ARE'}</p><CardTitle className="mt-1 text-xl">{upcoming?.annualBundle ? upcoming.annualBundle.name + ' · Visit ' + upcoming.annualBundle.visitNumber + ' of 4' : upcoming?.serviceName ?? 'No active booking'}</CardTitle></div>
                   {upcoming && <StatusBadge status={upcoming.status} />}
                 </CardHeader>
                 <CardContent>

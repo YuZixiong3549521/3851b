@@ -12,7 +12,7 @@ test('booking email is queued once, survives delivery failure, retries with same
  const db={execute:c.execute.bind(c),query:c.query.bind(c),getConnection:async()=>handle};
  try {
    const [[user]]=await c.query("SELECT u.user_id AS id,u.email,u.phone FROM user_account u JOIN customer c ON c.user_id=u.user_id ORDER BY c.customer_id LIMIT 1");
-   const input={serviceType:'Air Conditioning Cleaning',numberOfUnits:2,preferredDate:new Date(Date.now()+20*86400000).toISOString().slice(0,10),timeWindow:'09:00 AM - 11:00 AM',serviceAddress:`Email integration ${randomUUID()}`,requestId:randomUUID()};
+   const input={serviceType:'Cleaning',numberOfUnits:2,preferredDate:new Date(Date.now()+20*86400000).toISOString().slice(0,10),timeWindow:'09:00 AM - 11:00 AM',serviceAddress:`Email integration ${randomUUID()}`,requestId:randomUUID()};
    const created=await createPublicBooking(db,user,input);
    const repeat=await createPublicBooking(db,user,input);assert.equal(repeat.id,created.id);
    const [[row]]=await c.execute('SELECT * FROM booking_email_outbox WHERE booking_id=?',[created.id]);

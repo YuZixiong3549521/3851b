@@ -22,7 +22,7 @@ export default function MaintenanceHistoryPage() {
       <div className="mx-auto max-w-5xl px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-semibold text-primary">MAINTENANCE HISTORY</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Completed service visits</h1><p className="mt-2 text-sm text-muted-foreground">Review previous maintenance details and technician reports.</p></div><Button render={<Link href="/customer/book" />} variant="outline"><CalendarPlus className="size-4" aria-hidden="true" />Book another visit</Button></div>
         {!bookings && !error && <PageLoading />}
-        {error && <PageError message={`${error} Start the database and customer API, then refresh this page.`} />}
+        {error && <PageError message={`${error} Please refresh this page to retry.`} />}
         {bookings && bookings.length === 0 && <EmptyState title="No completed services yet" description="Completed appointments and their reports will be kept here." />}
         {bookings && bookings.length > 0 && <div className="grid gap-5">{bookings.map((booking) => <BookingCard key={booking.bookingId} booking={booking} history />)}</div>}
       </div>

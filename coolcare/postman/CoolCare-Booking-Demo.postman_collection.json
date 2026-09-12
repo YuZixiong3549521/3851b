@@ -134,7 +134,7 @@
         "url": "{{baseUrl}}/api/public/bookings",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"serviceType\": \"Air Conditioning Cleaning\",\n  \"servicePackage\": \"Classroom demonstration\",\n  \"numberOfUnits\": 2,\n  \"preferredDate\": \"{{serviceDate}}\",\n  \"timeWindow\": \"09:00 AM - 11:00 AM\",\n  \"serviceAddress\": \"Classroom demo address - no service required\",\n  \"specialNotes\": \"POSTMAN-DEMO {{requestId}} - classroom test only\",\n  \"requestId\": \"{{requestId}}\"\n}",
+          "raw": "{\n  \"serviceType\": \"Cleaning\",\n  \"servicePackage\": \"Classroom demonstration\",\n  \"numberOfUnits\": 2,\n  \"preferredDate\": \"{{serviceDate}}\",\n  \"timeWindow\": \"09:00 AM - 11:00 AM\",\n  \"serviceAddress\": \"Classroom demo address - no service required\",\n  \"specialNotes\": \"POSTMAN-DEMO {{requestId}} - classroom test only\",\n  \"requestId\": \"{{requestId}}\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -211,7 +211,7 @@
         "url": "{{baseUrl}}/api/public/bookings",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"serviceType\": \"Air Conditioning Cleaning\",\n  \"servicePackage\": \"Classroom demonstration\",\n  \"numberOfUnits\": 2,\n  \"preferredDate\": \"{{serviceDate}}\",\n  \"timeWindow\": \"09:00 AM - 11:00 AM\",\n  \"serviceAddress\": \"Classroom demo address - no service required\",\n  \"specialNotes\": \"POSTMAN-DEMO {{requestId}} - classroom test only\",\n  \"requestId\": \"{{requestId}}\"\n}",
+          "raw": "{\n  \"serviceType\": \"Cleaning\",\n  \"servicePackage\": \"Classroom demonstration\",\n  \"numberOfUnits\": 2,\n  \"preferredDate\": \"{{serviceDate}}\",\n  \"timeWindow\": \"09:00 AM - 11:00 AM\",\n  \"serviceAddress\": \"Classroom demo address - no service required\",\n  \"specialNotes\": \"POSTMAN-DEMO {{requestId}} - classroom test only\",\n  \"requestId\": \"{{requestId}}\"\n}",
           "options": {
             "raw": {
               "language": "json"

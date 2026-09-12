@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { BookingServiceSelection, bookingEmailMessage, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
+import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate, formatMoney } from '@/lib/format';
-import type { Address, BookingOptions, EmailNotification } from '@/lib/coolcare-types';
+import { assertBookingConfirmation } from '@/lib/annual-booking';
+import type { Address, AnnualBundle, BookingOptions, EmailNotification } from '@/lib/coolcare-types';
 import { apiFetch as fetch } from '../api';
 import React, { useState, useEffect, useRef } from 'react';
 import { User, PageRoute } from '../types';
@@ -46,25 +48,35 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [pricesReady,setPricesReady]=useState(false);
   const [error, setError] = useState('');
   const [retryLocked, setRetryLocked] = useState(false);
-  const [created, setCreated] = useState<{ id: number; status: string; totalAmount: number; emailNotification?: EmailNotification } | null>(null);
+  const [created, setCreated] = useState<{ id: number; status: string; totalAmount: number; emailNotification?: EmailNotification; annualBundle?: AnnualBundle | null } | null>(null);
   const ownerId = useRef<string | number | null>(null);
+  const lastPrefill = useRef<string | undefined>(undefined);
   const requestInFlight = useRef(false);
+  const pendingRequest = useRef<Record<string, unknown> | null>(null);
   useEffect(() => {
     if (!isOpen || !currentUser) return;
     let active = true;
     setPricesReady(false); setError('');
-    if (ownerId.current !== currentUser.id) {
+    const accountChanged = ownerId.current !== currentUser.id;
+    const prefillChanged = lastPrefill.current !== defaultService;
+    if (accountChanged) {
       ownerId.current = currentUser.id;
+      pendingRequest.current = null;
       setRequestId(crypto.randomUUID()); setSelection(emptyBookingSelection); setStep('form'); setCreated(null); setRetryLocked(false); setAddress(''); setNotes(''); setPhone(currentUser.phone || '');
     }
     Promise.all([coolcareApi.getBookingOptions(), coolcareApi.getCustomerContext()]).then(([nextOptions, context]) => { if (active) {
-      setOptions(nextOptions); setAddresses(context.addresses); setPricesReady(true);
+      if (context.customer.userId !== Number(currentUser.id)) throw new Error('Your signed-in account changed. Reload before booking.');
+      if (!retryLocked || accountChanged) setOptions(nextOptions);
+      setAddresses(context.addresses); setPricesReady(true);
       setAddress(value => value || context.addresses.find(item => item.isDefault)?.addressLine || context.addresses[0]?.addressLine || '');
       if (!retryLocked && defaultService) setSelection(value => {
-        if (value.serviceIds.length || value.packageId || value.subscriptionId) return value;
+        if (!prefillChanged && !accountChanged && (value.serviceIds.length || value.packageId)) return value;
+        const bundle = nextOptions.bundles.find(item => item.name.toLowerCase() === defaultService.toLowerCase());
+        if (bundle) return { mode: 'bundle', packageId: bundle.packageId, serviceIds: bundle.serviceIds };
         const match = nextOptions.services.find(item => item.name.toLowerCase() === defaultService.toLowerCase());
         return match ? { mode: 'custom', serviceIds: [match.serviceId] } : value;
       });
+      lastPrefill.current = defaultService;
     } }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load prices. Please reopen this window to retry.'); });
     return () => { active = false; };
   }, [isOpen, currentUser?.id, defaultService]);
@@ -92,25 +104,21 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     return;
   }
 
-  if(requestInFlight.current||!pricesReady||!selectedServices.valid)return;
+  if(requestInFlight.current||(!pendingRequest.current && (!pricesReady||!selectedServices.valid)))return;
   requestInFlight.current = true;
   setSubmitting(true); setError('');
+  if (!pendingRequest.current) pendingRequest.current = {
+    requestId, phone, expectedUserId: Number(currentUser.id), ...selectedServices.payload,
+    numberOfUnits: unitsCount, preferredDate: date, timeWindow: timeSlot,
+    serviceAddress: address, symptoms: notes, specialNotes: notes,
+  };
   try {
     const response = await fetch('/api/public/bookings', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        requestId, phone, expectedUserId: Number(currentUser.id),
-        ...selectedServices.payload,
-        numberOfUnits: unitsCount,
-        preferredDate: date,
-        timeWindow: timeSlot,
-        serviceAddress: address,
-        symptoms: notes,
-        specialNotes: notes,
-      }),
+      body: JSON.stringify(pendingRequest.current),
     });
 
     const data = await response.json();
@@ -119,15 +127,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       throw Object.assign(new Error(data.message || data.error || 'Unable to create booking.'), { status: response.status });
     }
 
-    setCreated({ ...data.booking, emailNotification: data.booking.emailNotification ?? data.emailNotification }); setRetryLocked(false);
+    assertBookingConfirmation(data.booking, Boolean(pendingRequest.current.packageId));
+    setCreated({ ...data.booking, emailNotification: data.booking.emailNotification ?? data.emailNotification }); setRetryLocked(false); pendingRequest.current = null;
     setStep('success');
 
     onBookingConfirmed(
-      `Appointment booked for ${serviceType} on ${date} (${timeSlot}) for ${unitsCount} unit(s).`
+      data.booking.annualBundle ? `Four quarterly cleaning requests saved for ${unitsCount} unit(s). The service team will confirm availability.` : `Booking request saved for ${serviceType} on ${date} (${timeSlot}) for ${unitsCount} unit(s).`
     );
 
   } catch (reason) {
     const rejected = reason instanceof Error && 'status' in reason && Number(reason.status) < 500;
+    if (rejected) pendingRequest.current = null;
+    if (reason instanceof Error && reason.message.includes('signed-in account changed')) {
+      setOptions(null); setAddresses([]); setSelection(emptyBookingSelection); setAddress(''); setPhone(''); setNotes(''); setPricesReady(false);
+    }
     setRetryLocked(!rejected);
     setError(`${reason instanceof Error ? reason.message : 'Unable to reach the booking server.'}${rejected ? '' : ' Retry confirmation with the same details to safely check or complete this request.'}`);
   } finally {requestInFlight.current = false; setSubmitting(false);}
@@ -143,7 +156,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   return (
     <Dialog open onOpenChange={(open) => { if (!open && !submitting) handleFinish(); }}>
       {/* Modal Container: 650px - 800px on desktop */}
-      <DialogContent showCloseButton={false} className="ac-site bg-ac-surface w-[calc(100%-2rem)] max-w-2xl sm:max-w-3xl rounded-2xl shadow-2xl border border-ac-outline-variant/40 p-5 sm:p-7 md:p-8 max-h-[92vh] flex flex-col" aria-describedby={undefined}>
+      <DialogContent showCloseButton={false} className="ac-site bg-ac-surface w-[calc(100%-2rem)] max-w-2xl sm:max-w-3xl rounded-2xl shadow-2xl border border-ac-outline-variant/40 p-5 sm:p-7 md:p-8 max-h-[92dvh] flex flex-col overflow-hidden" aria-describedby={undefined}>
         <DialogTitle className="sr-only">Schedule an AC Care Service</DialogTitle>
         {/* Close button */}
         <Button variant="ghost"
@@ -156,7 +169,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         </Button>
 
         {step === 'form' ? (
-          <div className="flex flex-col overflow-hidden">
+          <div className="flex min-h-0 flex-col overflow-hidden">
             {/* Header */}
             <div className="flex items-center gap-3 mb-1 pr-10">
               <div className="w-10 h-10 rounded-xl bg-ac-primary/10 text-ac-primary flex items-center justify-center shrink-0">
@@ -191,7 +204,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
               )}
 
-              {!currentUser && <div className="space-y-3 rounded-xl border p-4 text-sm"><p>Sign in to view your membership and book a service.</p><Button type="button" onClick={() => { onClose(); onNavigate('login'); }}>Sign in</Button></div>}
+              {!currentUser && <div className="space-y-3 rounded-xl border p-4 text-sm"><p>Sign in to book a service.</p><Button type="button" onClick={() => { onClose(); onNavigate('login'); }}>Sign in</Button></div>}
               {currentUser && !pricesReady && !error && <p role="status" className="text-sm">Loading your service options…</p>}
               <fieldset disabled={submitting || retryLocked || !currentUser || !pricesReady} className="min-w-0 space-y-4">
               {/* Service Selection */}
@@ -233,7 +246,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
-                    3. Preferred Date
+                    {selectedServices.isAnnual ? '3. First Preferred Visit Date' : '3. Preferred Date'}
                   </label>
                   <Input
                     type="date"
@@ -322,18 +335,20 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 />
               </div>
               </fieldset>
+              {selectedServices.isAnnual && <AnnualBookingSummary firstDate={date} timeSlot={timeSlot} totalAmount={estimatedTotal} />}
+              {selectedServices.pricingNote && <p className="text-sm text-ac-on-surface-variant">{selectedServices.pricingNote}</p>}
               {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
 
               {/* Price Summary & Action Buttons */}
               <div className="pt-2 border-t border-ac-outline-variant/30 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div>
-                  <span className="text-xs text-ac-on-surface-variant block">Estimated Price</span>
+                  <span className="text-xs text-ac-on-surface-variant block">{selectedServices.isAnnual ? 'Annual Estimate' : 'Visit Estimate'}</span>
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-extrabold text-ac-primary">
                       {selectedServices.valid ? formatMoney(estimatedTotal) : 'Choose services'}
                     </span>
                     <span className="text-xs text-ac-on-surface-variant">
-                      {selection.mode === 'membership' ? '(One included visit)' : '(Pay after technician completion)'}
+                      (Pay after each service visit)
                     </span>
                   </div>
                 </div>
@@ -347,7 +362,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     Cancel
                   </Button>
                   <Button variant="ghost"
-                    type="submit" disabled={submitting||!pricesReady||!selectedServices.valid}
+                    type="submit" disabled={submitting||(!pendingRequest.current && (!pricesReady||!selectedServices.valid))}
                     className="flex-1 sm:flex-initial px-6 py-2.5 bg-ac-primary text-ac-on-primary rounded-full text-sm font-semibold hover:opacity-90 active:scale-95 cursor-pointer border-none shadow-sm transition-all flex items-center justify-center gap-1.5"
                   >
                     {submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm Booking'}
@@ -358,15 +373,15 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             </form>
           </div>
         ) : (
-          <div className="text-center py-6 sm:py-8 space-y-4 animate-in zoom-in-95 duration-200">
+          <div className="min-h-0 overflow-y-auto text-center py-6 sm:py-8 space-y-4 animate-in zoom-in-95 duration-200">
             <div className="w-16 h-16 rounded-full bg-ac-tertiary-fixed text-ac-tertiary-container mx-auto flex items-center justify-center shadow-sm">
               <SiteIcon className=" text-[36px]">task_alt</SiteIcon>
             </div>
             <h3 className="text-2xl font-bold text-ac-on-background">
-              Booking Submitted!
+              {created?.annualBundle ? 'Four Booking Requests Saved!' : 'Booking Submitted!'}
             </h3>
             <p className="text-sm text-ac-on-surface-variant max-w-md mx-auto">
-              Your request for <strong className="text-ac-on-background">{serviceType}</strong> has been saved for{' '}
+              Your request for <strong className="text-ac-on-background">{serviceType}</strong> has been saved {created?.annualBundle ? 'with the first preferred visit on' : 'for'}{' '}
               <strong className="text-ac-on-background">{formatDate(date)}</strong> during <strong className="text-ac-on-background">{timeSlot}</strong>.
             </p>
             <div className="p-4 bg-ac-surface-container-low rounded-xl border border-ac-outline-variant/30 text-left text-xs sm:text-sm space-y-2 max-w-md mx-auto">
@@ -384,8 +399,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <span className="font-semibold text-ac-on-background truncate max-w-[200px]">{address}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-ac-on-surface-variant">Estimated Fee:</span>
-                <span className="font-bold text-ac-primary">{formatMoney(created?.totalAmount ?? estimatedTotal)}</span>
+                <span className="text-ac-on-surface-variant">{created?.annualBundle ? 'Annual Estimate:' : 'Visit Estimate:'}</span>
+                <span className="font-bold text-ac-primary">{formatMoney(created?.annualBundle?.totalAmount ?? created?.totalAmount ?? estimatedTotal)}</span>
               </div>
               <div className="flex justify-between border-t border-ac-outline-variant/20 pt-2">
                 <span className="text-ac-on-surface-variant">Status:</span>
@@ -395,6 +410,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </span>
               </div>
             </div>
+            {created?.annualBundle && <AnnualBookingSummary saved={created.annualBundle} totalAmount={created.annualBundle.totalAmount} />}
             {created?.emailNotification && <p role="status" className="text-sm text-ac-on-surface-variant">{bookingEmailMessage(created.emailNotification)}</p>}
             <Button variant="ghost"
               type="button"

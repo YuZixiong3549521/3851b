@@ -313,7 +313,7 @@ test('customer booking writes and rereads from shared MySQL (rolled back)', asyn
       JOIN service_address a ON a.customer_id=c.customer_id
       JOIN aircon_unit au ON au.customer_id=c.customer_id AND au.address_id=a.address_id
       WHERE u.email='alice.tan@coolcare.demo' LIMIT 1`);
-    const [[service]] = await conn.query("SELECT service_id FROM service_catalog WHERE service_status='Active' LIMIT 1");
+    const [[service]] = await conn.query("SELECT service_id FROM service_catalog WHERE service_name='Cleaning' AND service_status='Active'");
     const [[latest]] = await conn.execute('SELECT MAX(preferred_service_date) AS serviceDate FROM booking WHERE customer_id=?',[context.customer_id]);
     const date = new Date(Math.max(Date.now(),latest.serviceDate ? Date.parse(latest.serviceDate) : 0)+14*86400000).toISOString().slice(0,10);
     const booking = await createBooking(testPool, {

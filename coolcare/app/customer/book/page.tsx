@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CalendarCheck, Check, Clock3, MapPin, Snowflake, Wind } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
 import { BookingServiceSelection, bookingEmailMessage, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
+import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { PageError, PageLoading } from '@/components/page-state';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -16,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatMoney } from '@/lib/format';
+import { assertBookingConfirmation } from '@/lib/annual-booking';
 import type { BookingInput, BookingOptions, CreatedBooking, CustomerContext } from '@/lib/coolcare-types';
 
 const steps = ['Service', 'Aircon units', 'Schedule', 'Review'];
@@ -43,6 +45,7 @@ export default function BookServicePage() {
   const [created, setCreated] = useState<CreatedBooking | null>(null);
   const requestId = useRef('');
   const submittingRequest = useRef(false);
+  const pendingRequest = useRef<BookingInput | null>(null);
   const [retryLocked, setRetryLocked] = useState(false);
 
   useEffect(() => {
@@ -63,8 +66,12 @@ export default function BookServicePage() {
   const minimumDate = useMemo(() => new Date().toLocaleDateString('en-CA'), []);
 
   const submitBooking = useCallback(async (input: BookingInput) => {
-    const result = await coolcareApi.createBooking({ ...input, expectedUserId: context?.customer.userId, requestId: input.requestId || requestId.current });
+    if (!context) throw new Error('Wait for your account details to load before booking.');
+    if (!pendingRequest.current) pendingRequest.current = { ...input, expectedUserId: context.customer.userId, requestId: input.requestId || requestId.current };
+    const result = await coolcareApi.createBooking(pendingRequest.current);
+    assertBookingConfirmation(result, Boolean(pendingRequest.current.packageId));
     setCreated(result);
+    pendingRequest.current = null;
     return result;
   }, [context?.customer.userId]);
 
@@ -87,7 +94,6 @@ export default function BookServicePage() {
           serviceId: { type: 'integer', minimum: 1 },
           serviceIds: { type: 'array', items: { type: 'integer', minimum: 1 }, minItems: 1 },
           packageId: { type: 'integer', minimum: 1 },
-          subscriptionId: { type: 'integer', minimum: 1 },
           requestId: { type: 'string', format: 'uuid' },
           addressId: { type: 'integer', minimum: 1 },
           unitIds: { type: 'array', items: { type: 'integer', minimum: 1 }, minItems: 1 },
@@ -105,7 +111,7 @@ export default function BookServicePage() {
   }, [submitBooking]);
 
   function validateCurrentStep() {
-    if (step === 1 && !selectedServices.valid) return 'Select services, a bundle or an available membership to continue.';
+    if (step === 1 && !selectedServices.valid) return 'Choose Cleaning, Repair or the Annual Cleaning Bundle to continue.';
     if (step === 2 && !form.addressId) return 'Select a service address.';
     if (step === 2 && form.unitIds.length === 0) return 'Select at least one aircon unit.';
     if (step === 3 && !form.preferredDate) return 'Choose a preferred service date.';
@@ -136,6 +142,10 @@ export default function BookServicePage() {
       });
     } catch (reason) {
       const rejected = reason instanceof Error && 'status' in reason && Number(reason.status) < 500;
+      if (rejected) pendingRequest.current = null;
+      if (reason instanceof Error && reason.message.includes('signed-in account changed')) {
+        setContext(null); setOptions(null); setSelection(emptyBookingSelection); setForm(initialForm); setError(reason.message);
+      }
       setRetryLocked(!rejected);
       setFieldError(`${reason instanceof Error ? reason.message : 'Unable to create the booking.'}${rejected ? '' : ' Retry confirmation with the same details to safely check or complete this request.'}`);
     } finally {
@@ -152,6 +162,7 @@ export default function BookServicePage() {
   }
 
   function startAnotherBooking() {
+    pendingRequest.current = null;
     requestId.current = crypto.randomUUID();
     setSelection(emptyBookingSelection);
     setRetryLocked(false);
@@ -200,7 +211,8 @@ export default function BookServicePage() {
 
               {step === 3 && (
                 <div><h2 className="text-xl font-bold">Choose a preferred schedule</h2><p className="mt-1 text-sm text-muted-foreground">An administrator will confirm availability after submission.</p><p className="mt-3 rounded-xl bg-primary/5 p-3 text-sm">{bookingFrequencyNotice}</p>
-                  <div className="mt-6 grid gap-5 sm:grid-cols-2"><div><FieldLabel htmlFor="preferred-date">Preferred date</FieldLabel><Input id="preferred-date" type="date" min={minimumDate} value={form.preferredDate} onChange={(event) => setForm((current) => ({ ...current, preferredDate: event.target.value }))} className="mt-2 h-12" /></div><div><FieldLabel htmlFor="time-slot">Preferred time</FieldLabel><Select value={form.timeSlot || undefined} onValueChange={(value) => setForm((current) => ({ ...current, timeSlot: value as BookingInput['timeSlot'] }))}><SelectTrigger id="time-slot" className="mt-2 h-12 w-full"><SelectValue placeholder="Choose a time slot" /></SelectTrigger><SelectContent>{timeSlots.map((slot) => <SelectItem key={slot} value={slot}>{slot}</SelectItem>)}</SelectContent></Select></div></div>
+                  <div className="mt-6 grid gap-5 sm:grid-cols-2"><div><FieldLabel htmlFor="preferred-date">{selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'}</FieldLabel><Input id="preferred-date" type="date" min={minimumDate} value={form.preferredDate} onChange={(event) => setForm((current) => ({ ...current, preferredDate: event.target.value }))} className="mt-2 h-12" /></div><div><FieldLabel htmlFor="time-slot">Preferred time</FieldLabel><Select value={form.timeSlot || undefined} onValueChange={(value) => setForm((current) => ({ ...current, timeSlot: value as BookingInput['timeSlot'] }))}><SelectTrigger id="time-slot" className="mt-2 h-12 w-full"><SelectValue placeholder="Choose a time slot" /></SelectTrigger><SelectContent>{timeSlots.map((slot) => <SelectItem key={slot} value={slot}>{slot}</SelectItem>)}</SelectContent></Select></div></div>
+                  {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} /></div>}
                   <div className="mt-6"><FieldLabel htmlFor="problem-description">Problem description <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Textarea id="problem-description" value={form.problemDescription} onChange={(event) => setForm((current) => ({ ...current, problemDescription: event.target.value }))} maxLength={1000} placeholder="Tell the technician about leaks, noise, weak cooling or other concerns." className="mt-2 min-h-28 resize-y" /><p className="mt-1 text-right text-xs text-muted-foreground">{form.problemDescription.length}/1000</p></div>
                 </div>
               )}
@@ -212,8 +224,10 @@ export default function BookServicePage() {
                     <ReviewRow icon={MapPin} label="Address" value={`${selectedAddress?.addressLine ?? ''}${selectedAddress?.postalCode ? `, ${selectedAddress.postalCode}` : ''}`} />
                     <ReviewRow icon={Wind} label="Aircon units" value={selectedUnits.map((unit) => `${unit.brand} · ${unit.location}`).join(', ')} />
                     <ReviewRow icon={CalendarCheck} label="Schedule" value={`${form.preferredDate} · ${form.timeSlot}`} />
-                    <ReviewRow icon={Clock3} label="Estimated total" value={formatMoney(total)} />
+                    <ReviewRow icon={Clock3} label={selectedServices.isAnnual ? 'Annual estimate' : 'Visit estimate'} value={formatMoney(total)} />
                   </dl>
+                  {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} /></div>}
+                  {selectedServices.pricingNote && <p className="mt-4 text-sm text-muted-foreground">{selectedServices.pricingNote}</p>}
                   {form.problemDescription && <div className="mt-5 rounded-2xl border border-border p-4"><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Problem description</p><p className="mt-2 text-sm leading-6">{form.problemDescription}</p></div>}
                 </div>
               )}
@@ -226,8 +240,9 @@ export default function BookServicePage() {
 
         {created && (
           <>
-          <Alert className="rounded-3xl border-secondary/25 bg-[linear-gradient(145deg,#eff5ff,#ecfffb)] p-7 sm:p-10"><div className="grid size-14 place-items-center rounded-full bg-secondary text-white"><Check className="size-7" aria-hidden="true" /></div><div className="ml-0 sm:ml-2"><AlertTitle className="text-2xl font-bold">Booking submitted</AlertTitle><AlertDescription className="mt-3 max-w-xl text-base leading-7">Your {created.serviceName} request has been saved. An administrator will confirm the appointment.</AlertDescription><div className="mt-5 flex flex-wrap gap-6"><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Reference</p><p className="mt-1 font-mono font-bold text-foreground">{created.bookingReference}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</p><p className="mt-1 font-semibold text-amber-700">{created.status}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Estimated total</p><p className="mt-1 font-semibold text-foreground">{formatMoney(created.totalAmount)}</p></div></div><div className="mt-7 flex flex-wrap gap-3"><Button nativeButton={false} render={<Link href="/customer/bookings" />}>View my bookings</Button><Button variant="outline" onClick={startAnotherBooking}>Book another service</Button></div></div></Alert>
+          <Alert className="rounded-3xl border-secondary/25 bg-[linear-gradient(145deg,#eff5ff,#ecfffb)] p-7 sm:p-10"><div className="grid size-14 place-items-center rounded-full bg-secondary text-white"><Check className="size-7" aria-hidden="true" /></div><div className="ml-0 sm:ml-2"><AlertTitle className="text-2xl font-bold">{created.annualBundle ? 'Four booking requests saved' : 'Booking submitted'}</AlertTitle><AlertDescription className="mt-3 max-w-xl text-base leading-7">{created.annualBundle ? 'Your four quarterly cleaning visits have been saved as requests. The service team will confirm each date and time.' : 'Your ' + created.serviceName + ' request has been saved. The service team will confirm availability.'}</AlertDescription><div className="mt-5 flex flex-wrap gap-6"><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Reference</p><p className="mt-1 font-mono font-bold text-foreground">{created.bookingReference}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</p><p className="mt-1 font-semibold text-amber-700">{created.status}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{created.annualBundle ? 'Annual estimate' : 'Visit estimate'}</p><p className="mt-1 font-semibold text-foreground">{formatMoney(created.annualBundle?.totalAmount ?? created.totalAmount)}</p></div></div><div className="mt-7 flex flex-wrap gap-3"><Button nativeButton={false} render={<Link href="/customer/bookings" />}>View my bookings</Button><Button variant="outline" onClick={startAnotherBooking}>Book another service</Button></div></div></Alert>
           {created.emailNotification && <p role="status" className="mt-4 text-sm text-muted-foreground">{bookingEmailMessage(created.emailNotification)}</p>}
+          {created.annualBundle && <div className="mt-5"><AnnualBookingSummary saved={created.annualBundle} totalAmount={created.annualBundle.totalAmount} /></div>}
           </>
         )}
       </div>

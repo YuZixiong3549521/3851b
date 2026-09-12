@@ -9,15 +9,17 @@ export function buildBookingMail(booking, services) {
   const fields = [
     ['Booking reference', `#${booking.booking_id}`], ['Services', services || booking.service_name],
     ...(booking.package_name ? [['Package', booking.package_name]] : []),
+    ...(booking.annual_series_id ? [['Annual bundle reference',`#${booking.annual_series_id}`],['Quarterly visit',`${booking.visit_number} of 4`]] : []),
     ['Preferred date', date], ['Preferred arrival', booking.time_window], ['Service address', booking.address_line],
     ['Aircon units', booking.unit_count], ['Status', booking.booking_status],
-    ['Estimated total', booking.total_amount == null ? 'To be confirmed' : `$${Number(booking.total_amount).toFixed(2)}`],
+    [booking.annual_series_id?'Amount allocated to this visit':'Estimated amount', booking.total_amount == null ? 'To be confirmed' : `SGD ${Number(booking.total_amount).toFixed(2)}`],
+    ...(booking.annual_series_id ? [['Total for all four visits',`SGD ${Number(booking.annual_total).toFixed(2)} (not an additional charge)`]] : []),
     ...(booking.problem_description ? [['Notes', booking.problem_description]] : []),
   ];
   const greeting = `Hi ${booking.full_name},`;
-  const intro = 'Your CoolCare booking request has been saved. Our service team will confirm appointment availability.';
+  const intro = 'Your CoolCare booking request has been saved. Our service team will confirm appointment availability. No payment has been taken.';
   return {
-    subject: `CoolCare booking #${booking.booking_id} received`,
+    subject: `CoolCare booking #${booking.booking_id}${booking.annual_series_id?` — annual visit ${booking.visit_number} of 4`:''} received`,
     text: `${greeting}\n\n${intro}\n\n${fields.map(([name, value]) => `${name}: ${value}`).join('\n')}\n\nYou can view this request in My Bookings.\nCoolCare`,
     html: `<div style="font:16px Arial,sans-serif;max-width:600px;color:#172b4d"><h1 style="color:#003f87">Booking request received</h1><p>${escapeHtml(greeting)}</p><p>${intro}</p><table style="width:100%;border-collapse:collapse">${fields.map(([name, value]) => `<tr><th style="padding:10px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd">${escapeHtml(name)}</th><td style="padding:10px;border-bottom:1px solid #ddd;white-space:pre-wrap">${escapeHtml(value)}</td></tr>`).join('')}</table><p>You can view this request in My Bookings.</p><p>CoolCare</p></div>`,
   };
@@ -29,10 +31,13 @@ export async function enqueueBookingEmail(connection, bookingId) {
   if (existing) return { status: existing.status === 'Sent' ? 'sent' : existing.delivery_mode === 'disabled' ? 'disabled' : 'queued', mode: existing.delivery_mode, recipient: existing.recipient };
   const [[booking]] = await connection.execute(`SELECT b.booking_id,u.full_name,u.email,b.preferred_service_date AS preferred_date,
     b.preferred_time_slot AS time_window,b.booking_status,b.total_amount,b.problem_description,sa.address_line,sc.service_name,
-    bp.package_name,(SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS unit_count
+    bp.package_name,av.series_id AS annual_series_id,av.visit_number,abs.total_amount AS annual_total,
+    (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS unit_count
     FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN user_account u ON u.user_id=c.user_id
     JOIN service_address sa ON sa.address_id=b.address_id JOIN service_catalog sc ON sc.service_id=b.service_id
-    LEFT JOIN booking_package bp ON bp.booking_id=b.booking_id WHERE b.booking_id=?`, [bookingId]);
+    LEFT JOIN booking_package bp ON bp.booking_id=b.booking_id
+    LEFT JOIN annual_booking_visit av ON av.booking_id=b.booking_id
+    LEFT JOIN annual_booking_series abs ON abs.series_id=av.series_id WHERE b.booking_id=?`, [bookingId]);
   if (!booking) throw new Error('Cannot queue mail for a missing booking.');
   const [items] = await connection.execute('SELECT service_name FROM booking_service WHERE booking_id=? ORDER BY service_id', [bookingId]);
   const mail = buildBookingMail(booking, items.map(item => item.service_name).join(', '));

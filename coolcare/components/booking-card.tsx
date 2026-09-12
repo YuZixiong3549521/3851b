@@ -20,7 +20,7 @@ export function BookingCard({ booking, history = false }: { booking: Booking; hi
   return (
     <Card className="overflow-hidden border-border/80 shadow-sm">
       <CardHeader className="border-b border-border/70 bg-muted/30 sm:flex-row sm:items-start sm:justify-between sm:space-y-0">
-        <div><p className="font-mono text-xs font-semibold text-muted-foreground">{booking.bookingReference}</p><CardTitle className="mt-1.5 text-xl">{booking.serviceName}</CardTitle></div>
+        <div><p className="font-mono text-xs font-semibold text-muted-foreground">{booking.bookingReference}</p><CardTitle className="mt-1.5 text-xl">{booking.annualBundle?.name ?? booking.serviceName}</CardTitle>{booking.annualBundle && <p className="mt-2 text-sm font-semibold text-primary">Visit {booking.annualBundle.visitNumber} of 4 · Quarterly cleaning</p>}</div>
         <Badge className={`${statusStyle[booking.status] ?? 'bg-slate-100 text-slate-700'} w-fit hover:opacity-100`}>{booking.status}</Badge>
       </CardHeader>
       <CardContent className="p-5 sm:p-6">
@@ -32,8 +32,8 @@ export function BookingCard({ booking, history = false }: { booking: Booking; hi
         </div>
         {booking.technicianName && <div className="mt-5 rounded-xl bg-secondary/8 p-4"><Info icon={UserRound} label="Assigned technician" value={booking.technicianName} /></div>}
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-border/70 pt-5">
-          <div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{history ? 'Final amount' : 'Estimated total'}</p><p className="mt-1 text-lg font-bold">{formatMoney(booking.totalAmount)}</p></div>
-          {history && booking.reportId ? <Button render={<Link href={`/customer/history/${booking.bookingId}`} />}>View service report</Button> : !history ? <p className="text-sm text-muted-foreground">Updates will appear here as the request progresses.</p> : null}
+          <div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{booking.annualBundle ? 'This visit estimate' : history ? 'Recorded amount' : 'Visit estimate'}</p><p className="mt-1 text-lg font-bold">{booking.totalAmount == null ? 'To be confirmed' : formatMoney(booking.totalAmount)}</p>{booking.annualBundle && <p className="mt-1 text-xs text-muted-foreground">{formatMoney(booking.annualBundle.totalAmount)} for all four visits · Pay after each service</p>}</div>
+          {history && booking.reportId ? <Button nativeButton={false} render={<Link href={`/customer/history/${booking.bookingId}`} />}>View service report</Button> : !history ? <p className="text-sm text-muted-foreground">Updates will appear here as the request progresses.</p> : null}
         </div>
       </CardContent>
     </Card>

@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { getDemoCustomer } from './customer.mjs';
 import { HttpError } from './errors.mjs';
-import { enqueueBookingEmail } from '../booking-email.mjs';
-import { lockCustomer, assertAddressBookingLimit, resolveBookingSelection, saveBookingSelection, attachBookingSelections } from './booking-options.mjs';
+import { lockCustomer, resolveBookingSelection, attachBookingSelections } from './booking-options.mjs';
+import { writeSelectedBookings,describeCreatedBooking } from './booking-writer.mjs';
 import { config } from './config.mjs';
 
 const timeSlots = ['09:00 - 11:00', '11:00 - 13:00', '14:00 - 16:00', '16:00 - 18:00'];
@@ -56,10 +56,9 @@ export async function createBooking(pool, untrustedInput, userId) {
       const [[existing]] = await connection.execute(`SELECT b.booking_id AS bookingId,b.created_at AS createdAt,b.booking_status AS status,b.total_amount AS totalAmount
         FROM booking b JOIN web_booking_details d ON d.booking_id=b.booking_id WHERE b.customer_id=? AND d.request_id=?`, [customer.customerId,input.requestId]);
       if (existing) {
-        const emailNotification=await enqueueBookingEmail(connection,existing.bookingId);
-        const [booking]=await attachBookingSelections(connection,[existing]);
+        const booking=await describeCreatedBooking(connection,existing.bookingId);
         await connection.commit();
-        return { ...booking, bookingReference:bookingReference(existing.bookingId,existing.createdAt),emailNotification };
+        return { ...booking, bookingReference:bookingReference(existing.bookingId,existing.createdAt) };
       }
     }
 
@@ -68,7 +67,6 @@ export async function createBooking(pool, untrustedInput, userId) {
       [input.addressId, customer.customerId],
     );
     if (addressRows.length === 0) throw new HttpError(400, 'The selected service address is not available.');
-    await assertAddressBookingLimit(connection,customer.customerId,addressRows[0].address_line,input.preferredDate);
 
     const uniqueUnitIds = [...new Set(input.unitIds)];
     if (uniqueUnitIds.length !== input.unitIds.length) throw new HttpError(400, 'An aircon unit was selected more than once.');
@@ -80,47 +78,13 @@ export async function createBooking(pool, untrustedInput, userId) {
     if (unitRows.length !== uniqueUnitIds.length) throw new HttpError(400, 'One or more selected aircon units are not available.');
 
     const selection=await resolveBookingSelection(connection,customer.customerId,input,uniqueUnitIds.length);
-    const totalAmount=selection.totalAmount;
-    const [result] = await connection.execute(
-      `INSERT INTO booking
-        (customer_id, address_id, service_id, subscription_id, preferred_service_date, preferred_time_slot,
-         problem_description, booking_status, total_amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Submitted', ?)`,
-      [
-        customer.customerId,
-        input.addressId,
-        selection.services[0].serviceId,
-        selection.subscription?.subscriptionId ?? null,
-        input.preferredDate,
-        input.timeSlot,
-        input.problemDescription || null,
-        totalAmount,
-      ],
-    );
-
-    const unitValues = uniqueUnitIds.map((unitId) => [result.insertId, unitId]);
-    await connection.query('INSERT INTO booking_aircon_unit (booking_id, unit_id) VALUES ?', [unitValues]);
-    await connection.execute('INSERT INTO web_booking_details(booking_id,service_package,contact_phone,request_id) VALUES (?,?,?,?)',
-      [result.insertId,selection.package?.name??selection.serviceName.slice(0,120),customer.phone??null,input.requestId??null]);
-    await saveBookingSelection(connection,result.insertId,selection);
-    await connection.execute(
-      `INSERT INTO booking_status_history
-        (booking_id, old_status, new_status, changed_by_user_id, change_note)
-       VALUES (?, NULL, 'Submitted', ?, 'Booking created from customer portal.')`,
-      [result.insertId, customer.userId],
-    );
-
-    const emailNotification=await enqueueBookingEmail(connection,result.insertId);
+    const booking=await writeSelectedBookings(connection,selection,{customerId:customer.customerId,userId:customer.userId,
+      addressId:input.addressId,addressLine:addressRows[0].address_line,unitIds:uniqueUnitIds,preferredDate:input.preferredDate,
+      timeSlot:input.timeSlot,problemDescription:input.problemDescription,phone:customer.phone,requestId:input.requestId,source:'Created from customer portal.'});
     await connection.commit();
     return {
-      bookingId: result.insertId,
-      bookingReference: bookingReference(result.insertId, new Date().getFullYear()),
-      status: 'Submitted',
-      serviceName: selection.serviceName,
-      services: selection.services,
-      package: selection.package??null,
-      totalAmount,
-      emailNotification,
+      ...booking,
+      bookingReference: bookingReference(booking.bookingId,booking.createdAt),
     };
   } catch (error) {
     await connection.rollback();
@@ -209,11 +173,14 @@ export async function getBookingReport(pool, bookingId, userId) {
        sr.problem_found AS problemFound,
        sr.solution_applied AS solutionApplied,
        sr.checklist_result AS checklistResult,
-       sr.submitted_time AS submittedTime
+       sr.submitted_time AS submittedTime,
+       ca.cleaning_method AS cleaningMethod,
+       ca.assessment_note AS assessmentNote
      FROM booking b
      JOIN service_catalog sc ON sc.service_id = b.service_id
      JOIN work_order w ON w.booking_id = b.booking_id
      JOIN service_report sr ON sr.job_id = w.job_id
+     LEFT JOIN work_order_cleaning_assessment ca ON ca.job_id=w.job_id
      JOIN assignment a ON a.assignment_id = w.assignment_id
      JOIN technician t ON t.technician_id = a.technician_id
      JOIN user_account tech_user ON tech_user.user_id = t.user_id

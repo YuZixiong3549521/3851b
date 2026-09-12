@@ -1,5 +1,5 @@
 import express from 'express';
-import { sessionUser, offers } from '../public-site.mjs';
+import { sessionUser } from '../public-site.mjs';
 import { asyncRoute, HttpError } from './errors.mjs';
 import { getDemoCustomer } from './customer.mjs';
 import { createBooking, getBookingReport, listBookings } from './booking-service.mjs';
@@ -34,12 +34,8 @@ app.get('/customer-context', asyncRoute(async (request, response) => {
 }));
 
 app.get('/services', asyncRoute(async (request, response) => {
-  const [services] = await pool.query(
-    `SELECT service_id AS serviceId, service_name AS serviceName, description,
-            base_price AS basePrice, estimated_duration_minutes AS durationMinutes
-     FROM service_catalog WHERE service_status = 'Active' ORDER BY service_id`,
-  );
-  response.json({ services: services.map(service=>({...service,additionalUnitPrice:offers.find(offer=>offer[0]===service.serviceName)?.[2] ?? service.basePrice})) });
+  const {services}=await getBookingOptions(pool);
+  response.json({services:services.map(service=>({...service,serviceName:service.name}))});
 }));
 
 app.get('/booking-options', asyncRoute(async (request,response) => {

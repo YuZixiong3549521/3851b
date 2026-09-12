@@ -1,6 +1,8 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
+import { formatDate, formatMoney } from '@/lib/format';
+import { dayBeforeDate } from '@/lib/annual-booking';
 import { apiFetch as fetch } from '../api';
 import React, {
   useEffect,
@@ -328,14 +330,14 @@ const MyBookingsPage:
         setEditTime('');
 
         setSuccessMessage(
-          'Booking rescheduled successfully.'
+          'Preferred date updated. The service team will confirm availability.'
         );
 
       } catch (err) {
         console.error(err);
 
         setError(
-          'Unable to reschedule this booking. Please try again.'
+          err instanceof Error ? err.message : 'Unable to reschedule this booking. Please try again.'
         );
 
       } finally {
@@ -650,6 +652,10 @@ const MyBookingsPage:
               const isEditing =
                 editingBookingId ===
                 booking.id;
+              const annualVisit = booking.annualBundle?.visits.find(visit => visit.bookingId === booking.id);
+              const windowStart = booking.annualBundle?.windowStart ?? annualVisit?.windowStart;
+              const windowEnd = booking.annualBundle?.windowEnd ?? annualVisit?.windowEnd;
+              const today = new Date().toLocaleDateString('en-CA');
 
               return (
                 <div
@@ -700,10 +706,11 @@ const MyBookingsPage:
                         }}
                       >
                         {
-                          booking.service_package ||
+                          booking.annualBundle?.name || booking.service_package ||
                           booking.service_type
                         }
                       </h2>
+                      {booking.annualBundle && <p className="mt-2 text-sm font-semibold text-primary">Visit {booking.annualBundle.visitNumber} of 4 · Quarterly cleaning</p>}
 
                       <p
                         style={{
@@ -798,6 +805,8 @@ const MyBookingsPage:
                       {isEditing ? (
                         <Input
                           type="date"
+                          min={windowStart && windowStart > today ? windowStart : today}
+                          max={windowEnd ? dayBeforeDate(windowEnd) : undefined}
                           value={
                             editDate
                           }
@@ -840,7 +849,7 @@ const MyBookingsPage:
                           }}
                         >
                           {
-                            booking.preferred_date
+                            formatDate(booking.preferred_date)
                           }
                         </div>
                       )}
@@ -949,6 +958,9 @@ const MyBookingsPage:
                       </div>
                     </div>
                   </div>
+
+                  <div className="mt-5 rounded-xl border border-primary/15 bg-primary/5 p-4 text-sm"><p className="font-semibold">{booking.annualBundle ? 'This visit estimate' : 'Visit estimate'}: {booking.total_amount == null ? 'To be confirmed' : formatMoney(booking.total_amount)}</p>{booking.annualBundle && <p className="mt-1 text-xs text-muted-foreground">{formatMoney(booking.annualBundle.totalAmount)} for all four visits. Pay after each service; additional work is quoted separately.</p>}</div>
+                  {isEditing && windowStart && windowEnd && <p className="mt-3 text-sm text-muted-foreground">Keep this quarterly visit between {formatDate(windowStart)} and {formatDate(dayBeforeDate(windowEnd))}. Other visits retain their preferred dates.</p>}
 
                   {/* Address */}
 

@@ -1,7 +1,9 @@
 
 import { SiteIcon } from '@/components/ui/site-icon';
 import { Button } from '@/components/ui/button';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { apiFetch } from '../api';
+import { formatMoney } from '@/lib/format';
 import { PageRoute, ProblemItem } from '../types';
 
 interface HomePageProps {
@@ -12,6 +14,19 @@ interface HomePageProps {
 export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking }) => {
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
+  const [prices, setPrices] = useState<Array<{ name: string; base: number; perUnit: number }>>([]);
+  useEffect(() => {
+    let active = true;
+    apiFetch('/api/public/offers').then(response => {
+      if (!response.ok) throw new Error('Prices unavailable');
+      return response.json();
+    }).then(data => { if (active) setPrices(data.offers); }).catch(() => { if (active) setPrices([]); });
+    return () => { active = false; };
+  }, []);
+  const priceFor = (name: string) => {
+    const offer = prices.find(item => item.name === name);
+    return offer ? formatMoney(Number(offer.base)) : 'See price when booking';
+  };
 
   const toggleFaq = (index: number) => {
     setOpenFaq(openFaq === index ? null : index);
@@ -80,7 +95,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             <div className="flex flex-col gap-md max-w-2xl">
               <div className="inline-flex items-center gap-xs bg-ac-surface-container text-ac-primary font-label-sm text-label-sm px-sm py-xs rounded-full w-fit mb-xs">
                 <SiteIcon className=" text-[16px]">verified</SiteIcon>
-                <span>Certified Professionals</span>
+                <span>Aircon Care, Made Simple</span>
               </div>
               <h1 className="font-display-lg-mobile md:font-display-lg text-display-lg-mobile md:text-display-lg text-ac-on-background font-bold tracking-tight">
                 Keep Your Air Conditioner Running at Its Best
@@ -122,8 +137,8 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
                   />
                 </div>
                 <p className="font-label-sm text-label-sm text-ac-on-surface-variant">
-                  Trusted by 5,000+ <br />
-                  Happy Customers
+                  Cleaning, Repair <br />
+                  and Quarterly Care
                 </p>
               </div>
             </div>
@@ -142,16 +157,16 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
                     <SiteIcon className=" text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
                       star
                     </SiteIcon>
-                    <span className="font-label-md text-label-md font-bold">4.9/5 Rating</span>
+                    <span className="font-label-md text-label-md font-bold">Your Service Records</span>
                   </div>
                   <p className="font-label-sm text-label-sm text-ac-on-surface-variant leading-tight">
-                    Consistently highly rated by our community.
+                    Bookings and completed reports in your account.
                   </p>
                 </div>
                 <Button variant="ghost"
-                  onClick={() => onOpenBooking('Customer Support / Diagnostic Inquiry')}
+                  onClick={() => onOpenBooking('Repair')}
                   className="bg-ac-primary-container text-ac-on-primary-container p-sm rounded-full shadow-md flex items-center justify-center w-14 h-14 cursor-pointer border-none hover:scale-105 transition-transform"
-                  title="Contact Support"
+                  title="Book a repair assessment"
                 >
                   <SiteIcon className=" text-[28px]">support_agent</SiteIcon>
                 </Button>
@@ -188,7 +203,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               </div>
               <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-xs font-semibold">Professional Service</h3>
               <p className="font-body-md text-body-md text-ac-on-surface-variant flex-grow">
-                All our technicians are certified, rigorously trained, and equipped with the latest diagnostic tools for precise care.
+                Your assigned technician reviews the unit, records the cleaning method and explains any additional work before proceeding.
               </p>
             </div>
             {/* Feature 3 */}
@@ -211,9 +226,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
         <div className="max-w-container-max mx-auto px-gutter relative z-10">
           <div className="flex flex-col md:flex-row justify-between items-end mb-lg gap-sm">
             <div className="max-w-xl">
-              <h2 className="font-headline-md text-headline-md text-ac-on-background mb-sm font-bold">Comprehensive Services</h2>
+              <h2 className="font-headline-md text-headline-md text-ac-on-background mb-sm font-bold">Choose the Care You Need</h2>
               <p className="font-body-md text-body-md text-ac-on-surface-variant">
-                From routine chemical washes to complex compressor repairs, we provide full-spectrum care for your cooling systems.
+                Choose cleaning, repair or four quarterly cleaning visits. Your technician will assess your aircon and recommend the right method.
               </p>
             </div>
             <Button variant="ghost"
@@ -233,23 +248,23 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
                   src="https://lh3.googleusercontent.com/aida-public/AB6AXuD-Hoe8MDSP2jC3h6T0onhXBxQ7umz9UdM-rrSXufFBRxz3bS2H57hXf6xmMIyU0c1S5rrmkB09lbrvYNlhs_oxAycROqK12II2tRB54WJCNKH8Idt6aOfByv4dheAevfoBXPLdS4u8z3pMj6G7u-WUu3NijtyQxlLLFYzWPZnid_E3J42sLoN6LaVLiOe6h4nXjGb-r8lDx5dqdRUFmyYFssu3fSDEZ-ATEF07oR42QXrdgfp1nKixnQ"
                 />
                 <div className="absolute top-sm right-sm bg-ac-surface/90 text-ac-primary px-sm py-xs rounded-full font-label-sm text-label-sm shadow-sm backdrop-blur-sm font-semibold">
-                  Most Popular
+                  One-off Care
                 </div>
               </div>
-              <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-sm font-semibold">Air Conditioning Cleaning</h3>
+              <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-sm font-semibold">Cleaning</h3>
               <ul className="font-body-md text-body-md text-ac-on-surface-variant space-y-2 mb-md flex-grow">
                 <li className="flex items-start gap-xs">
-                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> General Cleaning
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> One cleaning visit
                 </li>
                 <li className="flex items-start gap-xs">
-                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Chemical Overhaul
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Method assessed by your technician
                 </li>
                 <li className="flex items-start gap-xs">
-                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Filter Replacement
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Additional work quoted first
                 </li>
               </ul>
               <Button variant="ghost"
-                onClick={() => onOpenBooking('Air Conditioning Cleaning')}
+                onClick={() => onOpenBooking('Cleaning')}
                 className="w-full inline-flex items-center justify-center bg-ac-primary-fixed text-ac-on-primary-fixed font-label-md text-label-md h-12 rounded-lg hover:bg-ac-primary hover:text-ac-on-primary transition-colors cursor-pointer border-none"
               >
                 Book Cleaning
@@ -261,27 +276,27 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               <div className="h-48 rounded-xl bg-ac-surface-dim mb-md overflow-hidden relative">
                 <img
                   className="w-full h-full object-cover"
-                  alt="Regular Maintenance"
+                  alt="Quarterly aircon care"
                   src="https://lh3.googleusercontent.com/aida-public/AB6AXuCB4edGVsgX9v6-hNq7ov6zk5XccEWy0IYJ67x28o98-3ShA66todNyvhsuFCYqR6dyuBrTjEG21dyI-U6x1Tdvv7GcPus9VVcy8i3LThWKNRSAJxgyqaYfQSgPWgyAbQ5DzRKQ-6MqFd-e4AbsL7ykyzSRRFvT73FHOZR5Hy0Ih4RoP2QOZwWdXWDLB97Zo-ITgMcwxK0HFT9ELdtWe6iNS8qhiHGBFaYEj94wT8KhgkKqex2fh0O3MQ"
                 />
               </div>
-              <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-sm font-semibold">Regular Maintenance</h3>
+              <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-sm font-semibold">Annual Cleaning Bundle</h3>
               <ul className="font-body-md text-body-md text-ac-on-surface-variant space-y-2 mb-md flex-grow">
                 <li className="flex items-start gap-xs">
-                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Bi-Annual Inspections
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Four cleaning visits per year
                 </li>
                 <li className="flex items-start gap-xs">
-                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Gas Top-Up (Freon)
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> One visit every three months
                 </li>
                 <li className="flex items-start gap-xs">
-                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Performance Diagnostics
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> One address, the same selected units
                 </li>
               </ul>
               <Button variant="ghost"
-                onClick={() => onOpenBooking('Regular Maintenance')}
+                onClick={() => onOpenBooking('Annual Cleaning Bundle')}
                 className="w-full inline-flex items-center justify-center bg-ac-primary-fixed text-ac-on-primary-fixed font-label-md text-label-md h-12 rounded-lg hover:bg-ac-primary hover:text-ac-on-primary transition-colors cursor-pointer border-none"
               >
-                Book Maintenance
+                Book Annual Bundle
               </Button>
             </div>
 
@@ -294,20 +309,20 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
                   src="https://lh3.googleusercontent.com/aida-public/AB6AXuCUq_H7G5DhHcNiKvMYBxa55-VzXvKtQu5Fgw4MuWrsdGkMLUJu8ROEP8ctICQ3Ub-SbA8G18yrhLfkToYkKkBWVKJLxP9JDMct1TG3YxKyd-dElL4Hjbf2YRM6AeE_v4rSZUILdj07SasCN_hBltI0z4raUtdOb4afyMnhTvztInOVZvjW2ecfszpPHO8nzUx_veGrCoG60LM1BqtjJGIT6K_p1ZPiWF2B-7FDvtVm-0Bf8YNhZAFSEQ"
                 />
               </div>
-              <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-sm font-semibold">Air Conditioning Repair</h3>
+              <h3 className="font-headline-sm text-headline-sm text-ac-on-background mb-sm font-semibold">Repair</h3>
               <ul className="font-body-md text-body-md text-ac-on-surface-variant space-y-2 mb-md flex-grow">
                 <li className="flex items-start gap-xs">
-                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Water Leak Fixes
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> On-site fault diagnosis
                 </li>
                 <li className="flex items-start gap-xs">
-                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Compressor Replacement
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Tell us what is happening
                 </li>
                 <li className="flex items-start gap-xs">
-                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Circuit Board Repairs
+                  <SiteIcon className=" text-ac-primary text-[20px]">check_circle</SiteIcon> Repair and parts quoted after inspection
                 </li>
               </ul>
               <Button variant="ghost"
-                onClick={() => onOpenBooking('Air Conditioning Repair')}
+                onClick={() => onOpenBooking('Repair')}
                 className="w-full inline-flex items-center justify-center bg-ac-primary-fixed text-ac-on-primary-fixed font-label-md text-label-md h-12 rounded-lg hover:bg-ac-primary hover:text-ac-on-primary transition-colors cursor-pointer border-none"
               >
                 Book Repair
@@ -370,11 +385,11 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
           <div className="mt-10 sm:mt-12 text-center">
             <Button variant="ghost"
               type="button"
-              onClick={() => onOpenBooking(selectedIssue ? `Inspection for: ${selectedIssue}` : 'General Inspection / Diagnostic')}
+              onClick={() => onOpenBooking(selectedIssue === 'needs-cleaning' ? 'Cleaning' : 'Repair')}
               className="inline-flex items-center justify-center gap-2 bg-ac-primary hover:bg-ac-primary/90 active:scale-[0.98] text-ac-on-primary font-semibold text-sm sm:text-base h-12 px-8 rounded-xl shadow-sm hover:shadow-md transition-all cursor-pointer border-none whitespace-nowrap"
             >
               <SiteIcon className=" text-[20px]">search</SiteIcon>
-              <span>Request an Inspection</span>
+              <span>Book an Assessment</span>
             </Button>
           </div>
         </div>
@@ -441,7 +456,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
                   Technician Assignment
                 </h4>
                 <p className="text-xs sm:text-sm text-ac-on-surface-variant leading-relaxed max-w-[200px] mx-auto">
-                  A certified expert is assigned to your request.
+                  The service team confirms availability and assigns a technician.
                 </p>
               </div>
 
@@ -486,9 +501,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
         <div className="max-w-container-max mx-auto px-gutter">
           <div className="flex flex-col md:flex-row justify-between items-end mb-lg gap-sm">
             <div className="max-w-xl">
-              <h2 className="font-headline-md text-headline-md text-ac-on-background mb-sm font-bold">Current Promotions</h2>
+              <h2 className="font-headline-md text-headline-md text-ac-on-background mb-sm font-bold">Simple Service Pricing</h2>
               <p className="font-body-md text-body-md text-ac-on-surface-variant">
-                Take advantage of our seasonal offers and bundle deals for the best value.
+                Prices in SGD for residential wall-mounted aircon units. Review your unit count and estimate before booking.
               </p>
             </div>
           </div>
@@ -498,132 +513,72 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             <div className="min-w-[300px] md:min-w-[350px] snap-start bg-ac-primary-container text-ac-on-primary-container p-md rounded-2xl shadow-sm flex flex-col relative overflow-hidden">
               <div className="absolute -right-8 -top-8 w-32 h-32 bg-ac-primary/20 rounded-full blur-2xl pointer-events-none"></div>
               <div className="inline-flex bg-ac-on-primary text-ac-primary px-sm py-xs rounded-full font-label-sm text-label-sm w-fit mb-md shadow-sm font-semibold">
-                New Customer
+                One Visit
               </div>
-              <h3 className="font-headline-sm text-headline-sm font-bold mb-xs relative z-10">20% Off First Cleaning</h3>
+              <h3 className="font-headline-sm text-headline-sm font-bold mb-xs relative z-10">Cleaning · {priceFor('Cleaning')}</h3>
               <p className="font-body-md text-body-md opacity-90 mb-lg relative z-10 flex-grow">
-                Welcome to AC Care! Get a significant discount on your first general cleaning service.
+                First-unit cleaning price. Add your other units when booking. Your technician assesses the cleaning method on site; additional work is quoted first.
               </p>
               <Button variant="ghost"
-                onClick={() => onOpenBooking('20% Off First Cleaning Promo')}
+                onClick={() => onOpenBooking('Cleaning')}
                 className="inline-flex items-center justify-center bg-ac-on-primary text-ac-primary font-label-md text-label-md h-10 px-md rounded-lg w-fit hover:bg-ac-surface transition-colors relative z-10 cursor-pointer border-none font-semibold"
               >
-                Claim Offer
+                Book Cleaning
               </Button>
             </div>
             {/* Promo 2 */}
             <div className="min-w-[300px] md:min-w-[350px] snap-start bg-ac-surface-container-high border border-ac-outline-variant/50 p-md rounded-2xl shadow-sm flex flex-col">
               <div className="inline-flex bg-ac-tertiary-fixed text-ac-on-tertiary-fixed-variant px-sm py-xs rounded-full font-label-sm text-label-sm w-fit mb-md shadow-sm font-semibold">
-                Popular
+                Diagnosis First
               </div>
-              <h3 className="font-headline-sm text-headline-sm font-bold text-ac-on-background mb-xs">3-Unit Bundle Deal</h3>
+              <h3 className="font-headline-sm text-headline-sm font-bold text-ac-on-background mb-xs">Repair · {priceFor('Repair')}</h3>
               <p className="font-body-md text-body-md text-ac-on-surface-variant mb-lg flex-grow">
-                Have multiple units? Clean 3 units in one visit and save $50 on the total bill.
+                The visit fee covers diagnosis. Repair labour, replacement parts and other work are quoted after inspection for your approval.
               </p>
               <Button variant="ghost"
-                onClick={() => onOpenBooking('3-Unit Bundle Deal ($50 Off)')}
+                onClick={() => onOpenBooking('Repair')}
                 className="inline-flex items-center justify-center bg-ac-primary text-ac-on-primary font-label-md text-label-md h-10 px-md rounded-lg w-fit hover:bg-ac-primary-fixed hover:text-ac-on-primary-fixed transition-colors cursor-pointer border-none"
               >
-                Book Bundle
+                Book Repair
               </Button>
             </div>
             {/* Promo 3 */}
             <div className="min-w-[300px] md:min-w-[350px] snap-start bg-ac-surface-container-high border border-ac-outline-variant/50 p-md rounded-2xl shadow-sm flex flex-col">
               <div className="inline-flex bg-ac-surface-variant text-ac-on-surface-variant px-sm py-xs rounded-full font-label-sm text-label-sm w-fit mb-md shadow-sm font-semibold">
-                Maintenance
+                Four Quarterly Visits
               </div>
-              <h3 className="font-headline-sm text-headline-sm font-bold text-ac-on-background mb-xs">Annual Contract (10% Off)</h3>
+              <h3 className="font-headline-sm text-headline-sm font-bold text-ac-on-background mb-xs">Annual Cleaning Bundle · {priceFor('Annual Cleaning Bundle')}</h3>
               <p className="font-body-md text-body-md text-ac-on-surface-variant mb-lg flex-grow">
-                Sign up for a 1-year maintenance plan (2 visits) and receive a 10% discount.
+                Annual price for one unit. Four cleaning visits, three months apart, at the same address. Review all four dates and pay per visit after service.
               </p>
               <Button variant="ghost"
-                onClick={() => onOpenBooking('Annual Maintenance Contract (10% Off)')}
+                onClick={() => onOpenBooking('Annual Cleaning Bundle')}
                 className="inline-flex items-center justify-center bg-ac-primary text-ac-on-primary font-label-md text-label-md h-10 px-md rounded-lg w-fit hover:bg-ac-primary-fixed hover:text-ac-on-primary-fixed transition-colors cursor-pointer border-none"
               >
-                View Plans
+                Book Annual Bundle
               </Button>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Customer Testimonials */}
+      {/* Service expectations */}
       <section className="py-xl bg-ac-surface-container-highest">
         <div className="max-w-container-max mx-auto px-gutter">
           <div className="text-center mb-lg">
-            <h2 className="font-headline-md text-headline-md text-ac-on-background mb-sm font-bold">What Our Customers Say</h2>
-            <p className="font-body-md text-body-md text-ac-on-surface-variant max-w-2xl mx-auto">
-              Real experiences from homeowners who trust AC Care for their cooling needs.
-            </p>
+            <h2 className="font-headline-md text-headline-md text-ac-on-background mb-sm font-bold">Care You Can Follow</h2>
+            <p className="font-body-md text-body-md text-ac-on-surface-variant max-w-2xl mx-auto">Know what you are requesting and keep your service records together.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-md">
-            {/* Testimonial 1 */}
-            <div className="bg-ac-surface p-md rounded-2xl shadow-sm border border-ac-outline-variant/20">
-              <div className="flex items-center gap-xs text-ac-tertiary-container mb-sm">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <SiteIcon key={i} className=" text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                    star
-                  </SiteIcon>
-                ))}
-              </div>
-              <p className="font-body-md text-body-md text-ac-on-surface mb-md">
-                "Incredibly professional service. The technician arrived exactly on time, diagnosed the issue quickly, and left the area spotless. The digital report afterward was a great touch."
-              </p>
-              <div className="flex items-center gap-sm">
-                <div className="w-10 h-10 rounded-full bg-ac-primary-fixed flex items-center justify-center text-ac-primary font-bold">
-                  AT
-                </div>
-                <div>
-                  <h4 className="font-label-md text-label-md text-ac-on-background font-semibold">Alex T.</h4>
-                  <p className="font-label-sm text-label-sm text-ac-on-surface-variant">Residential Customer</p>
-                </div>
-              </div>
-            </div>
-            {/* Testimonial 2 */}
-            <div className="bg-ac-surface p-md rounded-2xl shadow-sm border border-ac-outline-variant/20">
-              <div className="flex items-center gap-xs text-ac-tertiary-container mb-sm">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <SiteIcon key={i} className=" text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                    star
-                  </SiteIcon>
-                ))}
-              </div>
-              <p className="font-body-md text-body-md text-ac-on-surface mb-md">
-                "Booking was so easy compared to calling around different companies. The chemical wash made my 5-year-old AC unit run like it's brand new again. Highly recommend!"
-              </p>
-              <div className="flex items-center gap-sm">
-                <div className="w-10 h-10 rounded-full bg-ac-secondary-fixed flex items-center justify-center text-ac-on-secondary-fixed font-bold">
-                  JL
-                </div>
-                <div>
-                  <h4 className="font-label-md text-label-md text-ac-on-background font-semibold">Jamie L.</h4>
-                  <p className="font-label-sm text-label-sm text-ac-on-surface-variant">First-time User</p>
-                </div>
-              </div>
-            </div>
-            {/* Testimonial 3 */}
-            <div className="bg-ac-surface p-md rounded-2xl shadow-sm border border-ac-outline-variant/20">
-              <div className="flex items-center gap-xs text-ac-tertiary-container mb-sm">
-                {[1, 2, 3, 4].map((i) => (
-                  <SiteIcon key={i} className=" text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
-                    star
-                  </SiteIcon>
-                ))}
-                <SiteIcon className=" text-[20px]">star_half</SiteIcon>
-              </div>
-              <p className="font-body-md text-body-md text-ac-on-surface mb-md">
-                "The transparent pricing is what sold me. No hidden fees or surprise charges at the end. The technician explained exactly what was wrong before starting the repair."
-              </p>
-              <div className="flex items-center gap-sm">
-                <div className="w-10 h-10 rounded-full bg-ac-tertiary-fixed flex items-center justify-center text-ac-on-tertiary-fixed font-bold">
-                  SK
-                </div>
-                <div>
-                  <h4 className="font-label-md text-label-md text-ac-on-background font-semibold">Sam K.</h4>
-                  <p className="font-label-sm text-label-sm text-ac-on-surface-variant">Maintenance Plan Member</p>
-                </div>
-              </div>
-            </div>
+            {[
+              { icon: 'receipt_long', title: 'Review the price', text: 'See the service estimate before you submit. Repair work, chemical treatment and parts are quoted separately when required.' },
+              { icon: 'build', title: 'Let the technician assess', text: 'Choose cleaning or repair and describe the issue. The assigned technician records the appropriate cleaning method after checking your unit.' },
+              { icon: 'calendar_month', title: 'Keep track of every visit', text: 'The annual bundle creates four linked quarterly bookings. Sign in to view upcoming dates and completed service reports.' },
+            ].map(item => <div key={item.title} className="bg-ac-surface p-md rounded-2xl shadow-sm border border-ac-outline-variant/20">
+              <SiteIcon className="text-ac-primary text-[28px] mb-sm">{item.icon}</SiteIcon>
+              <h3 className="font-label-md text-label-md text-ac-on-background font-semibold mb-sm">{item.title}</h3>
+              <p className="font-body-md text-body-md text-ac-on-surface-variant">{item.text}</p>
+            </div>)}
           </div>
         </div>
       </section>
@@ -663,7 +618,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               </Button>
               {openFaq === 1 && (
                 <div className="bg-ac-surface-container-lowest border-t border-ac-outline-variant/10 px-md pb-sm pt-xs font-body-md text-body-md text-ac-on-surface-variant animate-in fade-in duration-200">
-                  For optimal performance and energy efficiency, we recommend a general cleaning every 3 to 4 months, and a major service (like a chemical wash) once a year. High-usage units may require more frequent servicing.
+                  Our Annual Cleaning Bundle includes four visits, three months apart from your first preferred date. Your technician assesses the unit at each visit and decides whether regular or chemical cleaning is appropriate. Additional work and any extra charge must be agreed with you first.
                 </div>
               )}
             </div>
@@ -675,7 +630,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
                 onClick={() => toggleFaq(2)}
               >
                 <span className="font-label-md text-label-md text-ac-on-background font-semibold">
-                  What is included in a General Cleaning?
+                  Do I need to choose a cleaning method?
                 </span>
                 <SiteIcon
                   className={` text-ac-outline transition-transform duration-300 ${
@@ -687,7 +642,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
               </Button>
               {openFaq === 2 && (
                 <div className="bg-ac-surface-container-lowest border-t border-ac-outline-variant/10 px-md pb-sm pt-xs font-body-md text-body-md text-ac-on-surface-variant animate-in fade-in duration-200">
-                  General cleaning includes washing the air filters, cleaning the indoor evaporator coil, clearing the drainage pipe to prevent water leaks, checking the gas pressure, and testing the overall system performance.
+                  No. Select Cleaning for a single visit or Annual Cleaning Bundle for quarterly care. Your technician checks the condition and records the recommended method. The displayed price covers routine cleaning; chemical treatment, repairs and parts require a separate quote if needed.
                 </div>
               )}
             </div>
@@ -727,7 +682,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking })
             Ready to Take Care of Your Air Conditioner?
           </h2>
           <p className="font-body-lg text-body-lg opacity-90 mb-lg text-white/90">
-            Join thousands of satisfied customers who trust AC Care for their home comfort.
+            Choose a single visit or plan your quarterly cleaning for the year ahead.
           </p>
           <div className="flex flex-col sm:flex-row gap-md justify-center items-center">
             <Button variant="ghost"

@@ -7,10 +7,12 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } 
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { BookingServiceSelection, bookingEmailMessage, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
+import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { apiFetch } from '@/components/public-site/api';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate, formatMoney } from '@/lib/format';
-import type { BookingOptions, CustomerContext, EmailNotification } from '@/lib/coolcare-types';
+import { assertBookingConfirmation } from '@/lib/annual-booking';
+import type { AnnualBundle, BookingOptions, CustomerContext, EmailNotification } from '@/lib/coolcare-types';
 
 type Step = 'menu' | 'service' | 'units' | 'schedule' | 'address' | 'review' | 'success';
 type Draft = { numberOfUnits: number; preferredDate: string; timeWindow: string; serviceAddress: string; phone: string; symptoms: string };
@@ -18,7 +20,7 @@ const times = ['09:00 AM - 11:00 AM', '11:30 AM - 01:30 PM', '02:00 PM - 04:00 P
 const emptyDraft: Draft = { numberOfUnits: 1, preferredDate: '', timeWindow: '', serviceAddress: '', phone: '', symptoms: '' };
 const prompts: Record<Step, string> = {
   menu: 'I can help you create a booking, one step at a time.',
-  service: 'Let’s plan your visit. Build your own service, select a bundle or use your membership.', units: 'How many aircon units need servicing?',
+  service: 'Choose Cleaning, Repair or the Annual Cleaning Bundle with four quarterly visits.', units: 'How many aircon units need servicing?',
   schedule: 'When would you like us to visit?', address: 'Where should we visit, and how can we reach you?',
   review: 'Please check your request. I will only submit it when you select Confirm booking.',
   success: 'Your booking has been saved! The service team will confirm availability.',
@@ -39,12 +41,14 @@ export function CustomerAssistant({ onBookingCreated }: { onBookingCreated: () =
   const [selection, setSelection] = useState<BookingSelection>(emptyBookingSelection);
   const [step, setStep] = useState<Step>('menu');
   const [draft, setDraft] = useState<Draft>(emptyDraft);
-  const [created, setCreated] = useState<{ id: number; status: string; totalAmount: number; emailNotification?: EmailNotification } | null>(null);
+  const [created, setCreated] = useState<{ id: number; status: string; totalAmount: number; emailNotification?: EmailNotification; annualBundle?: AnnualBundle | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [retryLocked, setRetryLocked] = useState(false);
   const requestId = useRef('');
   const submitting = useRef(false);
+  const startingBooking = useRef(false);
+  const pendingRequest = useRef<Record<string, unknown> | null>(null);
   const ownerId = useRef<number | null>(null);
   const body = useRef<HTMLDivElement>(null);
 
@@ -58,9 +62,10 @@ export function CustomerAssistant({ onBookingCreated }: { onBookingCreated: () =
       .then(([nextContext, data]) => { if (active) {
         if (ownerId.current !== nextContext.customer.userId) {
           setStep('menu'); setCreated(null); setDraft(emptyDraft); setSelection(emptyBookingSelection); setRetryLocked(false);
+          pendingRequest.current = null;
           ownerId.current = nextContext.customer.userId;
         }
-        setContext(nextContext); setOptions(data);
+        setContext(nextContext); if (!pendingRequest.current) setOptions(data);
       } })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load the assistant.'); })
       .finally(() => { if (active) setBusy(false); });
@@ -71,11 +76,15 @@ export function CustomerAssistant({ onBookingCreated }: { onBookingCreated: () =
 
   function go(next: Step) { setError(''); setStep(next); }
   async function startBooking() {
+    if (startingBooking.current || submitting.current) return;
+    startingBooking.current = true;
     setBusy(true); setError('');
     try { setOptions(await coolcareApi.getBookingOptions()); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to refresh booking options.'); setBusy(false); return; }
+    finally { startingBooking.current = false; }
     setBusy(false);
     requestId.current = crypto.randomUUID();
+    pendingRequest.current = null;
     setRetryLocked(false);
     setDraft({ ...emptyDraft, serviceAddress: context?.addresses[0]?.addressLine || '', phone: context?.customer.phone || '' });
     setSelection(emptyBookingSelection);
@@ -84,15 +93,18 @@ export function CustomerAssistant({ onBookingCreated }: { onBookingCreated: () =
   }
 
   async function confirm() {
-    if (submitting.current) return;
+    if (submitting.current || !context || (!pendingRequest.current && !selectedServices.valid)) return;
+    if (!pendingRequest.current) pendingRequest.current = { ...draft, ...selectedServices.payload, expectedUserId: context.customer.userId, requestId: requestId.current };
     submitting.current = true; setBusy(true); setError(''); setRetryLocked(true);
     try {
-      const result = await publicRequest<{ booking: { id: number; status: string; totalAmount: number; emailNotification?: EmailNotification }; emailNotification?: EmailNotification }>('/bookings', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...draft, ...selectedServices.payload, expectedUserId: context?.customer.userId, requestId: requestId.current }),
+      const result = await publicRequest<{ booking: { id: number; status: string; totalAmount: number; emailNotification?: EmailNotification; annualBundle?: AnnualBundle | null }; emailNotification?: EmailNotification }>('/bookings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pendingRequest.current),
       });
-      setCreated({ ...result.booking, emailNotification: result.booking.emailNotification ?? result.emailNotification }); go('success'); setRetryLocked(false); onBookingCreated();
+      assertBookingConfirmation(result.booking, Boolean(pendingRequest.current.packageId));
+      setCreated({ ...result.booking, emailNotification: result.booking.emailNotification ?? result.emailNotification }); go('success'); setRetryLocked(false); pendingRequest.current = null; onBookingCreated();
     } catch (reason) {
       const rejected = reason instanceof Error && 'status' in reason && Number(reason.status) < 500;
+      if (rejected) pendingRequest.current = null;
       if (reason instanceof Error && reason.message.includes('signed-in account changed')) {
         setContext(null); setOptions(null); setDraft(emptyDraft); setSelection(emptyBookingSelection); setCreated(null); ownerId.current = null;
       }
@@ -126,10 +138,11 @@ export function CustomerAssistant({ onBookingCreated }: { onBookingCreated: () =
             <Button className="h-14 justify-start" onClick={startBooking} disabled={busy}><CalendarPlus />Create a new booking</Button>
           </div>}
           {step === 'service' && options && <><BookingServiceSelection options={options} value={selection} onChange={setSelection} units={draft.numberOfUnits} disabled={busy} /><Button disabled={busy || !selectedServices.valid} onClick={() => go('units')}>Continue</Button></>}
-          {step === 'units' && <><div className="grid grid-cols-5 gap-2">{Array.from({ length: 10 }, (_, i) => i + 1).map(count => <Button key={count} variant={draft.numberOfUnits === count ? 'default' : 'outline'} aria-pressed={draft.numberOfUnits === count} onClick={() => setDraft({ ...draft, numberOfUnits: count })}>{count}</Button>)}</div><p className="text-sm">{selectedServices.label} · Estimated {formatMoney(estimate)}</p><Button onClick={() => go('schedule')}>Continue</Button></>}
+          {step === 'units' && <><div className="grid grid-cols-5 gap-2">{Array.from({ length: 10 }, (_, i) => i + 1).map(count => <Button key={count} variant={draft.numberOfUnits === count ? 'default' : 'outline'} aria-pressed={draft.numberOfUnits === count} onClick={() => setDraft({ ...draft, numberOfUnits: count })}>{count}</Button>)}</div><p className="text-sm">{selectedServices.label} · {selectedServices.isAnnual ? 'Annual estimate' : 'Visit estimate'} {formatMoney(estimate)}</p><Button onClick={() => go('schedule')}>Continue</Button></>}
           {step === 'schedule' && <form className="space-y-4" onSubmit={event => { event.preventDefault(); go('address'); }}>
-            <label className="block space-y-2 text-sm font-medium"><span>Preferred date</span><Input required type="date" min={today} value={draft.preferredDate} onChange={event => setDraft({ ...draft, preferredDate: event.target.value })} /></label>
+            <label className="block space-y-2 text-sm font-medium"><span>{selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'}</span><Input required type="date" min={today} value={draft.preferredDate} onChange={event => setDraft({ ...draft, preferredDate: event.target.value })} /></label>
             <p className="text-sm font-medium">Preferred arrival window</p><div className="grid grid-cols-2 gap-2">{times.map(time => <Button key={time} type="button" className="h-auto whitespace-normal py-3" variant={draft.timeWindow === time ? 'default' : 'outline'} aria-pressed={draft.timeWindow === time} onClick={() => setDraft({ ...draft, timeWindow: time })}>{time}</Button>)}</div>
+            {selectedServices.isAnnual && <AnnualBookingSummary firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={estimate} />}
             <p className="text-xs text-muted-foreground">These are preferred windows. The service team will confirm availability.</p><p className="rounded-xl bg-primary/5 p-3 text-xs leading-5">{bookingFrequencyNotice}</p><Button type="submit" disabled={!draft.timeWindow}>Continue</Button>
           </form>}
           {step === 'address' && <form className="space-y-4" onSubmit={event => { event.preventDefault(); go('review'); }}>
@@ -139,8 +152,10 @@ export function CustomerAssistant({ onBookingCreated }: { onBookingCreated: () =
             <label className="block space-y-2 text-sm font-medium"><span>Notes for the technician (optional)</span><Textarea maxLength={1000} value={draft.symptoms} onChange={event => setDraft({ ...draft, symptoms: event.target.value })} /></label><Button type="submit">Review booking</Button>
           </form>}
           {(step === 'review' || step === 'success') && <>
-            {created && step === 'success' && <div role="status" className="rounded-xl bg-emerald-50 p-4 text-emerald-900"><p className="font-bold">Booking #{created.id}</p><p>Status: {created.status}</p></div>}
-            <dl className="space-y-3 rounded-xl border p-4 text-sm">{Object.entries({ 'Booking option': selectedServices.label, ...(selection.mode !== 'custom' ? { Services: selectedServices.serviceNames } : {}), Units: draft.numberOfUnits, Date: formatDate(draft.preferredDate), Time: draft.timeWindow, Address: draft.serviceAddress, Phone: draft.phone, 'Estimated total': formatMoney(created && step === 'success' ? created.totalAmount : estimate), ...(draft.symptoms ? { Notes: draft.symptoms } : {}) }).map(([label, value]) => <div key={label}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="break-words font-medium">{value}</dd></div>)}</dl>
+            {created && step === 'success' && <div role="status" className="rounded-xl bg-emerald-50 p-4 text-emerald-900"><p className="font-bold">{created.annualBundle ? 'Four booking requests saved' : 'Booking #' + created.id}</p><p>Status: {created.status}</p></div>}
+            <dl className="space-y-3 rounded-xl border p-4 text-sm">{Object.entries({ 'Booking option': selectedServices.label, Units: draft.numberOfUnits, [selectedServices.isAnnual ? 'First preferred date' : 'Preferred date']: formatDate(draft.preferredDate), Time: draft.timeWindow, Address: draft.serviceAddress, Phone: draft.phone, [selectedServices.isAnnual ? 'Annual estimate' : 'Visit estimate']: formatMoney(created && step === 'success' ? created.annualBundle?.totalAmount ?? created.totalAmount : estimate), ...(draft.symptoms ? { Notes: draft.symptoms } : {}) }).map(([label, value]) => <div key={label}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="break-words font-medium">{value}</dd></div>)}</dl>
+            {selectedServices.isAnnual && <AnnualBookingSummary firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={estimate} saved={step === 'success' ? created?.annualBundle : null} />}
+            {selectedServices.pricingNote && <p className="text-sm text-muted-foreground">{selectedServices.pricingNote}</p>}
             {created?.emailNotification && step === 'success' && <p role="status" className="text-sm text-muted-foreground">{bookingEmailMessage(created.emailNotification)}</p>}
             {step === 'review' ? <Button disabled={busy} onClick={confirm}>{busy ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm booking'}</Button> : <Button disabled={busy} onClick={startBooking}>Book another service</Button>}
           </>}
