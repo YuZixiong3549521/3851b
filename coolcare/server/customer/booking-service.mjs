@@ -6,6 +6,7 @@ import { writeSelectedBookings,describeCreatedBooking } from './booking-writer.m
 import { config } from './config.mjs';
 import { isCalendarDate } from './booking-schedule.mjs';
 import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './address-service.mjs';
+import { resolveReportPhoto } from './report-photos.mjs';
 
 const timeSlots = ['09:00 - 11:00', '11:00 - 13:00', '14:00 - 16:00', '16:00 - 18:00'];
 
@@ -41,6 +42,8 @@ export function bookingReference(bookingId, createdAt) {
   return `BK-${year}-${String(bookingId).padStart(4, '0')}`;
 }
 
+const timestampIso=seconds=>seconds===null||seconds===undefined?null:new Date(Number(seconds)*1000).toISOString();
+
 export async function createBooking(pool, untrustedInput, userId) {
   const parsed = createBookingSchema.safeParse(untrustedInput);
   if (!parsed.success) {
@@ -74,7 +77,7 @@ export async function createBooking(pool, untrustedInput, userId) {
       uniqueUnitIds=await addressUnitIds(connection,customer.customerId,address.addressId,input.numberOfUnits);
     }else {
       const [[savedAddress]]=await connection.execute(`SELECT address_id AS addressId,address_line AS addressLine FROM service_address
-        WHERE address_id=? AND customer_id=? LIMIT 1`,[input.addressId,customer.customerId]);
+        WHERE address_id=? AND customer_id=? AND is_archived=FALSE LIMIT 1`,[input.addressId,customer.customerId]);
       if(!savedAddress)throw new HttpError(400,'The selected service address is not available.');
       address=savedAddress;
       uniqueUnitIds=[...new Set(input.unitIds)];
@@ -111,7 +114,11 @@ export async function listBookings(pool, scope = 'all', userId) {
   const [rows] = await pool.execute(
     `SELECT
        b.booking_id AS bookingId,
+       b.address_id AS addressId,
+       (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
+       (b.booking_status='Submitted' AND NOT EXISTS(SELECT 1 FROM assignment owned_assignment WHERE owned_assignment.booking_id=b.booking_id)) AS canModify,
        b.created_at AS createdAt,
+       UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,
        b.preferred_service_date AS preferredDate,
        b.preferred_time_slot AS timeSlot,
        b.problem_description AS problemDescription,
@@ -158,11 +165,24 @@ export async function listBookings(pool, scope = 'all', userId) {
   );
   const unitsByBooking = Map.groupBy(unitRows, (row) => row.bookingId);
 
-  return attachBookingSelections(pool, rows.map((row) => ({
+  return attachBookingSelections(pool, rows.map(({createdAtEpoch,...row}) => ({
     ...row,
+    canModify:Boolean(row.canModify),
+    createdAt:timestampIso(createdAtEpoch),
     bookingReference: bookingReference(row.bookingId, row.createdAt),
     units: unitsByBooking.get(row.bookingId) ?? [],
   })));
+}
+
+export async function getBookingDetail(pool,bookingId,userId) {
+  // Reuse the list's ownership and service/package snapshots, rather than
+  // returning a separate representation with different business rules.
+  const booking=(await listBookings(pool,'all',userId)).find(row=>row.bookingId===bookingId);
+  if(!booking)throw new HttpError(404,'Booking not found.');
+  const [timelineRows]=await pool.execute(`SELECT new_status AS status,UNIX_TIMESTAMP(changed_at) AS changedAtEpoch,change_note AS remarks
+    FROM booking_status_history WHERE booking_id=? ORDER BY changed_at,history_id`,[bookingId]);
+  const statusTimeline=timelineRows.map(({changedAtEpoch,...event})=>({...event,changedAt:timestampIso(changedAtEpoch)}));
+  return {...booking,statusTimeline};
 }
 
 export async function getBookingReport(pool, bookingId, userId) {
@@ -176,11 +196,13 @@ export async function getBookingReport(pool, bookingId, userId) {
        sc.service_name AS serviceName,
        tech_user.full_name AS technicianName,
        sr.report_id AS reportId,
+       w.job_id AS jobId,
+       TIMESTAMPDIFF(MINUTE,sr.started_at,sr.completed_at) AS durationMinutes,
        sr.work_performed AS workPerformed,
        sr.problem_found AS problemFound,
        sr.solution_applied AS solutionApplied,
        sr.checklist_result AS checklistResult,
-       sr.submitted_time AS submittedTime,
+       UNIX_TIMESTAMP(sr.submitted_time) AS submittedTimeEpoch,
        ca.cleaning_method AS cleaningMethod,
        ca.assessment_note AS assessmentNote
      FROM booking b
@@ -199,17 +221,26 @@ export async function getBookingReport(pool, bookingId, userId) {
   if (rows.length === 0) throw new HttpError(404, 'Service report not found.');
 
   const [photos] = await pool.execute(
-    `SELECT p.photo_id AS photoId, p.photo_url AS photoUrl, p.description, p.captured_time AS capturedTime
+    `SELECT p.photo_id AS photoId, p.photo_url AS photoUrl, p.description, UNIX_TIMESTAMP(p.captured_time) AS capturedTimeEpoch
      FROM photo p
      JOIN work_order w ON w.job_id = p.job_id
-     WHERE w.booking_id = ?
+     WHERE w.booking_id = ? AND p.job_id = ?
      ORDER BY p.captured_time`,
-    [bookingId],
+    [bookingId,rows[0].jobId],
   );
+  const availablePhotos=await Promise.all(photos.map(async ({capturedTimeEpoch,...photo})=>({...photo,capturedTime:timestampIso(capturedTimeEpoch),
+    photoUrl:await resolveReportPhoto(photo.photoUrl)?`/api/customer/bookings/${bookingId}/photos/${photo.photoId}`:null})));
+  const [partsUsed]=await pool.execute(`SELECT p.part_id AS partId,p.part_name AS partName,p.stock_unit AS unit,
+    SUM(CASE WHEN it.transaction_type='Stock Out' THEN it.quantity WHEN it.transaction_type='Return' THEN -it.quantity ELSE 0 END) AS quantity
+    FROM inventory_transaction it JOIN part p ON p.part_id=it.part_id WHERE it.job_id=?
+    GROUP BY p.part_id,p.part_name,p.stock_unit HAVING quantity>0 ORDER BY p.part_name`,[rows[0].jobId]);
+  const {jobId,submittedTimeEpoch,...reportRow}=rows[0];
   const [report] = await attachBookingSelections(pool,[{
-    ...rows[0],
+    ...reportRow,
+    submittedTime:timestampIso(submittedTimeEpoch),
     bookingReference: bookingReference(rows[0].bookingId, rows[0].createdAt),
-    photos,
+    photos:availablePhotos,
+    partsUsed:partsUsed.map(part=>({...part,quantity:Number(part.quantity)})),
   }]);
   return report;
 }

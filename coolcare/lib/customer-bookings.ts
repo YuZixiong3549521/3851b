@@ -34,3 +34,28 @@ export function upcomingBookings<T extends ScheduledBooking>(bookings: T[], now:
 export function nextUpcomingBooking<T extends ScheduledBooking>(bookings: T[], now: Date | string = new Date()): T | undefined {
   return upcomingBookings(bookings, now)[0];
 }
+
+/** Chronological order for the active list, including unfinished past appointments. */
+export function sortBookingsByService<T extends ScheduledBooking>(bookings: T[]): T[] {
+  return [...bookings].sort((a, b) => {
+    const first = appointmentStart(a);
+    const second = appointmentStart(b);
+    const firstValid = Number.isFinite(first);
+    const secondValid = Number.isFinite(second);
+    if (firstValid !== secondValid) return firstValid ? -1 : 1;
+    if (firstValid && first !== second) return first - second;
+    return a.preferredDate.localeCompare(b.preferredDate) || (a.bookingId ?? 0) - (b.bookingId ?? 0);
+  });
+}
+
+/** Group only visits from the same purchased annual series, retaining chronological group order. */
+export function groupCustomerBookings<T extends ScheduledBooking & { annualBundle?: { seriesId: number } | null }>(bookings: T[]) {
+  const groups = new Map<string, { key: string; annual: boolean; bookings: T[] }>();
+  for (const booking of sortBookingsByService(bookings)) {
+    const key = booking.annualBundle ? `annual-${booking.annualBundle.seriesId}` : `booking-${booking.bookingId}`;
+    const group = groups.get(key) ?? { key, annual: Boolean(booking.annualBundle), bookings: [] };
+    group.bookings.push(booking);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}

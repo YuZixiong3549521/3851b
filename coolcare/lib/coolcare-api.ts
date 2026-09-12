@@ -1,11 +1,16 @@
 import type {
   Address,
   Booking,
+  BookingDetail,
+  BookingAvailability,
+  BookingAvailabilityInput,
   BookingInput,
   BookingOptions,
   CreatedBooking,
   CreateAddressInput,
   CustomerContext,
+  Customer,
+  UpdateProfileInput,
   EmailNotification,
   Service,
   ServiceReport,
@@ -42,6 +47,18 @@ export const coolcareApi = {
     (await apiRequest<{ customer: CustomerContext['customer']; addresses: CustomerContext['addresses']; units: CustomerContext['units'] }>('/customer-context')),
   getServices: async () => (await apiRequest<{ services: Service[] }>('/services')).services,
   getBookingOptions: async () => apiRequest<BookingOptions>('/booking-options'),
+  updateProfile: async (input: UpdateProfileInput) =>
+    (await apiRequest<{ customer: Customer }>('/profile', { method: 'PATCH', body: JSON.stringify(input) })).customer,
+  updateAddress: async (id: number, input: CreateAddressInput) =>
+    (await apiRequest<{ address: Address }>(`/addresses/${id}`, { method: 'PATCH', body: JSON.stringify(input) })).address,
+  setDefaultAddress: async (id: number) =>
+    (await apiRequest<{ address: Address }>(`/addresses/${id}/default`, { method: 'PATCH', body: '{}' })).address,
+  archiveAddress: async (id: number) => apiRequest<{ success: boolean }>(`/addresses/${id}`, { method: 'DELETE' }),
+  getBookingAvailability: async (input: BookingAvailabilityInput) => {
+    const query = new URLSearchParams();
+    Object.entries(input).forEach(([key, value]) => { if (value !== undefined) query.set(key, String(value)); });
+    return apiRequest<BookingAvailability>(`/booking-availability?${query}`);
+  },
   createAddress: async (input: CreateAddressInput) => {
     const result = await apiRequest<{ address: Address }>('/addresses', { method: 'POST', body: JSON.stringify(input) });
     if (!result.address || !Number.isInteger(Number(result.address.addressId)) || Number(result.address.addressId) < 1 || typeof result.address.addressLine !== 'string') {
@@ -52,6 +69,11 @@ export const coolcareApi = {
   getBookings: async (scope?: 'upcoming') =>
     (await apiRequest<{ bookings: Booking[] }>(`/bookings${scope ? `?scope=${scope}` : ''}`)).bookings,
   getHistory: async () => (await apiRequest<{ bookings: Booking[] }>('/bookings/history')).bookings,
+  getBooking: async (id: number) => (await apiRequest<{ booking: BookingDetail }>(`/bookings/${id}`)).booking,
+  updateBookingStatus: async (id: number, status: 'Cancelled') =>
+    apiRequest<{ success: boolean }>(`/bookings/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  rescheduleBooking: async (id: number, input: { preferredDate: string; timeWindow: string }) =>
+    apiRequest<{ success: boolean }>(`/bookings/${id}/reschedule`, { method: 'PATCH', body: JSON.stringify(input) }),
   getReport: async (bookingId: number) =>
     (await apiRequest<{ report: ServiceReport }>(`/bookings/${bookingId}/report`)).report,
   createBooking: async (input: BookingInput) => {

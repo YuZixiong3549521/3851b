@@ -51,6 +51,12 @@ export async function changePublicBooking(pool,user,id,action,input){
  try{await c.beginTransaction();const customer=await lockCustomer(c,user.id);
  const [[b]]=await c.execute('SELECT * FROM booking WHERE booking_id=? AND customer_id=? FOR UPDATE',[bookingId,customer.customerId]);
  if(!b)throw new AppError('Booking not found.',404);
+ // Exact no-ops safely recover a lost response, even after later assignment.
+ // They never create another change request or status-history entry.
+ const unchanged=action==='reschedule'
+  ? String(b.preferred_service_date).slice(0,10)===patch.preferredDate&&b.preferred_time_slot===patch.timeWindow
+  : b.booking_status==='Cancelled';
+ if(unchanged){await c.commit();return {success:true};}
  const [[assigned]]=await c.execute('SELECT COUNT(*) AS count FROM assignment WHERE booking_id=?',[bookingId]);
  if(b.booking_status!=='Submitted'||assigned.count>0)throw new AppError('Only unassigned, submitted bookings can be changed. Please contact the service team.',409);
  if(action==='reschedule'){

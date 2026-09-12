@@ -5,8 +5,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CalendarCheck, Check, Clock3, MapPin, Snowflake, Wind } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
 import { BookingServiceSelection, bookingEmailMessage, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
+import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingAddressField } from '@/components/booking-address-field';
+import { EnglishDatePicker } from '@/components/english-date-picker';
+import { BookingAvailabilityNotice, bookingConflictMessage } from '@/components/booking-availability-notice';
+import { useBookingAvailability } from '@/lib/use-booking-availability';
 import { PageError, PageLoading } from '@/components/page-state';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -16,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { coolcareApi } from '@/lib/coolcare-api';
-import { formatMoney } from '@/lib/format';
+import { formatDate, formatMoney } from '@/lib/format';
 import { assertBookingConfirmation } from '@/lib/annual-booking';
 import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
 import type { Address, BookingInput, BookingOptions, CreatedBooking, CustomerContext } from '@/lib/coolcare-types';
@@ -65,6 +69,7 @@ export default function BookServicePage() {
   const selectedServices = getBookingSelection(options, selection, Math.max(1, form.numberOfUnits));
   const total = form.numberOfUnits > 0 ? selectedServices.estimate : 0;
   const minimumDate = earliestBookingDate();
+  const availability = useBookingAvailability({ serviceAddress: form.serviceAddress, selectedDate: form.preferredDate, enabled: Boolean(context && !created && step >= 2 && !retryLocked) });
 
   const submitBooking = useCallback(async (input: BookingInput) => {
     if (!context) throw new Error('Wait for your account details to load before booking.');
@@ -150,6 +155,7 @@ export default function BookServicePage() {
     if (step === 2 && (form.serviceAddress.trim().length < 5 || form.serviceAddress.trim().length > 255)) return 'Enter a service address between 5 and 255 characters.';
     if (step === 2 && (!Number.isInteger(form.numberOfUnits) || form.numberOfUnits < 1 || form.numberOfUnits > 10)) return 'Enter an AC unit count from 1 to 10.';
     if (step === 3 && bookingDateError(form.preferredDate)) return bookingDateError(form.preferredDate);
+    if (step === 3 && availability.selectedDateBlocked) return bookingConflictMessage;
     if (step === 3 && !form.timeSlot) return 'Choose a preferred time slot.';
     return '';
   }
@@ -163,6 +169,7 @@ export default function BookServicePage() {
 
   async function handleConfirm() {
     if (!selectedServices.valid || !form.timeSlot || submittingRequest.current || addressEditorOpen) return;
+    if (!pendingRequest.current && availability.selectedDateBlocked) { setFieldError(bookingConflictMessage); return; }
     try {
       await submitBooking({
         ...selectedServices.payload,
@@ -197,7 +204,7 @@ export default function BookServicePage() {
 
   return (
     <CoolCareShell>
-      <div className="mx-auto max-w-5xl px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
+      <div className="mx-auto max-w-5xl px-5 pb-28 pt-8 sm:px-8 lg:px-10 lg:py-10">
         <div className="mb-8"><p className="text-sm font-semibold text-primary">BOOK SERVICE</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Plan your maintenance visit</h1><p className="mt-2 text-sm text-muted-foreground">Choose a service, enter your address and unit count, then select a preferred schedule.</p></div>
 
         {!context && !error && <PageLoading />}
@@ -228,9 +235,11 @@ export default function BookServicePage() {
               )}
 
               {step === 3 && (
-                <div><h2 className="text-xl font-bold">Choose a preferred schedule</h2><p className="mt-1 text-sm text-muted-foreground">An administrator will confirm availability after submission.</p><p className="mt-3 rounded-xl bg-primary/5 p-3 text-sm">{bookingScheduleNotice}</p><p className="mt-3 text-xs text-muted-foreground">{bookingFrequencyNotice}</p>
-                  <div className="mt-6 grid gap-5 sm:grid-cols-2"><div><FieldLabel htmlFor="preferred-date">{selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'}</FieldLabel><Input id="preferred-date" type="date" min={minimumDate} aria-invalid={Boolean(bookingDateError(form.preferredDate))} value={form.preferredDate} onChange={(event) => { setForm((current) => ({ ...current, preferredDate: event.target.value })); setFieldError(bookingDateError(event.target.value)); }} className="mt-2 h-12" /></div><div><FieldLabel htmlFor="time-slot">Preferred time</FieldLabel><Select value={form.timeSlot || undefined} onValueChange={(value) => setForm((current) => ({ ...current, timeSlot: value as BookingInput['timeSlot'] }))}><SelectTrigger id="time-slot" className="mt-2 h-12 w-full"><SelectValue placeholder="Choose a time slot" /></SelectTrigger><SelectContent>{timeSlots.map((slot) => <SelectItem key={slot} value={slot}>{slot}</SelectItem>)}</SelectContent></Select></div></div>
-                  {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} /></div>}
+                <div><h2 className="text-xl font-bold">Choose a preferred schedule</h2><p className="mt-1 text-sm text-muted-foreground">{bookingScheduleNotice}</p>
+                  <div className="mt-6 grid gap-5 sm:grid-cols-2"><div><FieldLabel htmlFor="preferred-date">{selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'}</FieldLabel><EnglishDatePicker id="preferred-date" label={selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'} min={minimumDate} aria-invalid={Boolean(bookingDateError(form.preferredDate)) || availability.selectedDateBlocked} value={form.preferredDate} blockedDates={availability.blockedDates} onMonthChange={availability.onMonthChange} onChange={value => { setForm(current => ({ ...current, preferredDate: value })); setFieldError(bookingDateError(value)); }} className="mt-2" /></div><div><FieldLabel htmlFor="time-slot">Preferred time</FieldLabel><Select value={form.timeSlot || undefined} onValueChange={(value) => setForm((current) => ({ ...current, timeSlot: value as BookingInput['timeSlot'] }))}><SelectTrigger id="time-slot" className="mt-2 h-12 w-full"><SelectValue placeholder="Choose a time slot" /></SelectTrigger><SelectContent>{timeSlots.map((slot) => <SelectItem key={slot} value={slot}>{slot}</SelectItem>)}</SelectContent></Select></div></div>
+                  <BookingAvailabilityNotice availability={availability} />
+                  <p className="mt-3 text-xs text-muted-foreground">{bookingFrequencyNotice} The service team will confirm availability.</p>
+                  {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} collapsible /></div>}
                   <div className="mt-6"><FieldLabel htmlFor="problem-description">Problem description <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Textarea id="problem-description" value={form.problemDescription} onChange={(event) => setForm((current) => ({ ...current, problemDescription: event.target.value }))} maxLength={1000} placeholder="Tell the technician about leaks, noise, weak cooling or other concerns." className="mt-2 min-h-28 resize-y" /><p className="mt-1 text-right text-xs text-muted-foreground">{form.problemDescription.length}/1000</p></div>
                 </div>
               )}
@@ -241,7 +250,7 @@ export default function BookServicePage() {
                     <ReviewRow icon={Snowflake} label="Services" value={`${selectedServices.label}${selection.mode !== 'custom' ? ` · ${selectedServices.serviceNames}` : ''}`} />
                     <ReviewRow icon={MapPin} label="Address" value={`${form.serviceAddress}${selectedAddress?.postalCode ? `, ${selectedAddress.postalCode}` : ''}`} />
                     <ReviewRow icon={Wind} label="Number of AC units" value={String(form.numberOfUnits)} />
-                    <ReviewRow icon={CalendarCheck} label="Schedule" value={`${form.preferredDate} · ${form.timeSlot}`} />
+                    <ReviewRow icon={CalendarCheck} label="Schedule" value={`${formatDate(form.preferredDate)} · ${form.timeSlot}`} />
                     <ReviewRow icon={Clock3} label={selectedServices.isAnnual ? 'Annual estimate' : 'Visit estimate'} value={formatMoney(total)} />
                   </dl>
                   {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} /></div>}
@@ -251,14 +260,14 @@ export default function BookServicePage() {
               )}
 
               {fieldError && <FieldError className="mt-5">{fieldError}</FieldError>}
-              <div className="mt-8 flex items-center justify-between gap-3"><Button variant="ghost" disabled={step === 1 || submitting || retryLocked || addressEditorOpen} onClick={() => { setFieldError(''); setStep((current) => Math.max(1, current - 1)); }}><ArrowLeft className="size-4" aria-hidden="true" />Back</Button>{step < 4 ? <Button disabled={addressEditorOpen} onClick={nextStep}>Continue<ArrowRight className="size-4" aria-hidden="true" /></Button> : <Button onClick={handleConfirm} disabled={submitting}>{submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm booking'}<Check className="size-4" aria-hidden="true" /></Button>}</div>
+              <div className="fixed inset-x-0 bottom-[calc(64px+max(8px,env(safe-area-inset-bottom)))] z-30 flex items-center justify-between gap-3 border-t bg-background/95 px-5 py-3 backdrop-blur lg:static lg:mt-8 lg:border-0 lg:bg-transparent lg:p-0"><Button variant="ghost" disabled={step === 1 || submitting || retryLocked || addressEditorOpen} onClick={() => { setFieldError(''); setStep((current) => Math.max(1, current - 1)); }}><ArrowLeft className="size-4" aria-hidden="true" />Back</Button>{step < 4 ? <Button disabled={addressEditorOpen || (step === 3 && availability.selectedDateBlocked)} onClick={nextStep}>Continue<ArrowRight className="size-4" aria-hidden="true" /></Button> : <Button onClick={handleConfirm} disabled={submitting || (!retryLocked && availability.selectedDateBlocked)}>{submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm booking'}<Check className="size-4" aria-hidden="true" /></Button>}</div>
             </CardContent></Card>
           </>
         )}
 
         {created && (
           <>
-          <Alert className="rounded-3xl border-secondary/25 bg-[linear-gradient(145deg,#eff5ff,#ecfffb)] p-7 sm:p-10"><div className="grid size-14 place-items-center rounded-full bg-secondary text-white"><Check className="size-7" aria-hidden="true" /></div><div className="ml-0 sm:ml-2"><AlertTitle className="text-2xl font-bold">{created.annualBundle ? 'Four booking requests saved' : 'Booking submitted'}</AlertTitle><AlertDescription className="mt-3 max-w-xl text-base leading-7">{created.annualBundle ? 'Your four quarterly cleaning visits have been saved as requests. The service team will confirm each date and time.' : 'Your ' + created.serviceName + ' request has been saved. The service team will confirm availability.'}</AlertDescription><div className="mt-5 flex flex-wrap gap-6"><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Reference</p><p className="mt-1 font-mono font-bold text-foreground">{created.bookingReference}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</p><p className="mt-1 font-semibold text-amber-700">{created.status}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{created.annualBundle ? 'Annual estimate' : 'Visit estimate'}</p><p className="mt-1 font-semibold text-foreground">{formatMoney(created.annualBundle?.totalAmount ?? created.totalAmount)}</p></div></div><div className="mt-7 flex flex-wrap gap-3"><Button nativeButton={false} render={<Link href="/customer/bookings" />}>View my bookings</Button><Button variant="outline" onClick={startAnotherBooking}>Book another service</Button></div></div></Alert>
+          <Alert className="rounded-3xl border-secondary/25 bg-[linear-gradient(145deg,#eff5ff,#ecfffb)] p-7 sm:p-10"><div className="grid size-14 place-items-center rounded-full bg-secondary text-white"><Check className="size-7" aria-hidden="true" /></div><div className="ml-0 sm:ml-2"><AlertTitle className="text-2xl font-bold">{created.annualBundle ? 'Four booking requests saved' : 'Booking submitted'}</AlertTitle><AlertDescription className="mt-3 max-w-xl text-base leading-7">{created.annualBundle ? 'Your four quarterly cleaning visits have been saved as requests. The service team will confirm each date and time.' : 'Your ' + created.serviceName + ' request has been saved. The service team will confirm availability.'}</AlertDescription><div className="mt-5 flex flex-wrap gap-6"><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Reference</p><p className="mt-1 font-mono font-bold text-foreground">{created.bookingReference}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</p><p className="mt-1 font-semibold text-amber-700">{bookingStatusLabel(created.status)}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{created.annualBundle ? 'Annual estimate' : 'Visit estimate'}</p><p className="mt-1 font-semibold text-foreground">{formatMoney(created.annualBundle?.totalAmount ?? created.totalAmount)}</p></div></div><div className="mt-7 flex flex-wrap gap-3"><Button nativeButton={false} render={<Link href="/customer/bookings" />}>View my bookings</Button><Button variant="outline" onClick={startAnotherBooking}>Book another service</Button></div></div></Alert>
           {created.emailNotification && <p role="status" className="mt-4 text-sm text-muted-foreground">{bookingEmailMessage(created.emailNotification)}</p>}
           {created.annualBundle && <div className="mt-5"><AnnualBookingSummary saved={created.annualBundle} totalAmount={created.annualBundle.totalAmount} /></div>}
           </>

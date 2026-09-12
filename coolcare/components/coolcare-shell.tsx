@@ -1,10 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import {useState,useEffect} from 'react';
-import { PortalSwitcher } from '@/components/portal-switcher';
+import { useState, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import { CalendarDays, ClipboardCheck, Gauge, History, Snowflake, Sparkles } from 'lucide-react';
+import { CalendarDays, ChevronDown, ClipboardCheck, Gauge, History, Home, LogOut, MapPin, Snowflake, Sparkles, UserRound } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { PageLoading } from '@/components/page-state';
 import type { ReactNode } from 'react';
 
 const navItems = [
@@ -16,21 +18,79 @@ const navItems = [
 
 export function CoolCareShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const [name,setName]=useState('Customer');
-  useEffect(()=>{fetch('/api/public/session').then(r=>r.json()).then((d:any)=>{if(d.user?.role!=='Customer'){window.location.assign('/#/login');return;}setName(d.user.name);});},[]);
+  const [name, setName] = useState('Customer');
+  const [ready, setReady] = useState(false);
+  const [sessionError, setSessionError] = useState('');
+  const [sessionAttempt, setSessionAttempt] = useState(0);
+  const [signingOut, setSigningOut] = useState(false);
+  const sessionUserId = useRef<number | null>(null);
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const controller = new AbortController();
+    async function refreshSession() {
+      try {
+        const response = await fetch('/api/public/session', { signal: controller.signal, cache: 'no-store' });
+        if ([401, 403].includes(response.status)) { window.location.assign('/#/login'); return; }
+        if (!response.ok) throw new Error('Unable to check your session. Please retry.');
+        const result = await response.json() as { user?: { id: number; name: string; role: string } | null };
+        if (result.user?.role !== 'Customer') { window.location.assign('/#/login'); return; }
+        if (controller.signal.aborted) return;
+        if (sessionUserId.current !== null && sessionUserId.current !== result.user.id) {
+          // Another tab signed in as a different customer. Clear every draft
+          // and cached page before showing or editing the new account's data.
+          setReady(false);
+          window.location.reload();
+          return;
+        }
+        sessionUserId.current = result.user.id;
+        setName(result.user.name || 'Customer');
+        setReady(true);
+        setSessionError('');
+      } catch (reason) {
+        if (!controller.signal.aborted) setSessionError(reason instanceof Error ? reason.message : 'Unable to check your session. Please retry.');
+      }
+    }
+    const refresh = () => { setNow(new Date()); void refreshSession(); };
+    void refreshSession();
+    window.addEventListener('focus', refresh);
+    window.addEventListener('coolcare:profile-updated', refresh);
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => {
+      controller.abort();
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('coolcare:profile-updated', refresh);
+      window.clearInterval(timer);
+    };
+  }, [sessionAttempt]);
+
+  async function signOut() {
+    setSigningOut(true);
+    setSessionError('');
+    try {
+      const sessionResponse = await fetch('/api/session', { cache: 'no-store' });
+      if (!sessionResponse.ok) throw new Error('Unable to sign out. Please retry.');
+      const session = await sessionResponse.json() as { csrf: string };
+      const response = await fetch('/api/public/logout', { method: 'POST', headers: { 'X-CSRF-Token': session.csrf } });
+      if (!response.ok) throw new Error('Unable to sign out. Please retry.');
+      window.location.assign('/#/login');
+    } catch (reason) {
+      setSessionError(reason instanceof Error ? reason.message : 'Unable to sign out. Please retry.');
+      setSigningOut(false);
+    }
+  }
   const today = new Intl.DateTimeFormat('en-SG', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
     year: 'numeric',
     timeZone: 'Asia/Singapore',
-  }).format(new Date());
+  }).format(now);
 
   const isActive = (href: string) => pathname === href || (href !== '/customer' && pathname.startsWith(`${href}/`));
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[280px] border-r border-border bg-white px-5 py-7 lg:flex lg:flex-col">
+    <div className="customer-shell min-h-screen bg-background text-foreground" lang="en-SG">
+      <aside className="customer-shell-navigation fixed inset-y-0 left-0 z-30 hidden w-[280px] border-r border-border bg-white px-5 py-7 lg:flex lg:flex-col">
         <Brand />
         <nav aria-label="Primary navigation" className="space-y-1.5">
           {navItems.map(({ label, href, icon: Icon }) => {
@@ -50,19 +110,34 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="pb-24 lg:ml-[280px] lg:pb-10">
-        <header className="sticky top-0 z-20 flex h-[76px] items-center justify-between border-b border-border/80 bg-white/90 px-5 backdrop-blur-xl sm:px-8 lg:px-10">
+      <main className="customer-shell-main pb-24 lg:ml-[280px] lg:pb-10">
+        <header className="customer-shell-navigation sticky top-0 z-20 flex h-[76px] items-center justify-between border-b border-border/80 bg-white/90 px-5 backdrop-blur-xl sm:px-8 lg:px-10">
           <div className="lg:hidden"><Brand compact /></div>
           <p className="hidden text-sm font-medium text-muted-foreground lg:block">{today}</p>
-          <div className="flex items-center gap-3"><PortalSwitcher current="customer" />
+          <div className="flex items-center gap-3">
             <div className="hidden text-right sm:block"><p className="text-sm font-semibold">{name}</p><p className="text-xs text-muted-foreground">Customer</p></div>
-            <div className="grid size-10 place-items-center rounded-full bg-secondary/15 text-sm font-bold text-secondary">{name.split(/\s+/).map(s=>s[0]).slice(0,2).join('')}</div>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" className="h-auto gap-1 rounded-full p-1.5" aria-label="Open account menu" disabled={!ready || signingOut} />}>
+                <span className="grid size-10 place-items-center rounded-full bg-secondary/15 text-sm font-bold text-secondary">{name.trim().split(/\s+/).map(s => s[0]).slice(0, 2).join('').toUpperCase()}</span>
+                <ChevronDown className="size-4 text-muted-foreground" aria-hidden="true" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 p-2">
+                <DropdownMenuGroup><DropdownMenuLabel className="truncate px-2 py-2">{name}</DropdownMenuLabel>
+                  <DropdownMenuItem render={<Link href="/customer/account" />} className="gap-3 px-2 py-3"><UserRound />My profile</DropdownMenuItem>
+                  <DropdownMenuItem render={<Link href="/customer/addresses" />} className="gap-3 px-2 py-3"><MapPin />Saved addresses</DropdownMenuItem>
+                  <DropdownMenuItem render={<Link href="/" />} className="gap-3 px-2 py-3"><Home />Home</DropdownMenuItem>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => void signOut()} disabled={signingOut} className="gap-3 px-2 py-3"><LogOut />{signingOut ? 'Signing out…' : 'Sign out'}</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
-        {children}
+        {sessionError && <div role="alert" className="customer-shell-navigation mx-5 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-white p-4 text-sm"><span>{sessionError}</span><Button variant="outline" size="sm" onClick={() => setSessionAttempt(value => value + 1)}>Retry session check</Button></div>}
+        {ready ? children : !sessionError ? <div className="mx-auto max-w-5xl p-5 sm:p-8"><PageLoading /></div> : null}
       </main>
 
-      <nav aria-label="Mobile navigation" className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-border bg-white/95 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl lg:hidden">
+      <nav aria-label="Mobile navigation" className="customer-shell-navigation fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-border bg-white/95 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl lg:hidden">
         {navItems.map(({ shortLabel, href, icon: Icon }) => {
           const active = isActive(href);
           return (

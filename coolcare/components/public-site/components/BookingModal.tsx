@@ -5,6 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { BookingServiceSelection, bookingEmailMessage, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
+import { BookingAddressField } from '@/components/booking-address-field';
+import { EnglishDatePicker } from '@/components/english-date-picker';
+import { BookingAvailabilityNotice, bookingConflictMessage } from '@/components/booking-availability-notice';
+import { useBookingAvailability } from '@/lib/use-booking-availability';
+import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate, formatMoney } from '@/lib/format';
@@ -45,6 +50,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [pricesReady,setPricesReady]=useState(false);
   const [error, setError] = useState('');
   const [retryLocked, setRetryLocked] = useState(false);
+  const [addressEditorOpen, setAddressEditorOpen] = useState(false);
   const [created, setCreated] = useState<{ id: number; status: string; totalAmount: number; emailNotification?: EmailNotification; annualBundle?: AnnualBundle | null } | null>(null);
   const ownerId = useRef<string | number | null>(null);
   const lastPrefill = useRef<string | undefined>(undefined);
@@ -87,6 +93,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   const [submitting,setSubmitting]=useState(false);
   const [requestId,setRequestId]=useState('');
+  const availability = useBookingAvailability({ serviceAddress: address, selectedDate: date, enabled: Boolean(isOpen && currentUser && pricesReady && step === 'form' && !retryLocked) });
   if (!isOpen) return null;
 
   const selectedServices = getBookingSelection(options, selection, unitsCount);
@@ -101,7 +108,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     return;
   }
 
-  if(requestInFlight.current||(!pendingRequest.current && (!pricesReady||!selectedServices.valid)))return;
+  if(requestInFlight.current||addressEditorOpen||(!pendingRequest.current && (!pricesReady||!selectedServices.valid)))return;
+  if (!pendingRequest.current && availability.selectedDateBlocked) { setError(bookingConflictMessage); return; }
+  if (!pendingRequest.current && (address.trim().length < 5 || address.trim().length > 255)) { setError('Enter a service address between 5 and 255 characters.'); return; }
   if (!pendingRequest.current && bookingDateError(date)) { setError(bookingDateError(date)); return; }
   requestInFlight.current = true;
   setSubmitting(true); setError('');
@@ -130,7 +139,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setStep('success');
 
     onBookingConfirmed(
-      data.booking.annualBundle ? `Four quarterly cleaning requests saved for ${unitsCount} unit(s). The service team will confirm availability.` : `Booking request saved for ${serviceType} on ${date} (${timeSlot}) for ${unitsCount} unit(s).`
+      data.booking.annualBundle ? `Four quarterly cleaning requests saved for ${unitsCount} unit(s). The service team will confirm availability.` : `Booking request saved for ${serviceType} on ${formatDate(date)} (${timeSlot}) for ${unitsCount} unit(s).`
     );
 
   } catch (reason) {
@@ -243,18 +252,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
+                  <label htmlFor="public-preferred-date" className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
                     {selectedServices.isAnnual ? '3. First Preferred Visit Date' : '3. Preferred Date'}
                   </label>
-                  <Input
-                    type="date"
-                    min={earliestBookingDate()}
-                    aria-invalid={!retryLocked && Boolean(bookingDateError(date))}
-                    required
-                    value={date}
-                    onChange={(e) => { setDate(e.target.value); setError(bookingDateError(e.target.value)); }}
-                    className="w-full px-3.5 py-2 rounded-xl border border-ac-outline-variant bg-ac-surface-container-lowest text-sm text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20 h-[42px]"
-                  />
+                  <EnglishDatePicker id="public-preferred-date" label={selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'} min={earliestBookingDate()} aria-invalid={!retryLocked && (Boolean(bookingDateError(date)) || availability.selectedDateBlocked)} value={date} blockedDates={availability.blockedDates} onMonthChange={availability.onMonthChange} disabled={submitting || retryLocked || !pricesReady} onChange={value => { setDate(value); setError(bookingDateError(value)); }} />
+                  <BookingAvailabilityNotice availability={availability} />
                 </div>
               </div>
 
@@ -264,7 +266,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   4. Preferred Arrival Time Window
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                  {['09:00 AM - 11:00 AM', '11:30 AM - 01:30 PM', '02:00 PM - 04:00 PM', '04:30 PM - 06:30 PM'].map(
+                  {['09:00 AM - 11:00 AM', '11:00 AM - 01:00 PM', '02:00 PM - 04:00 PM', '04:00 PM - 06:00 PM'].map(
                     (slot) => (
                       <Button variant="ghost"
                         key={slot}
@@ -285,24 +287,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
 
               {/* Address & Phone */}
-              {addresses.length > 0 && <div className="space-y-2"><p className="text-sm font-semibold">Use a saved address</p>{addresses.map(item => <Button key={item.addressId} type="button" variant="outline" className="h-auto w-full justify-start whitespace-normal py-2 text-left" onClick={() => setAddress(item.addressLine)}>{item.label ? `${item.label} · ` : ''}{item.addressLine}</Button>)}</div>}
+              {currentUser && <BookingAddressField key={currentUser.id} expectedUserId={Number(currentUser.id)} addresses={addresses} value={address} onChange={setAddress} onAddressSaved={saved => { setAddresses(current => [saved, ...current.filter(item => item.addressId !== saved.addressId)]); setAddress(saved.addressLine); }} onEditingChange={setAddressEditorOpen} />}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
-                    5. Service Address & Unit Location
-                  </label>
-                  <Input
-                    type="text"
-                    required
-                    minLength={5}
-                    maxLength={255}
-                    placeholder="e.g. 742 Evergreen Terrace, Apt 4B"
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-ac-outline-variant bg-ac-surface-container-lowest text-sm text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20"
-                  />
-                </div>
-
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
                     Contact Phone Number
@@ -311,7 +297,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     type="tel"
                     required
                     maxLength={30}
-                    placeholder="+1 (555) 019-2834"
+                    placeholder="e.g. +65 9123 4567"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl border border-ac-outline-variant bg-ac-surface-container-lowest text-sm text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20"
@@ -334,12 +320,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 />
               </div>
               </fieldset>
-              {selectedServices.isAnnual && <AnnualBookingSummary firstDate={date} timeSlot={timeSlot} totalAmount={estimatedTotal} />}
+              {selectedServices.isAnnual && <AnnualBookingSummary firstDate={date} timeSlot={timeSlot} totalAmount={estimatedTotal} collapsible />}
               {selectedServices.pricingNote && <p className="text-sm text-ac-on-surface-variant">{selectedServices.pricingNote}</p>}
               {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
 
               {/* Price Summary & Action Buttons */}
-              <div className="pt-2 border-t border-ac-outline-variant/30 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="sticky bottom-0 z-10 border-t border-ac-outline-variant/30 bg-ac-surface py-3 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div>
                   <span className="text-xs text-ac-on-surface-variant block">{selectedServices.isAnnual ? 'Annual Estimate' : 'Visit Estimate'}</span>
                   <div className="flex items-baseline gap-2">
@@ -361,7 +347,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     Cancel
                   </Button>
                   <Button variant="ghost"
-                    type="submit" disabled={submitting||(!pendingRequest.current && (!pricesReady||!selectedServices.valid))}
+                    type="submit" disabled={submitting || addressEditorOpen || (!pendingRequest.current && (!pricesReady || !selectedServices.valid || availability.selectedDateBlocked))}
                     className="flex-1 sm:flex-initial px-6 py-2.5 bg-ac-primary text-ac-on-primary rounded-full text-sm font-semibold hover:opacity-90 active:scale-95 cursor-pointer border-none shadow-sm transition-all flex items-center justify-center gap-1.5"
                   >
                     {submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm Booking'}
@@ -405,7 +391,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 <span className="text-ac-on-surface-variant">Status:</span>
                 <span className="font-semibold text-ac-tertiary-container flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-ac-tertiary-container animate-ping"></span>
-                  {created?.status ?? 'Submitted'}
+                  {bookingStatusLabel(created?.status ?? 'Submitted')}
                 </span>
               </div>
             </div>

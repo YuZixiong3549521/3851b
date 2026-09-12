@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { enGB } from 'date-fns/locale';
 import {
   DayPicker,
   getDefaultClassNames,
@@ -22,7 +23,7 @@ function Calendar({
   showOutsideDays = true,
   captionLayout = 'label',
   buttonVariant = 'ghost',
-  locale,
+  locale = enGB,
   formatters,
   components,
   ...props
@@ -30,6 +31,54 @@ function Calendar({
   buttonVariant?: React.ComponentProps<typeof Button>['variant'];
 }) {
   const defaultClassNames = getDefaultClassNames();
+  const calendarComponents = React.useMemo<NonNullable<React.ComponentProps<typeof DayPicker>['components']>>(() => ({
+        Root: ({ className, rootRef, ...props }) => {
+          return (
+            <div
+              data-slot="calendar"
+              ref={rootRef}
+              className={cn(className)}
+              {...props}
+            />
+          );
+        },
+        Chevron: ({ className, orientation, ...props }) => {
+          if (orientation === 'left') {
+            return (
+              <ChevronLeftIcon
+                className={cn('cn-rtl-flip size-4', className)}
+                {...props}
+              />
+            );
+          }
+
+          if (orientation === 'right') {
+            return (
+              <ChevronRightIcon
+                className={cn('cn-rtl-flip size-4', className)}
+                {...props}
+              />
+            );
+          }
+
+          return (
+            <ChevronDownIcon className={cn('size-4', className)} {...props} />
+          );
+        },
+        DayButton: ({ ...props }) => (
+          <CalendarDayButton locale={locale} {...props} />
+        ),
+        WeekNumber: ({ children, ...props }) => {
+          return (
+            <td {...props}>
+              <div className="flex size-(--cell-size) items-center justify-center text-center">
+                {children}
+              </div>
+            </td>
+          );
+        },
+        ...components,
+      }), [locale, components]);
 
   return (
     <DayPicker
@@ -137,54 +186,7 @@ function Calendar({
         hidden: cn('invisible', defaultClassNames.hidden),
         ...classNames,
       }}
-      components={{
-        Root: ({ className, rootRef, ...props }) => {
-          return (
-            <div
-              data-slot="calendar"
-              ref={rootRef}
-              className={cn(className)}
-              {...props}
-            />
-          );
-        },
-        Chevron: ({ className, orientation, ...props }) => {
-          if (orientation === 'left') {
-            return (
-              <ChevronLeftIcon
-                className={cn('cn-rtl-flip size-4', className)}
-                {...props}
-              />
-            );
-          }
-
-          if (orientation === 'right') {
-            return (
-              <ChevronRightIcon
-                className={cn('cn-rtl-flip size-4', className)}
-                {...props}
-              />
-            );
-          }
-
-          return (
-            <ChevronDownIcon className={cn('size-4', className)} {...props} />
-          );
-        },
-        DayButton: ({ ...props }) => (
-          <CalendarDayButton locale={locale} {...props} />
-        ),
-        WeekNumber: ({ children, ...props }) => {
-          return (
-            <td {...props}>
-              <div className="flex size-(--cell-size) items-center justify-center text-center">
-                {children}
-              </div>
-            </td>
-          );
-        },
-        ...components,
-      }}
+      components={calendarComponents}
       {...props}
     />
   );
@@ -206,6 +208,7 @@ function CalendarDayButton({
 
   return (
     <Button
+      ref={ref}
       variant="ghost"
       size="icon"
       data-day={day.date.toLocaleDateString(locale?.code)}

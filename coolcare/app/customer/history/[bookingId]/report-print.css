@@ -1,0 +1,30 @@
+@media print {
+  body:has(.customer-service-report) { background: white !important; color: black !important; }
+  .customer-shell:has(.customer-service-report) .customer-shell-navigation,
+  .report-screen-only,
+  body:has(.customer-service-report) [data-slot="dialog-overlay"] { display: none !important; }
+  .customer-shell:has(.customer-service-report),
+  .customer-shell:has(.customer-service-report) .customer-shell-main,
+  .customer-service-report {
+    min-height: 0 !important; margin: 0 !important; padding: 0 !important;
+    max-width: none !important; background: white !important;
+  }
+  .customer-service-report .report-hero,
+  .customer-service-report .report-submission,
+  .customer-service-report [data-slot="card"] {
+    background: white !important; border: 1px solid #ccd2da !important;
+    border-radius: 10px !important; box-shadow: none !important; overflow: visible !important;
+  }
+  .customer-service-report .report-hero { padding: 20px !important; }
+  .customer-service-report .report-hero *,
+  .customer-service-report .report-submission *,
+  .customer-service-report [data-slot="card"] * { color: black !important; }
+  .customer-service-report .report-section-grid {
+    display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px !important;
+  }
+  .customer-service-report .report-section,
+  .customer-service-report .report-photo,
+  .customer-service-report .report-submission { break-inside: avoid; }
+  .customer-service-report .report-photos img { max-height: 65mm; object-fit: contain; }
+  .customer-service-report p { orphans: 3; widows: 3; }
+}

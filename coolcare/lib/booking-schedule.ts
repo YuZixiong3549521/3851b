@@ -37,7 +37,7 @@ export function earliestBookingDate(now: Date = new Date()): string {
 
 export function bookingDateError(value: string, now: Date = new Date()): string {
   if (!calendarDate(value)) return 'Choose a valid preferred service date.';
-  if (value < minimumBookingDate(now)) return 'Choose a weekday on or after ' + earliestBookingDate(now) + ' (at least 14 calendar days ahead, Singapore time).';
+  if (value < minimumBookingDate(now)) return 'Choose a weekday on or after ' + new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(calendarDate(earliestBookingDate(now))!) + ' (at least 14 calendar days ahead, Singapore time).';
   if (!isWeekday(value)) return 'Weekend appointments are unavailable. Choose Monday to Friday.';
   return '';
 }

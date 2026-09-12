@@ -1,5 +1,7 @@
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { EnglishDatePicker } from '@/components/english-date-picker';
+import { BookingAvailabilityNotice, bookingConflictMessage } from '@/components/booking-availability-notice';
+import { useBookingAvailability } from '@/lib/use-booking-availability';
 import { NativeSelect } from '@/components/ui/native-select';
 import { formatDate, formatMoney } from '@/lib/format';
 import { dayBeforeDate } from '@/lib/annual-booking';
@@ -118,6 +120,9 @@ const MyBookingsPage:
 
     loadBookings();
   }, [user.id]);
+
+  const editingBooking = bookings.find(booking => booking.id === editingBookingId);
+  const availability = useBookingAvailability({ serviceAddress: editingBooking?.service_address, selectedDate: editDate, excludeBookingId: editingBookingId ?? undefined, enabled: Boolean(editingBooking) });
 
   // =====================================
   // CANCEL BOOKING
@@ -267,7 +272,7 @@ const MyBookingsPage:
 
         return;
       }
-      const dateError = bookingDateError(editDate);
+      const dateError = bookingDateError(editDate) || (availability.selectedDateBlocked ? bookingConflictMessage : '');
       if (dateError) { setError(dateError); return; }
       const current = bookings.find(booking => booking.id === bookingId);
       const visit = current?.annualBundle?.visits.find(item => item.bookingId === bookingId);
@@ -820,39 +825,7 @@ const MyBookingsPage:
                       </strong>
 
                       {isEditing ? (
-                        <Input
-                          type="date"
-                          disabled={!hasAvailableDate}
-                          min={firstAllowed}
-                          aria-invalid={Boolean(editDate && bookingDateError(editDate))}
-                          max={windowEnd ? dayBeforeDate(windowEnd) : undefined}
-                          value={
-                            editDate
-                          }
-                          onChange={(
-                            e
-                          ) => { setEditDate(e.target.value); setError(bookingDateError(e.target.value)); }}
-                          style={{
-                            display:
-                              'block',
-                            marginTop:
-                              '8px',
-                            width:
-                              '100%',
-                            boxSizing:
-                              'border-box',
-                            padding:
-                              '10px 12px',
-                            border:
-                              '1px solid #d0d5dd',
-                            borderRadius:
-                              '8px',
-                            fontSize:
-                              '15px',
-                            background:
-                              'white'
-                          }}
-                        />
+                        <EnglishDatePicker label="New preferred date" disabled={!hasAvailableDate || savingBookingId === booking.id} min={firstAllowed} max={windowEnd ? dayBeforeDate(windowEnd) : undefined} aria-invalid={Boolean(editDate && bookingDateError(editDate)) || availability.selectedDateBlocked} value={editDate} blockedDates={availability.blockedDates} onMonthChange={availability.onMonthChange} onChange={value => { setEditDate(value); setError(bookingDateError(value)); }} className="mt-2" />
                       ) : (
                         <div
                           style={{
@@ -973,7 +946,7 @@ const MyBookingsPage:
                     </div>
                   </div>
 
-                  {isEditing && <p className="mt-3 rounded-xl bg-primary/5 p-3 text-sm leading-6">{bookingScheduleNotice}</p>}
+                  {isEditing && <><p className="mt-3 text-sm leading-6 text-muted-foreground">{bookingScheduleNotice}</p><BookingAvailabilityNotice availability={availability} /></>}
                   {isEditing && !hasAvailableDate && <p role="alert" className="mt-2 text-sm text-red-700">There is no eligible weekday remaining in this visit’s quarterly window. Please contact the service team.</p>}
                   {isEditing && editDate && bookingDateError(editDate) && <p role="alert" className="mt-2 text-sm text-red-700">{bookingDateError(editDate)}</p>}
                   <div className="mt-5 rounded-xl border border-primary/15 bg-primary/5 p-4 text-sm"><p className="font-semibold">{booking.annualBundle ? 'This visit estimate' : 'Visit estimate'}: {booking.total_amount == null ? 'To be confirmed' : formatMoney(booking.total_amount)}</p>{booking.annualBundle && <p className="mt-1 text-xs text-muted-foreground">{formatMoney(booking.annualBundle.totalAmount)} for all four visits. Pay after each service; additional work is quoted separately.</p>}</div>
@@ -1123,7 +1096,7 @@ const MyBookingsPage:
                               )
                             }
                             disabled={
-                              !hasAvailableDate || !editDate || Boolean(bookingDateError(editDate)) ||
+                              !hasAvailableDate || !editDate || Boolean(bookingDateError(editDate)) || availability.selectedDateBlocked ||
                               savingBookingId ===
                               booking.id
                             }

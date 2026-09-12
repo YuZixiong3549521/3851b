@@ -22,6 +22,21 @@ export type CreateAddressInput = {
   requestId?: string;
 };
 
+export type UpdateProfileInput = { fullName: string; phone: string | null; expectedUserId?: number };
+export type BookingAvailabilityInput = {
+  serviceAddress?: string;
+  addressId?: number;
+  from: string;
+  to: string;
+  excludeBookingId?: number;
+};
+export type BookingAvailability = {
+  blockedDates: string[];
+  existingBookings: Array<{ bookingId: number; preferredDate: string; timeSlot: string; status: string }>;
+  earliestDate: string;
+  timeZone: 'Asia/Singapore';
+};
+
 export type AirconUnit = {
   unitId: number;
   addressId: number | null;
@@ -78,6 +93,9 @@ export type BookingOptions = {
 
 export type Booking = {
   bookingId: number;
+  addressId: number;
+  numberOfUnits: number;
+  canModify: boolean;
   bookingReference: string;
   createdAt: string;
   preferredDate: string;
@@ -93,6 +111,11 @@ export type Booking = {
   reportId: number | null;
   units: AirconUnit[];
   annualBundle?: AnnualBundle | null;
+};
+
+export type BookingDetail = Booking & {
+  canModify: boolean;
+  statusTimeline: Array<{ status: string; changedAt: string; remarks: string | null }>;
 };
 
 export type AnnualVisit = {
@@ -143,9 +166,11 @@ export type ServiceReport = {
   submittedTime: string | null;
   cleaningMethod?: 'Regular' | 'Chemical' | null;
   assessmentNote?: string | null;
+  durationMinutes: number | null;
+  partsUsed: Array<{ partId: number; partName: string; quantity: number; unit: string | null }>;
   photos: Array<{
     photoId: number;
-    photoUrl: string;
+    photoUrl: string | null;
     description: string | null;
     capturedTime: string;
   }>;

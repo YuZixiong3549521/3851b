@@ -20,6 +20,28 @@ The customer booking page accepts a typed service address and an AC count of 1â€
 
 Dashboard UPCOMING uses the nearest appointment start at or after the current Singapore time, excluding completed, cancelled and already-started bookings. The count and card use the same sorted set, refreshed on minute changes and when returning to the page. Older unfinished requests remain available in My Bookings under Active.
 
+## Customer self-service API
+
+All endpoints below are under `/api/customer`, require a customer session, and enforce record ownership. Mutations also require the existing CSRF token.
+
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /bookings/:id` | Booking plus chronological `statusTimeline`, `addressId`, `numberOfUnits` and `canModify`. |
+| `PATCH /bookings/:id/reschedule` | `{ preferredDate, timeWindow }`; applies the same notice, weekday, quarterly-window and address quota rules as the existing public endpoint. |
+| `PATCH /bookings/:id/status` | `{ status: "Cancelled" }`; only an unassigned Submitted visit can first be cancelled. |
+| `GET /booking-availability` | `serviceAddress` and/or owned `addressId`, `from`, `to` (maximum 62 days), optional owned `excludeBookingId`; returns blocked dates, nearby existing bookings, earliest date and Singapore timezone. Advisory only. |
+| `PATCH /profile` | `{ fullName, phone }`; sign-in email remains read-only. |
+| `PATCH /addresses/:id` | Same address fields as creation; safely preserves historical locations. |
+| `PATCH /addresses/:id/default` | Makes an active owned address the default. |
+| `DELETE /addresses/:id` | Archives the address, preserving existing orders and equipment. |
+| `GET /bookings/:id/photos/:photoId` | Streams an existing photo only after booking/photo ownership checks. |
+
+Identical cancellation/rescheduling retries return success without duplicate history entries; ownership is checked first and other changes to assigned/completed visits remain prohibited. After an uncertain network failure, the UI locks the exact pending change and offers to retry it. Address edits and booking writers serialize on the customer row. Editing the physical address or postal code of a location referenced by an order creates a replacement and archives the previous address. Migration `11-customer-address-management.sql` adds archive metadata and the replacement link so exact retries recover the same replacement. Defaults are reassigned when necessary; migrations never clear existing records.
+
+Customer detail timelines and report timestamps use explicit UTC ISO values from MySQL `TIMESTAMP` data. The UI renders these in English in Asia/Singapore. Service dates are calendar dates and are not shifted by the browser timezone.
+
+Report responses include `durationMinutes`, `partsUsed` and each photo's nullable `photoUrl`. Duration is calculated only from recorded job start/end times; parts use comes from actual net stock issues. Private files belong under `coolcare/.local/service-photos/`, with relative paths recorded in `photo.photo_url`; only supported raster image extensions are served. Absolute/external paths, traversal and directory-link escapes are rejected. Missing legacy files produce `photoUrl: null`; a filename alone is not shown as real photo evidence. This adds secure reading and print/PDF styles, not a new technician upload workflow.
+
 ## Annual cleaning and historical packages
 
 The active catalogue has two service records and exactly one annual bundle. `simple_service_catalog` and `simple_package_catalog` identify these entries without renaming old services or rewriting old orders. `maintenance_package`, `package_service`, `web_package_details` and `web_service_pricing` hold the current price configuration; `booking_service` and `booking_package` preserve snapshots.
