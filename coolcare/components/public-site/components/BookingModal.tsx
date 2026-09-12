@@ -18,12 +18,12 @@ import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/
 import type { Address, AnnualBundle, BookingOptions, EmailNotification } from '@/lib/coolcare-types';
 import { apiFetch as fetch } from '../api';
 import React, { useState, useEffect, useRef } from 'react';
-import { User, PageRoute } from '../types';
+import type { BookingIntent, User, PageRoute } from '../types';
 
 interface BookingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  defaultService?: string;
+  prefill?: BookingIntent;
   currentUser: User | null;
   onNavigate: (page: PageRoute) => void;
   onBookingConfirmed: (summary: string) => void;
@@ -32,7 +32,7 @@ interface BookingModalProps {
 export const BookingModal: React.FC<BookingModalProps> = ({
   isOpen,
   onClose,
-  defaultService,
+  prefill,
   currentUser,
   onNavigate,
   onBookingConfirmed,
@@ -54,6 +54,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [created, setCreated] = useState<{ id: number; status: string; totalAmount: number; emailNotification?: EmailNotification; annualBundle?: AnnualBundle | null } | null>(null);
   const ownerId = useRef<string | number | null>(null);
   const lastPrefill = useRef<string | undefined>(undefined);
+  const lastAutomaticSymptom = useRef('');
   const requestInFlight = useRef(false);
   const pendingRequest = useRef<Record<string, unknown> | null>(null);
   useEffect(() => {
@@ -61,28 +62,46 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     let active = true;
     setPricesReady(false); setError('');
     const accountChanged = ownerId.current !== currentUser.id;
-    const prefillChanged = lastPrefill.current !== defaultService;
+    const prefillChanged = Boolean(prefill && lastPrefill.current !== prefill.key);
+    const requestLocked = !accountChanged && Boolean(pendingRequest.current || requestInFlight.current);
     if (accountChanged) {
       ownerId.current = currentUser.id;
+      lastAutomaticSymptom.current = '';
       pendingRequest.current = null;
       setRequestId(crypto.randomUUID()); setSelection(emptyBookingSelection); setStep('form'); setCreated(null); setRetryLocked(false); setAddress(''); setNotes(''); setPhone(currentUser.phone || '');
+      setUnitsCount(2); setDate(earliestBookingDate()); setTimeSlot('09:00 AM - 11:00 AM');
     }
     Promise.all([coolcareApi.getBookingOptions(), coolcareApi.getCustomerContext()]).then(([nextOptions, context]) => { if (active) {
       if (context.customer.userId !== Number(currentUser.id)) throw new Error('Your signed-in account changed. Reload before booking.');
-      if (!retryLocked || accountChanged) setOptions(nextOptions);
+      if (!requestLocked) setOptions(nextOptions);
       setAddresses(context.addresses); setPricesReady(true);
       setAddress(value => value || context.addresses.find(item => item.isDefault)?.addressLine || context.addresses[0]?.addressLine || '');
-      if (!retryLocked && defaultService) setSelection(value => {
-        if (!prefillChanged && !accountChanged && (value.serviceIds.length || value.packageId)) return value;
+      const defaultService = prefill?.serviceName;
+      if (!requestLocked && (prefillChanged || accountChanged) && defaultService) setSelection(value => {
         const bundle = nextOptions.bundles.find(item => item.name.toLowerCase() === defaultService.toLowerCase());
         if (bundle) return { mode: 'bundle', packageId: bundle.packageId, serviceIds: bundle.serviceIds };
         const match = nextOptions.services.find(item => item.name.toLowerCase() === defaultService.toLowerCase());
         return match ? { mode: 'custom', serviceIds: [match.serviceId] } : value;
       });
-      lastPrefill.current = defaultService;
+      if (!requestLocked && (prefillChanged || accountChanged) && prefill) {
+        if (Number.isInteger(prefill.numberOfUnits) && prefill.numberOfUnits! >= 1 && prefill.numberOfUnits! <= 10) setUnitsCount(prefill.numberOfUnits!);
+        if (prefill.symptoms?.trim()) {
+          const symptom = prefill.symptoms.trim();
+          const previousSymptom = lastAutomaticSymptom.current;
+          setNotes(value => {
+            let existing = accountChanged ? '' : value;
+            // Replace only the untouched automatic note; keep customer-written instructions.
+            if (previousSymptom && (existing === previousSymptom || existing.startsWith(previousSymptom + '\n'))) existing = existing.slice(previousSymptom.length).trimStart();
+            return existing.includes(symptom) ? existing : [symptom, existing].filter(Boolean).join('\n').slice(0, 1000);
+          });
+          lastAutomaticSymptom.current = symptom;
+        }
+        lastPrefill.current = prefill.key;
+      }
+      if (requestLocked) setError('A previous request still needs confirmation. Retry with the same details before starting another booking.');
     } }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load prices. Please reopen this window to retry.'); });
     return () => { active = false; };
-  }, [isOpen, currentUser?.id, defaultService]);
+  }, [isOpen, currentUser?.id, prefill]);
 
   // Pre-fill user contact info if available
   useEffect(() => {
@@ -157,6 +176,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     if (step !== 'success') { onClose(); return; }
     setStep('form');
     setRequestId(crypto.randomUUID()); setSelection(emptyBookingSelection); setCreated(null); setNotes('');
+    lastAutomaticSymptom.current = '';
     onClose();
   };
 
@@ -164,7 +184,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     <Dialog open onOpenChange={(open) => { if (!open && !submitting) handleFinish(); }}>
       {/* Modal Container: 650px - 800px on desktop */}
       <DialogContent showCloseButton={false} className="ac-site bg-ac-surface w-[calc(100%-2rem)] max-w-2xl sm:max-w-3xl rounded-2xl shadow-2xl border border-ac-outline-variant/40 p-5 sm:p-7 md:p-8 max-h-[92dvh] flex flex-col overflow-hidden" aria-describedby={undefined}>
-        <DialogTitle className="sr-only">Schedule an AC Care Service</DialogTitle>
+        <DialogTitle className="sr-only">Schedule a CoolCare Service</DialogTitle>
         {/* Close button */}
         <Button variant="ghost"
           type="button"
@@ -184,7 +204,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
               <div>
                 <h2 className="text-xl sm:text-2xl font-bold text-ac-on-background">
-                  Schedule an AC Care Service
+                  Schedule a CoolCare Service
                 </h2>
                 <p className="text-xs sm:text-sm text-ac-on-surface-variant">
                   Choose your services, preferred time window and property details.
@@ -290,10 +310,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               {currentUser && <BookingAddressField key={currentUser.id} expectedUserId={Number(currentUser.id)} addresses={addresses} value={address} onChange={setAddress} onAddressSaved={saved => { setAddresses(current => [saved, ...current.filter(item => item.addressId !== saved.addressId)]); setAddress(saved.addressLine); }} onEditingChange={setAddressEditorOpen} />}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
+                  <label htmlFor="public-booking-phone" className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
                     Contact Phone Number
                   </label>
                   <Input
+                    id="public-booking-phone"
                     type="tel"
                     required
                     maxLength={30}
@@ -307,10 +328,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
               {/* Notes */}
               <div>
-                <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
+                <label htmlFor="public-booking-notes" className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
                   Unit Symptoms / Technician Instructions (Optional)
                 </label>
                 <Textarea
+                  id="public-booking-notes"
                   rows={2}
                   maxLength={1000}
                   placeholder="e.g. Master bedroom unit has weak airflow, water drips occasionally from right drain..."
@@ -399,10 +421,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             {created?.emailNotification && <p role="status" className="text-sm text-ac-on-surface-variant">{bookingEmailMessage(created.emailNotification)}</p>}
             <Button variant="ghost"
               type="button"
-              onClick={handleFinish}
+              onClick={() => { handleFinish(); onNavigate('bookings'); }}
               className="px-8 py-3 bg-ac-primary text-ac-on-primary rounded-full text-sm font-semibold hover:opacity-90 active:scale-95 transition-all cursor-pointer border-none shadow-sm"
             >
-              Done & Return to Home
+              View My Bookings
             </Button>
           </div>
         )}

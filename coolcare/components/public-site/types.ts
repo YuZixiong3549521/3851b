@@ -2,6 +2,18 @@ import type { AnnualBundle } from '@/lib/coolcare-types';
 
 export type PageRoute = 'home' | 'login' | 'register' | 'bookings';
 
+export interface BookingPrefillOptions {
+  numberOfUnits?: number;
+  symptoms?: string;
+}
+
+export type OpenBooking = (serviceName?: string, options?: BookingPrefillOptions) => void;
+
+export interface BookingIntent extends BookingPrefillOptions {
+  serviceName?: string;
+  key: string;
+}
+
 export interface User {
   id: number | string;
   name: string;

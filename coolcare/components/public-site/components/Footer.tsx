@@ -1,103 +1,69 @@
-
+import React from 'react';
 import { SiteIcon } from '@/components/ui/site-icon';
 import { Button } from '@/components/ui/button';
-import React from 'react';
-import { PageRoute } from '../types';
+import { customerSupportEmail } from '@/lib/customer-support';
+import type { OpenBooking, PageRoute, User } from '../types';
 
 interface FooterProps {
   onNavigate: (page: PageRoute, hash?: string) => void;
-  onOpenBooking: (serviceName?: string) => void;
+  onOpenBooking: OpenBooking;
+  currentUser: User | null;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenBooking }) => {
-  const handleNav = (e: React.MouseEvent, page: PageRoute, hash?: string) => {
-    e.preventDefault();
-    onNavigate(page, hash);
-  };
+export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenBooking, currentUser }) => {
+  const isCustomer = !currentUser?.role || currentUser.role === 'Customer';
+  const dashboard = currentUser?.role === 'Technician' ? '/technician/index.html'
+    : currentUser?.role === 'Admin' ? '/admin/inventory' : '/customer';
+  const linkClass = 'h-auto min-h-11 justify-start whitespace-normal px-0 py-2 text-left text-body-md text-ac-on-surface-variant hover:text-ac-primary';
 
   return (
-    <footer className="bg-ac-surface-container full-width relative border-t border-ac-outline-variant" id="contact">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-md py-xl px-gutter max-w-container-max mx-auto">
-        {/* Brand Column */}
-        <div className="flex flex-col gap-sm">
-          <Button variant="ghost"
-            onClick={(e) => handleNav(e, 'home')}
-            className="font-headline-sm text-headline-sm font-bold text-ac-primary flex items-center gap-xs mb-xs cursor-pointer border-none bg-transparent p-0 text-left"
-          >
-            <SiteIcon className=" text-ac-primary text-[28px]">ac_unit</SiteIcon>
-            AC Care
+    <footer id="contact" className="scroll-mt-24 border-t border-ac-outline-variant bg-ac-surface-container">
+      <div className="mx-auto grid max-w-container-max grid-cols-1 gap-8 px-gutter py-xl sm:grid-cols-2 lg:grid-cols-4">
+        <div>
+          <Button variant="ghost" onClick={() => onNavigate('home', 'home')} aria-label="CoolCare home"
+            className="mb-3 h-11 gap-2 px-0 text-headline-sm font-bold text-ac-primary">
+            <SiteIcon className="text-[28px]">ac_unit</SiteIcon>CoolCare
           </Button>
-          <p className="font-body-md text-body-md text-ac-on-surface-variant">
-            Reliable Air Conditioning Service, Made Simple.
-          </p>
-
+          <p className="max-w-xs text-body-md text-ac-on-surface-variant">Air conditioning care for your home in Singapore.</p>
+          <p className="mt-3 max-w-xs text-body-sm text-ac-on-surface-variant">Cleaning, repairs and one annual plan for quarterly cleaning.</p>
         </div>
 
-        {/* Quick Links */}
-        <div className="flex flex-col gap-sm">
-          <h4 className="font-label-md text-label-md font-semibold text-ac-on-background mb-xs">Quick Links</h4>
-          <Button variant="ghost"
-            onClick={(e) => handleNav(e, 'home', 'home')}
-            className="font-body-md text-body-md text-ac-on-surface-variant hover:text-ac-primary transition-all text-left bg-transparent border-none p-0 cursor-pointer"
-          >
-            Home
-          </Button>
-          <Button variant="ghost"
-            onClick={(e) => handleNav(e, 'home', 'about')}
-            className="font-body-md text-body-md text-ac-on-surface-variant hover:text-ac-primary transition-all text-left bg-transparent border-none p-0 cursor-pointer"
-          >
-            About Us
-          </Button>
-          <Button variant="ghost"
-            onClick={(e) => handleNav(e, 'home', 'services')}
-            className="font-body-md text-body-md text-ac-on-surface-variant hover:text-ac-primary transition-all text-left bg-transparent border-none p-0 cursor-pointer"
-          >
-            Services
-          </Button>
-          <Button variant="ghost"
-            onClick={(e) => handleNav(e, 'home', 'promotions')}
-            className="font-body-md text-body-md text-ac-on-surface-variant hover:text-ac-primary transition-all text-left bg-transparent border-none p-0 cursor-pointer"
-          >
-            Pricing
-          </Button>
+        <nav aria-label="Footer navigation">
+          <h2 className="mb-2 text-label-md font-semibold text-ac-on-background">Explore</h2>
+          <div className="flex flex-col items-start">
+            <Button variant="ghost" onClick={() => onNavigate('home', 'services')} className={linkClass}>Services & pricing</Button>
+            <Button variant="ghost" onClick={() => onNavigate('home', 'how-it-works')} className={linkClass}>How it works</Button>
+            <Button variant="ghost" onClick={() => onNavigate('home', 'faq')} className={linkClass}>FAQs</Button>
+          </div>
+        </nav>
+
+        <div>
+          <h2 className="mb-2 text-label-md font-semibold text-ac-on-background">Your account</h2>
+          <div className="flex flex-col items-start">
+            {currentUser ? <>
+              <a href={dashboard} className="inline-flex min-h-11 items-center py-2 text-body-md text-ac-on-surface-variant hover:text-ac-primary">Dashboard</a>
+              {isCustomer && <Button variant="ghost" onClick={() => onNavigate('bookings')} className={linkClass}>My Bookings</Button>}
+            </> : <>
+              <Button variant="ghost" onClick={() => onNavigate('login')} className={linkClass}>Login</Button>
+              <Button variant="ghost" onClick={() => onNavigate('register')} className={linkClass}>Create account</Button>
+            </>}
+            {isCustomer && <Button variant="ghost" onClick={() => onOpenBooking()} className={linkClass}>Book a service</Button>}
+          </div>
         </div>
 
-        {/* Customer Actions */}
-        <div className="flex flex-col gap-sm">
-          <h4 className="font-label-md text-label-md font-semibold text-ac-on-background mb-xs">Customer Actions</h4>
-          <Button variant="ghost"
-            onClick={(e) => handleNav(e, 'login')}
-            className="font-body-md text-body-md text-ac-on-surface-variant hover:text-ac-primary transition-all text-left bg-transparent border-none p-0 cursor-pointer"
-          >
-            Login
-          </Button>
-          <Button variant="ghost"
-            onClick={(e) => handleNav(e, 'register')}
-            className="font-body-md text-body-md text-ac-on-surface-variant hover:text-ac-primary transition-all text-left bg-transparent border-none p-0 cursor-pointer"
-          >
-            Create Account
-          </Button>
-          <Button variant="ghost"
-            onClick={() => onOpenBooking()}
-            className="font-body-md text-body-md text-ac-on-surface-variant hover:text-ac-primary transition-all text-left bg-transparent border-none p-0 cursor-pointer"
-          >
-            Book Service
-          </Button>
-        </div>
-
-        {/* Booking help */}
-        <div className="flex flex-col gap-sm">
-          <h4 className="font-label-md text-label-md font-semibold text-ac-on-background mb-xs">Booking Help</h4>
-          <p className="font-body-md text-body-md text-ac-on-surface-variant">Sign in to review your appointments. Unassigned requests can be cancelled or rescheduled in My Bookings.</p>
-          <Button variant="ghost" onClick={(event) => handleNav(event, 'bookings')} className="justify-start px-0 text-ac-primary">Open My Bookings</Button>
+        <div>
+          <h2 className="mb-3 text-label-md font-semibold text-ac-on-background">Contact support</h2>
+          <p className="text-body-md text-ac-on-surface-variant">Questions about a service or an existing booking? Email our team.</p>
+          <a href={`mailto:${customerSupportEmail}?subject=${encodeURIComponent('CoolCare service enquiry')}`}
+            className="mt-3 inline-flex min-h-11 items-center gap-2 break-all text-body-md font-semibold text-ac-primary underline-offset-4 hover:underline">
+            <SiteIcon>mail</SiteIcon>{customerSupportEmail}
+          </a>
+          <p className="mt-3 text-body-sm text-ac-on-surface-variant">Service visits: Monday–Friday.<br />Closed on Saturdays and Sundays.</p>
+          <p className="mt-2 text-body-sm text-ac-on-surface-variant">For booking enquiries, include your booking reference.</p>
         </div>
       </div>
-
-      {/* Copyright */}
-      <div className="border-t border-ac-outline-variant/30 py-md px-gutter text-center">
-        <p className="font-body-md text-body-md text-ac-on-surface-variant">
-          © {new Date().getFullYear()} AC Care. Reliable Air Conditioning Service, Made Simple.
-        </p>
+      <div className="border-t border-ac-outline-variant/40 px-gutter py-6 text-center text-body-sm text-ac-on-surface-variant">
+        © {new Date().getFullYear()} CoolCare. Air conditioning care, made simple.
       </div>
     </footer>
   );

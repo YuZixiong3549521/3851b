@@ -117,7 +117,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     console.error('Registration error:', error);
 
     setErrorMessage(
-      'Unable to connect to the AC Care server. Please make sure the server is running.'
+      'Unable to connect to the CoolCare server. Please make sure the server is running.'
     );
   } finally {
     setIsLoading(false);
@@ -158,13 +158,13 @@ const handleSubmit = async (e: React.FormEvent) => {
               className="inline-flex items-center gap-1.5 text-2xl font-bold text-ac-primary mb-1 cursor-pointer border-none bg-transparent"
             >
               <SiteIcon className=" text-ac-primary text-[32px]">ac_unit</SiteIcon>
-              AC Care
+              CoolCare
             </Button>
             <h1 className="text-2xl font-bold text-ac-on-background mt-1">
               Create Your Account
             </h1>
             <p className="text-sm text-ac-on-surface-variant mt-1.5">
-              Join thousands of satisfied homeowners and enjoy seamless air conditioner maintenance
+              Book aircon services, manage your addresses and keep your maintenance reports in one place
             </p>
           </div>
 
@@ -231,7 +231,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                     id="reg-phone"
                     type="tel"
                     required
-                    placeholder="+1 (555) 019-2834"
+                    placeholder="+65 9123 4567"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     className="w-full pl-10 pr-3 py-2.5 rounded-lg border border-ac-outline-variant bg-ac-surface-container-lowest text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20 text-sm transition-all"
@@ -325,7 +325,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                   className="w-4 h-4 mt-0.5 rounded text-ac-primary focus:ring-ac-primary border-ac-outline-variant accent-ac-primary cursor-pointer shrink-0"
                 />
                 <span className="text-xs text-ac-on-surface-variant leading-normal">
-                  I agree to AC Care's{' '}
+                  I agree to CoolCare's{' '}
                   <span className="text-ac-primary font-medium underline">Terms of Service</span> and{' '}
                   <span className="text-ac-primary font-medium underline">Privacy Policy</span>, and consent to service notification SMS/emails.
                 </span>
@@ -370,7 +370,7 @@ const handleSubmit = async (e: React.FormEvent) => {
             <SiteIcon className=" text-[20px] text-ac-primary block mb-1">
               verified
             </SiteIcon>
-            <span className="font-medium">Certified Techs</span>
+            <span className="font-medium">Service Tracking</span>
           </div>
           <div className="p-2.5 bg-ac-surface/80 rounded-xl border border-ac-outline-variant/30 backdrop-blur-xs">
             <SiteIcon className=" text-[20px] text-ac-tertiary-container block mb-1">
@@ -382,11 +382,10 @@ const handleSubmit = async (e: React.FormEvent) => {
             <SiteIcon className=" text-[20px] text-ac-primary block mb-1">
               local_offer
             </SiteIcon>
-            <span className="font-medium">20% First Promo</span>
+            <span className="font-medium">Quarterly Care</span>
           </div>
         </div>
       </div>
     </div>
   );
 };
-

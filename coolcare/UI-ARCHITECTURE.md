@@ -14,6 +14,14 @@ Page layouts, service content, English copy, URLs and API contracts are preserve
 
 Native select elements and native checkbox/radio inputs are intentionally exposed through shared styled controls to retain browser form semantics. Booking, password recovery and technician details use the shared Base UI dialog with keyboard dismissal and modal focus management.
 
+## Public homepage
+
+The CoolCare homepage retains the imported blue/white visual style and images, with a single services-and-pricing section, service process, FAQ and real email contact. Prices come from `GET /api/public/offers`; quantity changes recalculate the visit/annual estimate without replacing a failed catalogue response with sample prices. `lib/homepage-offers.ts` also maps symptom IDs to the appropriate service, including Needs Cleaning → Cleaning.
+
+Booking intent (service, quantity and symptoms) stays in React memory through the homepage login/register flow, then prefills the authenticated booking dialog. A generic Book a service action preserves an unfinished draft. An uncertain submitted request retains its original payload and request UUID until confirmation is resolved. Refreshing the page does not preserve an unsubmitted intent. Normal login opens the role dashboard; all customer My Bookings entry points and old `/#/bookings` bookmarks resolve to `/customer/bookings`. Old `#about` and `#promotions` anchors lead to the process and combined services sections respectively.
+
+Account navigation uses the shared dropdown and a compact mobile disclosure. Signed-in customers see Dashboard/My Bookings instead of account creation prompts. The contact section uses `lib/customer-support.ts`; clicking the email opens the user's mail application, without sending automatically. Public FAQs explain the same 14-day, weekday, rolling-address and self-service change rules enforced by the API.
+
 ## Customer assistant
 
 The authenticated customer Dashboard exposes **Ask CoolCare Assistant**. This is a button-guided React assistant, with no external AI provider or API key. It reuses the shared dialog, buttons and fields, preserving the Dashboard layout.
@@ -45,7 +53,9 @@ React calls `/api/...`; Express validates the request and session, checks author
 
 The booking workflow extension uses the same UI primitives and adds `booking-service-selection.tsx` shared by all three customer booking surfaces, plus `inventory-transaction-details.tsx` for admin corrections. API contracts, package snapshots, stock audit and mail setup are documented in [BOOKING-WORKFLOWS.md](BOOKING-WORKFLOWS.md).
 
-Current validation covers 66 unit/integration tests, TypeScript and both builds. Real MySQL checks cover address saving/deduplication, count-based and legacy booking inputs, rolling address limits, customer locks, the three-choice catalogue, 14-day lead time and weekdays, annual dates and price allocations, all-or-nothing four-visit creation/email queuing, expired-date retries, quarterly rescheduling, cancellation, historical data retention, stock audit and technician assessment authorization/versioning. Singapore midnight boundaries and nearest upcoming appointment sorting are unit-tested. Mutating automated fixtures roll back.
+Current validation covers 69 unit/integration tests, TypeScript and both builds. Real MySQL checks cover address saving/deduplication, count-based and legacy booking inputs, rolling address limits, customer locks, the three-choice catalogue, 14-day lead time and weekdays, annual dates and price allocations, all-or-nothing four-visit creation/email queuing, expired-date retries, quarterly rescheduling, cancellation, historical data retention, stock audit and technician assessment authorization/versioning. Singapore midnight boundaries and nearest upcoming appointment sorting are unit-tested. Mutating automated fixtures roll back.
+
+Homepage checks cover desktop (1280px) and phone (390px) layouts, live catalogue estimates for 1–3 units, annual per-visit amounts, guest service/quantity/symptom selection through register/login navigation, authenticated draft reopening, replacing automatic symptoms while preserving written notes, FAQ disclosure, mobile menu keyboard dismissal, real support mail links and legacy My Bookings login redirects. This browser pass does not submit new bookings or send mail; existing MySQL orders remain unchanged. Price validation and issue-to-service mapping also have unit regression coverage.
 
 The address-flow browser check uses a new customer with no equipment, saves and rereads an address, creates four annual visits and a typed-address single visit, verifies their real MySQL quantities/prices/unit links, checks nearest-upcoming selection, and corrects a definitively rejected WebMCP request. Desktop and 390px layouts were inspected. The isolated QA account, addresses and bookings were removed afterward.
 

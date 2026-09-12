@@ -135,7 +135,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             Back to Home
           </Button>
           <span className="text-xs text-ac-on-surface-variant font-medium whitespace-nowrap">
-            AC Care Secure Access
+            CoolCare Secure Access
           </span>
         </div>
 
@@ -159,7 +159,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               className="inline-flex items-center gap-1.5 text-2xl font-bold text-ac-primary mb-1 cursor-pointer border-none bg-transparent"
             >
               <SiteIcon className=" text-ac-primary text-[32px]">ac_unit</SiteIcon>
-              AC Care
+              CoolCare
             </Button>
             <h1 className="text-2xl font-bold text-ac-on-background mt-1">
               Welcome Back
@@ -359,14 +359,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <SiteIcon className=" text-[16px] text-ac-tertiary-container">
               lock
             </SiteIcon>
-            256-bit SSL Encrypted
+            Your Service Account
           </span>
           <span>•</span>
           <span className="flex items-center gap-1">
             <SiteIcon className=" text-[16px] text-ac-primary">
               verified_user
             </SiteIcon>
-            Official AC Care Portal
+            Official CoolCare Portal
           </span>
         </div>
       </div>

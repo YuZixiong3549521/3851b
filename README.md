@@ -1,6 +1,6 @@
-# CoolCare / AC Care 整合网站
+# CoolCare 整合网站
 
-整合版位于 `coolcare/`，原来的项目和 `accare/` 保留为来源备份。网站界面全英文，主页使用上传的 AC Care 设计，客户、技师、库存页面保留各自原设计。
+整合版位于 `coolcare/`，原来的项目和 `accare/` 保留为来源备份。网站界面全英文，主页沿用上传设计的蓝白配色、图片和卡片风格，品牌统一为 CoolCare。客户、技师、库存页面保留各自原设计。
 
 ## 启动
 
@@ -18,9 +18,9 @@ npm start
 
 | 页面 | 地址 |
 | --- | --- |
-| AC Care 主页 | `/` |
+| CoolCare 主页 | `/` |
 | 登录 / 注册 | `/#/login` / `/#/register` |
-| 主页预约管理（取消、改期） | `/#/bookings` |
+| 客户预约管理（取消、改期） | `/customer/bookings`（旧 `/#/bookings` 自动转入） |
 | 客户 Dashboard / 预约 / 历史 | `/customer` |
 | 技师工单 | `/technician/index.html` |
 | 库存后台 | `/admin/inventory` |
@@ -32,6 +32,8 @@ npm start
 - 管理员：`norshida@coolcare.demo`
 
 主页登录后按账号角色进入对应区域；客户可通过页头 Dashboard 进入原客户中心。也支持注册新客户。旧 SQLite 导入账号保留原有 bcrypt 密码，不覆盖同邮箱现有账号。
+
+主页将服务和报价合并展示，空调数量选择实时使用 `/api/public/offers` 的目录价格计算清洗、维修检查、年度套餐总价及每次费用；目录加载失败时提示重试，不显示虚构价格。游客选定的服务、数量及故障说明在本次页面的登录/注册流程中保留，登录后继续预约。普通客户登录进入 Dashboard，所有 My Bookings 入口进入同一客户订单页。主页提前展示至少 14 天、工作日、同地址滚动 7 天最多两次及等待确认的预约规则。
 
 客户登录后，在 `/customer` Dashboard 点击 **Ask CoolCare Assistant** 打开英文按钮式预约助手。可按服务、数量、地址及联系方式、时间逐步创建预约。提交前有摘要确认，成功后显示真实订单编号并更新 Dashboard，还可开始另一笔预约。预约历史和订单详情仍可在客户预约页面查看。助手复用现有 MySQL 接口和权限校验，无需外部 AI API key；对话本身不存入数据库。
 
