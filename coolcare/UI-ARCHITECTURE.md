@@ -18,10 +18,10 @@ Native select elements and native checkbox/radio inputs are intentionally expose
 
 The authenticated customer Dashboard exposes **Ask CoolCare Assistant**. This is a button-guided React assistant, with no external AI provider or API key. It reuses the shared dialog, buttons and fields, preserving the Dashboard layout.
 
-- Booking history uses `GET /api/customer/bookings` and includes active, completed and cancelled bookings. Customers can filter/search references and inspect their own booking details.
-- Booking creation walks through service, unit count, preferred schedule, address/contact and a review step. Offers come from `GET /api/public/offers`; `POST /api/public/bookings` persists the confirmed request in the existing MySQL transaction. Saved addresses are optional, so new customers can book too.
+- The assistant focuses on creating bookings. Booking history and existing order details remain available in the customer booking pages.
+- Booking creation walks through service, unit count, preferred schedule, address/contact and a review step. Services, bundles and owned memberships come from `GET /api/customer/booking-options`; `POST /api/public/bookings` persists the confirmed request in the existing MySQL transaction. Saved addresses are optional, so new customers can book too.
 - Authentication, customer ownership and CSRF remain enforced by the existing API. A stable request UUID is reused after uncertain submission failures; editing is locked until the request is resolved, avoiding a second booking on retry. Closing/reopening preserves an unfinished draft for the same customer; switching customers clears it.
-- Successful creation displays the server booking ID, status and amount, refreshes the Dashboard and can immediately be looked up in booking history. Conversation state stays in memory; no chat transcript is stored in the seeded chatbot tables.
+- Successful creation displays the server booking ID, status and amount, refreshes the Dashboard and offers to start another booking. Conversation state stays in memory; no chat transcript is stored in the seeded chatbot tables.
 
 ## Data boundary (existing portals)
 
