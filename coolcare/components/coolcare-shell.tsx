@@ -27,13 +27,15 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const controller = new AbortController();
+    const loginPath = () => new URLSearchParams(window.location.search).get('assistant') === 'resume'
+      ? '/#/login?returnTo=assistant' : '/#/login';
     async function refreshSession() {
       try {
         const response = await fetch('/api/public/session', { signal: controller.signal, cache: 'no-store' });
-        if ([401, 403].includes(response.status)) { window.location.assign('/#/login'); return; }
+        if ([401, 403].includes(response.status)) { window.location.assign(loginPath()); return; }
         if (!response.ok) throw new Error('Unable to check your session. Please retry.');
         const result = await response.json() as { user?: { id: number; name: string; role: string } | null };
-        if (result.user?.role !== 'Customer') { window.location.assign('/#/login'); return; }
+        if (result.user?.role !== 'Customer') { window.location.assign(loginPath()); return; }
         if (controller.signal.aborted) return;
         if (sessionUserId.current !== null && sessionUserId.current !== result.user.id) {
           // Another tab signed in as a different customer. Clear every draft

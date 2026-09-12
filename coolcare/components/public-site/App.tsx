@@ -34,6 +34,7 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loginNotice, setLoginNotice] = useState<string | null>(null);
   const [prefilledLoginEmail, setPrefilledLoginEmail] = useState('');
+  const [resumeAssistant, setResumeAssistant] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -56,6 +57,11 @@ export default function App() {
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash;
+      // Only this named local destination is accepted, never an arbitrary redirect URL.
+      if (hash.split('?')[0] === '#/login' && new URLSearchParams(hash.split('?')[1] || '').get('returnTo') === 'assistant') {
+        setResumeAssistant(true);
+        setLoginNotice('Sign in to continue your saved booking in CoolCare Assistant.');
+      }
       setCurrentPage(hash.startsWith('#/login') || hash === '#login' ? 'login'
         : hash.startsWith('#/register') || hash === '#register' ? 'register'
         : hash.startsWith('#/bookings') || hash === '#bookings' ? 'bookings' : 'home');
@@ -145,7 +151,7 @@ export default function App() {
       setBookingModalOpen(true);
       setToastMessage(`Welcome back, ${user.name}! Your service selection is ready.`);
     } else {
-      window.location.assign(pendingAction === 'bookings' ? '/customer/bookings' : '/customer');
+      window.location.assign(pendingAction === 'bookings' ? '/customer/bookings' : resumeAssistant ? '/customer?assistant=resume' : '/customer');
     }
   };
 
@@ -163,6 +169,7 @@ export default function App() {
       if (!response.ok) throw new Error();
       setCurrentUser(null);
       setPendingAction(null);
+      setResumeAssistant(false);
       setBookingPrefill(undefined);
       setBookingModalOpen(false);
       setToastMessage('You have been signed out.');

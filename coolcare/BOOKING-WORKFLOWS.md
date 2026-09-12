@@ -10,6 +10,24 @@
 - Registered, signed-in customers choose exactly one of **Cleaning**, **Repair** and **Annual Cleaning Bundle**. The public booking dialog, customer booking page and assistant share this selection model. New requests cannot use retired services, memberships or old multi-service selections to bypass it.
 - Prices come from the database. Each booking stores service and price snapshots; historical single-service and multi-service orders remain readable. Current prices and the Singapore market references used to choose them are documented in [SERVICE-PRICING.md](SERVICE-PRICING.md).
 
+## Saved customer assistant API
+
+The button-guided assistant is available only after customer sign-in. These endpoints live under `/api/customer/assistant`, use the existing session and CSRF middleware, and access only the signed-in customer's records. Migration `12-customer-assistant.sql` adds `assistant_booking_draft`; apply it with the existing `npm run db:up` flow. Existing bookings and older creation APIs are preserved.
+
+| Endpoint | Request and behavior |
+| --- | --- |
+| `GET /draft` | Returns `{ state: null }` until the first save, otherwise the current account-owned state. Does not create a row. |
+| `PUT /draft` | `{ expectedUserId, draftId, revision, draft }`; use `null` and `0` only for the first save. Allows incomplete drafts; saves serialize behind the customer lock. |
+| `POST /review` | `{ expectedUserId, draftId, revision }`; validates phone, address, service and every visit, then stores a current quote. |
+| `POST /confirm` | The review identity plus `quoteId`; rechecks schedule and locked catalogue terms, creates the order(s) and receipt in one transaction. |
+| `POST /new` | Current identity and revision; explicitly archives the current draft and creates an empty one. Stale tabs cannot reset a newer draft. |
+
+The `draft` fields are `step`, `serviceId` or `packageId`, `numberOfUnits`, `serviceAddress`, `phone`, `preferredDate`, `timeWindow` and `notes`. `state` includes `draftId`, `userId`, `revision`, `status` (`editing`, `reviewed`, `completed`), `requestId`, `draft`, `quote`, `booking` and `updatedAt`. A quote includes `quoteId`, SGD total, service name and every visit's number, date and amount. The receipt uses the existing confirmed-booking shape and actual booking ID.
+
+Revision conflicts return HTTP 409 with `code: "DRAFT_CONFLICT"` and the current state. Schedule conflicts use `SCHEDULE_CONFLICT` and `details.conflicts` containing visit numbers, dates and messages. Format errors use `VALIDATION_ERROR` with `details.fieldErrors`. If catalogue terms changed after review, confirmation returns 409 `REVIEW_REQUIRED`, commits the updated quote, and creates no order until the customer confirms again. These checks include later annual visits, not only the first date.
+
+The browser reconciles uncertain saves and confirmations before sending new changes. Completed confirmations recover the same persisted receipt before stale-revision or lead-time validation, including after that draft has been archived. Archived unfinished drafts cannot create bookings. The durable receipt, bookings, price snapshots and email queue commit together; a failure rolls the transaction back. Draft data is kept on the server under customer ownership, not in browser localStorage. No external language model or chat-history access is involved.
+
 ## Customer addresses and upcoming bookings
 
 The customer booking page accepts a typed service address and an AC count of 1–10. Customers do not need to select registered equipment. The count determines prices and the work order's unit/part allowance; server-side booking records retain the unit links required by existing technician workflows.

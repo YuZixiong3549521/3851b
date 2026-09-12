@@ -8,6 +8,7 @@ import { getBookingOptions } from './booking-options.mjs';
 import { createCustomerAddress,manageCustomerAddress } from './address-service.mjs';
 import { updateCustomerProfile,getBookingAvailability } from './customer-management.mjs';
 import { getOwnedReportPhoto } from './report-photos.mjs';
+import { getAssistantDraft,saveAssistantDraft,reviewAssistantDraft,confirmAssistantDraft,newAssistantDraft } from './assistant-workflow.mjs';
 
 function identifier(value) {
   const id=Number(value);
@@ -82,6 +83,24 @@ app.get('/bookings/history', asyncRoute(async (request, response) => {
   response.json({ bookings: await listBookings(pool, 'history', request.customerUser.id) });
 }));
 
+app.get('/assistant/draft',asyncRoute(async(request,response)=>{
+  response.set('Cache-Control','private, no-store');
+  response.json(await getAssistantDraft(pool,request.customerUser));
+}));
+app.put('/assistant/draft',asyncRoute(async(request,response)=>{
+  response.json(await saveAssistantDraft(pool,request.customerUser,request.body));
+}));
+app.post('/assistant/review',asyncRoute(async(request,response)=>{
+  response.json(await reviewAssistantDraft(pool,request.customerUser,request.body));
+}));
+app.post('/assistant/confirm',asyncRoute(async(request,response)=>{
+  const result=await confirmAssistantDraft(pool,request.customerUser,request.body);
+  response.status(result.code==='REVIEW_REQUIRED'?409:200).json(result);
+}));
+app.post('/assistant/new',asyncRoute(async(request,response)=>{
+  response.json(await newAssistantDraft(pool,request.customerUser,request.body));
+}));
+
 app.get('/bookings/:bookingId',asyncRoute(async(request,response)=>{
   response.json({booking:await getBookingDetail(pool,identifier(request.params.bookingId),request.customerUser.id)});
 }));
@@ -115,7 +134,7 @@ app.use((request, response) => response.status(404).json({ error: 'Endpoint not 
 app.use((error, _request, response, _next) => {
   if(error instanceof ZodError)return response.status(400).json({error:'Please check the booking information.',details:error.flatten().fieldErrors});
   if (error instanceof HttpError || error.status) {
-    return response.status(error.status).json({ error: error.message, details: error.details });
+    return response.status(error.status).json({ error: error.message, details: error.details,...(error.code?{code:error.code}:{}),...(error.state!==undefined?{state:error.state}:{}) });
   }
   if (error?.code === 'ECONNREFUSED') {
     return response.status(503).json({ error: 'The CoolCare database is not running.' });
