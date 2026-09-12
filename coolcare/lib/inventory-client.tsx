@@ -8,6 +8,9 @@ export type Part = {
   status: 'Active' | 'Inactive' | 'Discontinued';
   current_stock: number;
   stock_value: number;
+  recommended_units_per_ac: number;
+  stock_unit: string;
+  usage_note: string | null;
 };
 export type Transaction = {
   transaction_id: number;
@@ -22,6 +25,8 @@ export type Transaction = {
   admin_name: string | null;
   remarks: string | null;
   created_at: string;
+  modified_at: string | null;
+  version: number;
 };
 export type List<T> = {
   rows: T[];

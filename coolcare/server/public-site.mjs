@@ -4,6 +4,8 @@ import { randomBytes } from 'node:crypto';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { AppError } from './inventory.mjs';
+import { enqueueBookingEmail } from './booking-email.mjs';
+import { lockCustomer, normalizeAddress, assertAddressBookingLimit, resolveBookingSelection, saveBookingSelection, restoreMembershipVisit, attachBookingSelections } from './customer/booking-options.mjs';
 
 export const offers = [
  ['Air Conditioning Cleaning',65,45],['Regular Maintenance',85,55],
@@ -25,40 +27,46 @@ export async function sessionUser(pool,req,role) {
  return user;
 }
 export async function createPublicBooking(pool,user,input,{legacy=false}={}) {
- const data=z.object({serviceType:z.string().min(1).max(120),servicePackage:z.string().max(120).optional(),numberOfUnits:z.coerce.number().int().min(1).max(10),preferredDate:legacy?z.string():date,timeWindow:legacy?z.string():z.enum(times),serviceAddress:z.string().trim().min(5).max(255),phone:z.string().max(30).optional(),symptoms:z.string().max(1000).optional(),specialNotes:z.string().max(1000).optional(),requestId:z.uuid().optional()}).parse(input);
- const offer=offers.find(o=>o[0]===data.serviceType);
- if(!offer&&!legacy)throw new AppError('This service is not available.',400);
+ const data=z.object({expectedUserId:z.coerce.number().int().positive().optional(),serviceType:z.string().min(1).max(120).optional(),serviceIds:z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),packageId:z.coerce.number().int().positive().optional(),subscriptionId:z.coerce.number().int().positive().optional(),servicePackage:z.string().max(120).optional(),numberOfUnits:z.coerce.number().int().min(1).max(10),preferredDate:legacy?z.string():date,timeWindow:legacy?z.string():z.enum(times),serviceAddress:z.string().trim().min(5).max(255),phone:z.string().max(30).optional(),symptoms:z.string().max(1000).optional(),specialNotes:z.string().max(1000).optional(),requestId:z.uuid().optional()}).parse(input);
+ if(data.expectedUserId !== undefined && data.expectedUserId !== Number(user.id))throw new AppError('Your signed-in account changed. Reload before booking.',409);
  const conn=await pool.getConnection();
  try {
   await conn.beginTransaction();
-  const [[customer]]=await conn.execute('SELECT customer_id FROM customer WHERE user_id=?',[user.id]);
-  if(!customer)throw new AppError('Customer profile not found.',403);
-  if(data.requestId){const [[existing]]=await conn.execute('SELECT b.booking_id,b.total_amount,b.booking_status FROM web_booking_details d JOIN booking b ON b.booking_id=d.booking_id WHERE d.request_id=? AND b.customer_id=?',[data.requestId,customer.customer_id]);if(existing){await conn.commit();return {id:existing.booking_id,totalAmount:existing.total_amount,status:existing.booking_status};}}
-  const [[service]]=await conn.execute("SELECT service_id,base_price FROM service_catalog WHERE service_name=? AND service_status='Active'",[data.serviceType]);
-  if(!service)throw new AppError('Service catalog entry not found.',400);
-  const [[savedAddress]]=await conn.execute('SELECT address_id FROM service_address WHERE customer_id=? AND address_line=? LIMIT 1',[customer.customer_id,data.serviceAddress]);
-  const addressId=savedAddress?.address_id??(await conn.execute("INSERT INTO service_address(customer_id,address_label,address_line,is_default) VALUES (?,'Service address',?,FALSE)",[customer.customer_id,data.serviceAddress]))[0].insertId;
-  const [units]=await conn.execute('SELECT unit_id FROM aircon_unit WHERE customer_id=? AND address_id=? ORDER BY unit_id LIMIT 10',[customer.customer_id,addressId]);
-  while(units.length<data.numberOfUnits){const [unit]=await conn.execute('INSERT INTO aircon_unit(customer_id,address_id,installation_location) VALUES (?,?,?)',[customer.customer_id,addressId,`Unit ${units.length+1}`]);units.push({unit_id:unit.insertId});}
-  const total=offer?Number(service.base_price)+Math.max(0,data.numberOfUnits-1)*offer[2]:Number(service.base_price)*data.numberOfUnits;
-  const [booking]=await conn.execute("INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,preferred_time_slot,problem_description,booking_status,total_amount) VALUES (?,?,?,?,?,?,'Submitted',?)",[customer.customer_id,addressId,service.service_id,data.preferredDate,data.timeWindow,data.symptoms||null,total]);
+  const customer=await lockCustomer(conn,user.id);
+  if(data.requestId){const [[existing]]=await conn.execute('SELECT b.booking_id,b.total_amount,b.booking_status FROM web_booking_details d JOIN booking b ON b.booking_id=d.booking_id WHERE d.request_id=? AND b.customer_id=?',[data.requestId,customer.customerId]);if(existing){const emailNotification=legacy?undefined:await enqueueBookingEmail(conn,existing.booking_id);await conn.commit();return {id:existing.booking_id,totalAmount:existing.total_amount,status:existing.booking_status,emailNotification};}}
+  const selection=await resolveBookingSelection(conn,customer.customerId,data,data.numberOfUnits);
+  if(!legacy)await assertAddressBookingLimit(conn,customer.customerId,data.serviceAddress,data.preferredDate);
+  const [addresses]=await conn.execute('SELECT address_id,address_line FROM service_address WHERE customer_id=? ORDER BY address_id',[customer.customerId]);
+  const savedAddress=addresses.find(a=>normalizeAddress(a.address_line)===normalizeAddress(data.serviceAddress));
+  const addressId=savedAddress?.address_id??(await conn.execute("INSERT INTO service_address(customer_id,address_label,address_line,is_default) VALUES (?,'Service address',?,FALSE)",[customer.customerId,data.serviceAddress]))[0].insertId;
+  const [units]=await conn.execute('SELECT unit_id FROM aircon_unit WHERE customer_id=? AND address_id=? ORDER BY unit_id LIMIT 10',[customer.customerId,addressId]);
+  while(units.length<data.numberOfUnits){const [unit]=await conn.execute('INSERT INTO aircon_unit(customer_id,address_id,installation_location) VALUES (?,?,?)',[customer.customerId,addressId,`Unit ${units.length+1}`]);units.push({unit_id:unit.insertId});}
+  const total=selection.totalAmount;
+  const [booking]=await conn.execute("INSERT INTO booking(customer_id,address_id,service_id,subscription_id,preferred_service_date,preferred_time_slot,problem_description,booking_status,total_amount) VALUES (?,?,?,?,?,?,?,'Submitted',?)",[customer.customerId,addressId,selection.services[0].serviceId,selection.subscription?.subscriptionId??null,data.preferredDate,data.timeWindow,data.symptoms||null,total]);
   for(const unit of units.slice(0,data.numberOfUnits))await conn.execute('INSERT INTO booking_aircon_unit(booking_id,unit_id) VALUES (?,?)',[booking.insertId,unit.unit_id]);
-  await conn.execute('INSERT INTO web_booking_details(booking_id,service_package,contact_phone,special_notes,request_id) VALUES (?,?,?,?,?)',[booking.insertId,data.servicePackage||data.serviceType,data.phone||user.phone||null,data.specialNotes||null,data.requestId||null]);
+  await conn.execute('INSERT INTO web_booking_details(booking_id,service_package,contact_phone,special_notes,request_id) VALUES (?,?,?,?,?)',[booking.insertId,selection.package?.name||data.servicePackage||selection.serviceName.slice(0,120),data.phone||user.phone||null,data.specialNotes||null,data.requestId||null]);
+  await saveBookingSelection(conn,booking.insertId,selection);
   await conn.execute("INSERT INTO booking_status_history(booking_id,new_status,changed_by_user_id,change_note) VALUES (?,'Submitted',?,'Created from AC Care website.')",[booking.insertId,user.id]);
-  await conn.commit();return {id:booking.insertId,totalAmount:total,status:'Submitted'};
+  const emailNotification=legacy?undefined:await enqueueBookingEmail(conn,booking.insertId);
+  await conn.commit();return {id:booking.insertId,totalAmount:total,status:'Submitted',serviceName:selection.serviceName,services:selection.services,package:selection.package??null,emailNotification};
  }catch(e){await conn.rollback();throw e;}finally{conn.release();}
 }
 export async function changePublicBooking(pool,user,id,action,input){
  const bookingId=z.coerce.number().int().positive().parse(id);
  const patch=action==='reschedule'?z.object({preferredDate:date,timeWindow:z.enum(times)}).parse(input):z.object({status:z.literal('Cancelled')}).parse(input);
  const c=await pool.getConnection();
- try{await c.beginTransaction();const [[customer]]=await c.execute('SELECT customer_id FROM customer WHERE user_id=?',[user.id]);
- const [[b]]=await c.execute('SELECT * FROM booking WHERE booking_id=? AND customer_id=? FOR UPDATE',[bookingId,customer?.customer_id||0]);
+ try{await c.beginTransaction();const customer=await lockCustomer(c,user.id);
+ const [[b]]=await c.execute('SELECT * FROM booking WHERE booking_id=? AND customer_id=? FOR UPDATE',[bookingId,customer.customerId]);
  if(!b)throw new AppError('Booking not found.',404);
  const [[assigned]]=await c.execute('SELECT COUNT(*) AS count FROM assignment WHERE booking_id=?',[bookingId]);
  if(b.booking_status!=='Submitted'||assigned.count>0)throw new AppError('Only unassigned, submitted bookings can be changed. Please contact the service team.',409);
- if(action==='reschedule')await c.execute('UPDATE booking SET preferred_service_date=?,preferred_time_slot=? WHERE booking_id=?',[patch.preferredDate,patch.timeWindow,bookingId]);
- else await c.execute("UPDATE booking SET booking_status='Cancelled' WHERE booking_id=?",[bookingId]);
+ if(action==='reschedule'){
+  const [[address]]=await c.execute('SELECT address_line FROM service_address WHERE address_id=?',[b.address_id]);
+  await assertAddressBookingLimit(c,customer.customerId,address.address_line,patch.preferredDate,bookingId);
+  if(b.subscription_id){const [[subscription]]=await c.execute('SELECT start_date,end_date,subscription_status FROM customer_subscription WHERE subscription_id=? AND customer_id=? FOR UPDATE',[b.subscription_id,customer.customerId]);if(!subscription||subscription.subscription_status!=='Active'||patch.preferredDate<String(subscription.start_date).slice(0,10)||patch.preferredDate>String(subscription.end_date).slice(0,10))throw new AppError('Choose a date within your active membership period.',409);}
+  await c.execute('UPDATE booking SET preferred_service_date=?,preferred_time_slot=? WHERE booking_id=?',[patch.preferredDate,patch.timeWindow,bookingId]);
+ }
+ else {await c.execute("UPDATE booking SET booking_status='Cancelled' WHERE booking_id=?",[bookingId]);await restoreMembershipVisit(c,bookingId);}
  await c.execute('INSERT INTO booking_change_request(booking_id,request_type,requested_service_date,requested_time_slot,reason,request_status) VALUES (?,?,?,?,?,?)',[bookingId,action==='reschedule'?'Reschedule':'Cancel',patch.preferredDate||null,patch.timeWindow||null,'Customer self-service before assignment','Approved']);
  await c.execute('INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note) VALUES (?,?,?,?,?)',[bookingId,b.booking_status,action==='reschedule'?b.booking_status:'Cancelled',user.id,action==='reschedule'?'Customer rescheduled before assignment.':'Customer cancelled before assignment.']);
  await c.commit();return {success:true};
@@ -93,7 +101,7 @@ export function createPublicRouter(pool){
    (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS number_of_units,
    b.preferred_service_date AS preferred_date,b.preferred_time_slot AS time_window,sa.address_line AS service_address,
    b.problem_description AS symptoms,d.special_notes,b.booking_status,b.created_at,b.total_amount
-   FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN service_catalog sc ON sc.service_id=b.service_id JOIN service_address sa ON sa.address_id=b.address_id LEFT JOIN web_booking_details d ON d.booking_id=b.booking_id WHERE c.user_id=? ORDER BY b.created_at DESC,b.booking_id DESC`,[req.customerUser.id]);res.json({success:true,bookings});
+   FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN service_catalog sc ON sc.service_id=b.service_id JOIN service_address sa ON sa.address_id=b.address_id LEFT JOIN web_booking_details d ON d.booking_id=b.booking_id WHERE c.user_id=? ORDER BY b.created_at DESC,b.booking_id DESC`,[req.customerUser.id]);res.json({success:true,bookings:await attachBookingSelections(pool,bookings,'id')});
  });
  r.post('/bookings',async(req,res)=>res.status(201).json({success:true,booking:await createPublicBooking(pool,req.customerUser,req.body)}));
  r.patch('/bookings/:id/status',async(req,res)=>res.json(await changePublicBooking(pool,req.customerUser,req.params.id,'cancel',req.body)));

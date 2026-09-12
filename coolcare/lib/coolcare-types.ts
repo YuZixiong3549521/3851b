@@ -39,6 +39,40 @@ export type Service = {
   durationMinutes: number;
 };
 
+export type BookingServiceOption = {
+  serviceId: number;
+  name: string;
+  description: string | null;
+  basePrice: number;
+  additionalUnitPrice: number;
+};
+
+export type ServiceBundle = {
+  packageId: number;
+  name: string;
+  description: string | null;
+  price: number;
+  serviceIds: number[];
+  includedUnits: number;
+  additionalUnitPrice: number;
+};
+
+export type CustomerSubscription = {
+  subscriptionId: number;
+  packageId: number;
+  name: string;
+  remainingVisits: number;
+  startDate: string;
+  endDate: string;
+  services: BookingServiceOption[];
+};
+
+export type BookingOptions = {
+  services: BookingServiceOption[];
+  bundles: ServiceBundle[];
+  subscriptions: CustomerSubscription[];
+};
+
 export type Booking = {
   bookingId: number;
   bookingReference: string;
@@ -57,12 +91,15 @@ export type Booking = {
   units: AirconUnit[];
 };
 
+export type EmailNotification = { status: 'queued' | 'sent' | 'disabled'; mode: 'local' | 'smtp'; recipient: string };
+
 export type CreatedBooking = {
   bookingId: number;
   bookingReference: string;
   status: string;
   serviceName: string;
   totalAmount: number;
+  emailNotification?: EmailNotification;
 };
 
 export type ServiceReport = {
@@ -87,7 +124,12 @@ export type ServiceReport = {
 };
 
 export type BookingInput = {
-  serviceId: number;
+  expectedUserId?: number;
+  serviceId?: number;
+  serviceIds?: number[];
+  packageId?: number;
+  subscriptionId?: number;
+  requestId?: string;
   addressId: number;
   unitIds: number[];
   preferredDate: string;

@@ -12,13 +12,16 @@ import {
   idSchema,
   savePart,
   recordTransaction,
+  editTransaction,
+  getStockRecommendation,
   toCsv,
 } from './inventory.mjs';
 
-const transactionSelect = `SELECT t.*, p.part_name, u.full_name AS admin_name, o.stock_before, o.stock_after,
- COALESCE(o.stock_delta, CASE WHEN t.transaction_type IN ('Stock In', 'Return') THEN t.quantity WHEN t.transaction_type = 'Stock Out' THEN -t.quantity ELSE NULL END) AS stock_delta
+const transactionSelect = `SELECT t.*, p.part_name, COALESCE(actor.full_name,u.full_name) AS admin_name, o.stock_before, o.stock_after,
+ CASE WHEN t.transaction_type IN ('Stock In', 'Return') THEN t.quantity WHEN t.transaction_type = 'Stock Out' THEN -t.quantity ELSE o.stock_delta END AS stock_delta
  FROM inventory_transaction t JOIN part p ON p.part_id=t.part_id
  LEFT JOIN user_account u ON u.user_id=t.admin_user_id
+ LEFT JOIN user_account actor ON actor.user_id=t.performed_by_user_id
  LEFT JOIN inventory_web_operation o ON o.transaction_id=t.transaction_id`;
 const pageNumber = z.coerce.number().int().min(1).max(1000000).default(1);
 const pageSize = z.coerce.number().int().min(1).max(100).default(10);
@@ -352,6 +355,11 @@ export function createApp({
     if (!part) throw new AppError('Part not found.', 404);
     res.json(part);
   });
+  app.get('/api/parts/:id/recommendation', async (req,res)=>{
+    const [[part]]=await pool.execute('SELECT * FROM part WHERE part_id=?',[idSchema.parse(req.params.id)]);
+    if(!part) throw new AppError('Part not found.',404);
+    res.json(await getStockRecommendation(pool,idSchema.parse(req.query.job),part));
+  });
   app.post('/api/parts', async (req, res) =>
     res.status(201).json(await savePart(pool, req.body)),
   );
@@ -424,6 +432,15 @@ export function createApp({
       .status(201)
       .json(await recordTransaction(pool, req.body, req.session.user.user_id)),
   );
+  app.get('/api/transactions/:id',async(req,res)=>{
+    const id=idSchema.parse(req.params.id);
+    const [[transaction]]=await pool.execute(transactionSelect+' WHERE t.transaction_id=?',[id]);
+    if(!transaction) throw new AppError('Transaction not found.',404);
+    const [revisions]=await pool.execute(`SELECT r.*,u.full_name AS changed_by_name FROM inventory_transaction_revision r
+      JOIN user_account u ON u.user_id=r.changed_by_user_id WHERE r.transaction_id=? ORDER BY r.after_version DESC`,[id]);
+    res.json({transaction,revisions});
+  });
+  app.put('/api/transactions/:id',async(req,res)=>res.json(await editTransaction(pool,idSchema.parse(req.params.id),req.body,req.session.user.user_id)));
   app.use('/api', (req, res) =>
     res.status(404).json({ error: 'Endpoint not found.' }),
   );

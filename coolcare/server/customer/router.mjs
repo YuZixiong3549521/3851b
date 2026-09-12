@@ -3,6 +3,7 @@ import { sessionUser, offers } from '../public-site.mjs';
 import { asyncRoute, HttpError } from './errors.mjs';
 import { getDemoCustomer } from './customer.mjs';
 import { createBooking, getBookingReport, listBookings } from './booking-service.mjs';
+import { getBookingOptions } from './booking-options.mjs';
 
 export function createCustomerRouter(pool) {
 const app = express.Router();
@@ -39,6 +40,11 @@ app.get('/services', asyncRoute(async (request, response) => {
      FROM service_catalog WHERE service_status = 'Active' ORDER BY service_id`,
   );
   response.json({ services: services.map(service=>({...service,additionalUnitPrice:offers.find(offer=>offer[0]===service.serviceName)?.[2] ?? service.basePrice})) });
+}));
+
+app.get('/booking-options', asyncRoute(async (request,response) => {
+  const customer=await getDemoCustomer(pool,request.customerUser.id);
+  response.json(await getBookingOptions(pool,customer.customerId));
 }));
 
 app.get('/bookings', asyncRoute(async (request, response) => {

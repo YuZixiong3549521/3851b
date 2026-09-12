@@ -2,21 +2,24 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { ArrowRight, CalendarDays, ClipboardCheck, Clock3, History, MapPin, Wind } from 'lucide-react';
+import { ArrowRight, CalendarDays, ClipboardCheck, Clock3, History, MapPin, WalletCards, Wind } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
+import { CustomerAssistant } from '@/components/customer-assistant';
 import { PageError, PageLoading } from '@/components/page-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate } from '@/lib/format';
-import type { Booking, CustomerContext } from '@/lib/coolcare-types';
+import type { Booking, CustomerContext, CustomerSubscription } from '@/lib/coolcare-types';
 
 export default function Home() {
   const [context, setContext] = useState<CustomerContext | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [history, setHistory] = useState<Booking[]>([]);
   const [error, setError] = useState('');
+  const [subscriptions, setSubscriptions] = useState<CustomerSubscription[]>([]);
+  const [membershipError, setMembershipError] = useState('');
 
   useEffect(() => {
     Promise.all([coolcareApi.getCustomerContext(), coolcareApi.getBookings('upcoming'), coolcareApi.getHistory()])
@@ -26,6 +29,8 @@ export default function Home() {
         setHistory(nextHistory);
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to reach the CoolCare API.'));
+    coolcareApi.getBookingOptions().then(options => setSubscriptions(options.subscriptions))
+      .catch(() => setMembershipError('Your memberships could not be loaded. Please refresh to retry.'));
   }, []);
 
   const upcoming = bookings[0];
@@ -45,8 +50,22 @@ export default function Home() {
                 <Badge className="mb-5 border-white/20 bg-white/15 text-white hover:bg-white/15">Welcome back, {firstName}</Badge>
                 <h1 className="text-3xl font-bold tracking-[-0.025em] sm:text-4xl">Comfort at home, without the guesswork.</h1>
                 <p className="mt-3 max-w-xl text-sm leading-6 text-blue-50 sm:text-base">Book maintenance, follow every request, and keep your service history together.</p>
-                <Button render={<Link href="/customer/book" />} size="lg" className="mt-7 bg-white text-primary shadow-lg hover:bg-blue-50">Book a service<ArrowRight className="size-4" aria-hidden="true" /></Button>
+                <Button nativeButton={false} render={<Link href="/customer/book" />} size="lg" className="mt-7 bg-white text-primary shadow-lg hover:bg-blue-50">Book a service<ArrowRight className="size-4" aria-hidden="true" /></Button>
+                <CustomerAssistant onBookingCreated={() => {
+                  coolcareApi.getBookingOptions().then(options => { setSubscriptions(options.subscriptions); setMembershipError(''); })
+                    .catch(() => setMembershipError('Your booking was saved. Refresh to see updated membership visits.'));
+                  Promise.all([coolcareApi.getCustomerContext(), coolcareApi.getBookings('upcoming')])
+                    .then(([nextContext, nextBookings]) => { setContext(nextContext); setBookings(nextBookings); })
+                    .catch(() => setError('Your booking was saved, but the dashboard could not refresh. Please reload.'));
+                }} />
               </div>
+            </section>
+
+            <section className="mt-8" aria-labelledby="membership-heading">
+              <Card className="border-border/80 shadow-sm"><CardHeader><div className="flex items-center gap-3"><WalletCards className="size-6 text-primary" /><CardTitle id="membership-heading" className="text-xl">Your memberships</CardTitle></div></CardHeader><CardContent>
+                {membershipError ? <p role="status" className="text-sm text-muted-foreground">{membershipError}</p> : subscriptions.length === 0 ? <p className="text-sm text-muted-foreground">You have no active memberships. You can still build your own service or choose a service bundle when booking.</p> : <div className="grid gap-4 sm:grid-cols-2">{subscriptions.map(subscription => <div key={subscription.subscriptionId} className="rounded-2xl border border-primary/15 bg-primary/5 p-5"><p className="font-semibold">{subscription.name}</p><p className="mt-2 text-2xl font-bold text-primary">{subscription.remainingVisits}<span className="ml-2 text-sm font-normal text-muted-foreground">visit(s) remaining</span></p><p className="mt-2 text-xs text-muted-foreground">Valid until {formatDate(subscription.endDate)}</p><p className="mt-2 text-sm">{subscription.services.map(service => service.name).join(' + ')}</p></div>)}</div>}
+                <p className="mt-4 text-xs text-muted-foreground">Memberships belong to your account. Booking an included visit reserves one use; cancelling that booking returns the use.</p>
+              </CardContent></Card>
             </section>
 
             <section aria-labelledby="overview-heading" className="mt-8">
@@ -74,7 +93,7 @@ export default function Home() {
                       </div>
                       <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
                         <div><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Booking reference</p><p className="mt-1 font-mono text-sm font-semibold">{upcoming.bookingReference}</p></div>
-                        <Button render={<Link href="/customer/bookings" />} variant="outline">View booking</Button>
+                        <Button nativeButton={false} render={<Link href="/customer/bookings" />} variant="outline">View booking</Button>
                       </div>
                     </>
                   ) : (
@@ -85,7 +104,7 @@ export default function Home() {
 
               <Card className="border-border/80 bg-[#f7fffd] shadow-sm">
                 <CardHeader><div className="mb-1 grid size-11 place-items-center rounded-2xl bg-secondary/15 text-secondary"><ClipboardCheck className="size-5" aria-hidden="true" /></div><CardTitle className="text-xl">Maintenance history</CardTitle></CardHeader>
-                <CardContent><p className="text-sm leading-6 text-muted-foreground">{history[0] ? `Your latest visit was completed on ${formatDate(history[0].preferredDate)}.` : 'Completed maintenance visits will be kept here.'}</p><Button render={<Link href="/customer/history" />} variant="link" className="mt-4 h-auto p-0 text-secondary">View service history<ArrowRight className="size-4" aria-hidden="true" /></Button></CardContent>
+                <CardContent><p className="text-sm leading-6 text-muted-foreground">{history[0] ? `Your latest visit was completed on ${formatDate(history[0].preferredDate)}.` : 'Completed maintenance visits will be kept here.'}</p><Button nativeButton={false} render={<Link href="/customer/history" />} variant="link" className="mt-4 h-auto p-0 text-secondary">View service history<ArrowRight className="size-4" aria-hidden="true" /></Button></CardContent>
               </Card>
             </section>
           </>

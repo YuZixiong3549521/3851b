@@ -11,3 +11,10 @@
 .drawer-inner p{display:flex;margin:8px 0;line-height:1.65}
 .drawer-inner .drawer-badges{margin-top:12px}
 .drawer-inner .detail-button{margin-top:20px}
+.tech-detail-list{padding-left:20px;margin:10px 0;line-height:1.7}.tech-detail-list small{display:block;color:var(--muted)}
+.tech-history{border:1px solid var(--border);border-radius:9px;padding:12px;margin:10px 0;overflow-wrap:anywhere}.tech-history summary{cursor:pointer;font-weight:600;line-height:1.6}
+.drawer-inner .tech-report p{display:block}.tech-report strong{margin-right:4px}.tech-report h4{margin:14px 0 5px}
+.tech-stock-form{margin-top:28px;border-top:1px solid var(--border);padding-top:4px}.tech-stock-form label{display:block;margin:12px 0;line-height:1.8}.tech-stock-form input,.tech-stock-form textarea,.tech-stock-form select{margin-top:5px}
+.tech-stock-form .tech-excess{display:flex;gap:10px;align-items:flex-start;background:#fff7df;padding:12px;border:1px solid #e8c765;border-radius:8px;font-size:13px}.tech-excess input{flex:0 0 auto;margin-top:5px}
+.tech-guidance{background:#eff6ff;border:1px solid #c8dced;border-radius:8px;padding:10px;font-size:12px;overflow-wrap:anywhere}.tech-error{color:#9f2424;background:#fff0f0;border-radius:8px;padding:10px;margin:10px 0}
+.drawer-inner .cell-icon{flex-wrap:wrap}.drawer-inner{overflow-wrap:anywhere}
