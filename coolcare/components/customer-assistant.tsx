@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { Bot, CalendarDays, CalendarPlus, Check, CheckCircle2, ChevronDown, HelpCircle, Mail, MessageCircle, Pencil, Sparkles, Wrench } from 'lucide-react';
+import { Bot, CalendarDays, CalendarPlus, Check, CheckCircle2, ChevronDown, HelpCircle, Mail, Pencil, Sparkles, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
@@ -41,10 +41,15 @@ const prompts: Record<Screen, string> = {
 };
 const supportHref = 'mailto:' + customerSupportEmail + '?subject=CoolCare%20booking%20help';
 
-export function CustomerAssistant({ onBookingCreated }: { onBookingCreated: () => void }) {
+export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, returnFocus, onBookingCreated }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  dialogId: string;
+  returnFocus: () => HTMLElement | null;
+  onBookingCreated: () => void;
+}) {
   const store = useAssistantDraft();
   const { draft, record } = store;
-  const [open, setOpen] = useState(false);
   const [screen, setScreen] = useState<Screen>('menu');
   const [context, setContext] = useState<CustomerContext | null>(null);
   const [options, setOptions] = useState<BookingOptions | null>(null);
@@ -69,7 +74,7 @@ export function CustomerAssistant({ onBookingCreated }: { onBookingCreated: () =
 
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('assistant') === 'resume') { resumeOnOpen.current = true; setOpen(true); }
-  }, []);
+  }, [setOpen]);
   useEffect(() => {
     if (!open) return;
     const url = new URL(window.location.href);
@@ -276,8 +281,7 @@ export function CustomerAssistant({ onBookingCreated }: { onBookingCreated: () =
   }
 
   return <Dialog open={open} onOpenChange={value => { if (value) setOpen(true); else void closeAssistant(); }}>
-    <DialogTrigger render={<Button variant="outline" className="border-white/40 bg-white/10 text-white hover:bg-white/20 hover:text-white" />}><MessageCircle className="size-4" />Ask CoolCare Assistant</DialogTrigger>
-    <DialogContent className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-xl" aria-busy={Boolean(operation)}>
+    <DialogContent id={dialogId} finalFocus={returnFocus} className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-xl" aria-busy={Boolean(operation)}>
       <div className="shrink-0 border-b bg-primary/5 px-5 py-4 pr-12">
         <DialogTitle className="flex items-center gap-2 text-lg font-bold"><Bot className="size-6 text-primary" />CoolCare Assistant</DialogTitle>
         <DialogDescription className="mt-1">Book a service with guided steps. Your draft stays in your account.</DialogDescription>
@@ -335,7 +339,7 @@ export function CustomerAssistant({ onBookingCreated }: { onBookingCreated: () =
           </fieldset>}
           {(screen === 'review' || screen === 'success') && <>
             {receipt && <div role="status" className="rounded-xl bg-emerald-50 p-4 text-emerald-900"><p className="flex items-center gap-2 font-bold"><CheckCircle2 className="size-5" />{receipt.annualBundle ? 'Four booking requests saved' : 'Booking #' + bookingId}</p><p className="mt-1">Status: {bookingStatusLabel(receipt.status)}</p></div>}
-            {receipt && bookingId && <div className="grid gap-2"><Button nativeButton={false} render={<Link href={'/customer/bookings/' + bookingId} />} className="w-full">View this booking</Button><a href={bookingSupportLink(receipt.bookingReference || '#' + bookingId)} className="inline-flex items-center justify-center gap-2 py-2 text-sm font-medium text-primary underline underline-offset-4"><Mail className="size-4" />Contact support about this booking</a></div>}
+            {receipt && bookingId && <div className="grid gap-2"><Button nativeButton={false} render={<Link href={'/customer/bookings/' + bookingId} />} onClick={() => void closeAssistant()} className="w-full">View this booking</Button><a href={bookingSupportLink(receipt.bookingReference || '#' + bookingId)} className="inline-flex items-center justify-center gap-2 py-2 text-sm font-medium text-primary underline underline-offset-4"><Mail className="size-4" />Contact support about this booking</a></div>}
             {priceChanged && !receipt && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">The current estimate differs from the earlier price. Review the updated amount before confirming.</div>}
             <div className="space-y-3 rounded-xl border p-4 text-sm">
               {[

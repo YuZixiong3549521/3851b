@@ -43,8 +43,11 @@ export function useCustomerResource<T>(load: () => Promise<T>) {
     mounted.current = true;
     void refresh();
     const onReturn = () => { if (document.visibilityState === 'visible' && !pending.current) void refresh(); };
+    // A completed mutation must supersede any read started before it finished.
+    const onBookingsUpdated = () => { void refresh(); };
     window.addEventListener('focus', onReturn);
     window.addEventListener('online', onReturn);
+    window.addEventListener('coolcare:bookings-updated', onBookingsUpdated);
     document.addEventListener('visibilitychange', onReturn);
     const interval = window.setInterval(onReturn, 60_000);
     return () => {
@@ -54,6 +57,7 @@ export function useCustomerResource<T>(load: () => Promise<T>) {
       window.clearInterval(interval);
       window.removeEventListener('focus', onReturn);
       window.removeEventListener('online', onReturn);
+      window.removeEventListener('coolcare:bookings-updated', onBookingsUpdated);
       document.removeEventListener('visibilitychange', onReturn);
     };
   }, [refresh]);

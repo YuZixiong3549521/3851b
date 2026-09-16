@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { ArrowRight, CalendarDays, Clock3, History, MapPin, RefreshCw } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
-import { CustomerAssistant } from '@/components/customer-assistant';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingStatus, bookingStatusDescription } from '@/components/booking-status';
 import { PageError, PageLoading } from '@/components/page-state';
@@ -35,7 +34,7 @@ export default function Home() {
       <section className="rounded-3xl bg-[linear-gradient(115deg,#003f9f_0%,#0066ff_75%,#00a98f_125%)] px-5 py-5 text-white shadow-sm sm:px-7">
         <p className="text-sm text-blue-100">Welcome back, {data.context.customer.fullName.split(' ')[0]}</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Your service at a glance</h1>
-        <div className="mt-4 flex flex-wrap items-center gap-3"><Button nativeButton={false} render={<Link href="/customer/book" />} className="bg-white text-primary hover:bg-blue-50">Book a service<ArrowRight className="size-4" /></Button><CustomerAssistant onBookingCreated={() => void refresh()} /></div>
+        <div className="mt-4 flex flex-wrap items-center gap-3"><Button nativeButton={false} render={<Link href="/customer/book" />} className="bg-white text-primary hover:bg-blue-50">Book a service<ArrowRight className="size-4" /></Button></div>
       </section>
 
       <section aria-label="Next appointment" className="mt-6">

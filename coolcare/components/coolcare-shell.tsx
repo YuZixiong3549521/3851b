@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useId, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import { CalendarDays, ChevronDown, ClipboardCheck, Gauge, History, Home, LogOut, MapPin, Snowflake, Sparkles, UserRound } from 'lucide-react';
+import { CalendarDays, ChevronDown, ClipboardCheck, Gauge, History, Home, LogOut, MapPin, MessageCircle, Snowflake, Sparkles, UserRound } from 'lucide-react';
+import { CustomerAssistant } from '@/components/customer-assistant';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { PageLoading } from '@/components/page-state';
@@ -23,6 +24,10 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
   const [sessionError, setSessionError] = useState('');
   const [sessionAttempt, setSessionAttempt] = useState(0);
   const [signingOut, setSigningOut] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const assistantDialogId = useId();
+  const desktopAssistantTrigger = useRef<HTMLButtonElement>(null);
+  const mobileAssistantTrigger = useRef<HTMLButtonElement>(null);
   const sessionUserId = useRef<number | null>(null);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -104,6 +109,10 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
               </Link>
             );
           })}
+          <Button ref={desktopAssistantTrigger} type="button" variant="ghost" disabled={!ready || signingOut} aria-haspopup="dialog" aria-expanded={assistantOpen} aria-controls={assistantOpen ? assistantDialogId : undefined} onClick={() => setAssistantOpen(true)} className="h-auto min-h-12 w-full justify-start gap-3 rounded-xl px-4 text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground">
+            <MessageCircle className="size-5" aria-hidden="true" />
+            CoolCare Assistant
+          </Button>
         </nav>
         <div className="mt-auto rounded-2xl bg-[linear-gradient(145deg,#eff5ff,#ecfffb)] p-5">
           <div className="mb-3 grid size-9 place-items-center rounded-xl bg-white text-secondary shadow-sm"><Sparkles className="size-5" aria-hidden="true" /></div>
@@ -139,7 +148,7 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
         {ready ? children : !sessionError ? <div className="mx-auto max-w-5xl p-5 sm:p-8"><PageLoading /></div> : null}
       </main>
 
-      <nav aria-label="Mobile navigation" className="customer-shell-navigation fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-border bg-white/95 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl lg:hidden">
+      <nav aria-label="Mobile navigation" className="customer-shell-navigation fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-border bg-white/95 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl lg:hidden">
         {navItems.map(({ shortLabel, href, icon: Icon }) => {
           const active = isActive(href);
           return (
@@ -149,7 +158,12 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
             </Link>
           );
         })}
+        <Button ref={mobileAssistantTrigger} type="button" variant="ghost" disabled={!ready || signingOut} aria-haspopup="dialog" aria-expanded={assistantOpen} aria-controls={assistantOpen ? assistantDialogId : undefined} onClick={() => setAssistantOpen(true)} className="h-auto min-h-14 flex-col gap-1 rounded-xl px-0 py-0 text-[11px] font-semibold text-muted-foreground">
+          <MessageCircle className="size-5" aria-hidden="true" />
+          <span>Assistant</span>
+        </Button>
       </nav>
+      {ready && <CustomerAssistant open={assistantOpen} onOpenChange={setAssistantOpen} dialogId={assistantDialogId} returnFocus={() => desktopAssistantTrigger.current?.getClientRects().length ? desktopAssistantTrigger.current : mobileAssistantTrigger.current} onBookingCreated={() => window.dispatchEvent(new Event('coolcare:bookings-updated'))} />}
     </div>
   );
 }
