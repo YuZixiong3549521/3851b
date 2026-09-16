@@ -25,9 +25,9 @@ INSERT INTO customer (user_id) VALUES (@alice_user_id), (@ben_user_id);
 INSERT INTO technician (user_id, availability_status) VALUES
   (@chris_user_id, 'Busy'),
   (@farah_user_id, 'Available');
-INSERT INTO admin_profile (user_id, department, position) VALUES
-  (@norshida_user_id, 'Operations', 'Operations Manager'),
-  (@mei_user_id, 'Customer Service', 'Service Coordinator');
+INSERT INTO admin_profile (user_id, department, position, access_level) VALUES
+  (@norshida_user_id, 'Operations', 'Operations Manager', 'Owner'),
+  (@mei_user_id, 'Customer Service', 'Service Coordinator', 'Admin');
 
 SET @alice_customer_id := (SELECT customer_id FROM customer WHERE user_id = @alice_user_id);
 SET @ben_customer_id := (SELECT customer_id FROM customer WHERE user_id = @ben_user_id);

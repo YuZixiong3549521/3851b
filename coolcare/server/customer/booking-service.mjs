@@ -108,8 +108,8 @@ export async function listBookings(pool, scope = 'all', userId) {
   const customer = await getDemoCustomer(pool, userId);
   const conditions = ['b.customer_id = ?'];
   const values = [customer.customerId];
-  if (scope === 'upcoming') conditions.push("b.booking_status NOT IN ('Completed', 'Cancelled')");
-  if (scope === 'history') conditions.push("b.booking_status = 'Completed'");
+  if (scope === 'upcoming') conditions.push("b.booking_status NOT IN ('Completed', 'Cancelled', 'Rejected')");
+  if (scope === 'history') conditions.push("b.booking_status IN ('Completed','Cancelled','Rejected')");
 
   const [rows] = await pool.execute(
     `SELECT
@@ -123,6 +123,9 @@ export async function listBookings(pool, scope = 'all', userId) {
        b.preferred_time_slot AS timeSlot,
        b.problem_description AS problemDescription,
        b.booking_status AS status,
+       (SELECT h.change_note FROM booking_status_history h
+        WHERE h.booking_id=b.booking_id AND h.new_status='Rejected'
+        ORDER BY h.history_id DESC LIMIT 1) AS rejectionReason,
        b.total_amount AS totalAmount,
        sc.service_name AS serviceName,
        sa.address_label AS addressLabel,

@@ -5,6 +5,7 @@ import { lockCustomer,resolveBookingSelection,assertAddressBookingLimit } from '
 import { annualVisitSchedule } from './annual-bookings.mjs';
 import { assertBookableDate,isCalendarDate } from './booking-schedule.mjs';
 import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './address-service.mjs';
+import { assertTeamCapacity,normalizeBookingSlot } from '../scheduling.mjs';
 import { describeCreatedBooking,writeSelectedBookings } from './booking-writer.mjs';
 import { bookingReference } from './booking-service.mjs';
 import { normalizePhoneNumber,phoneNumberError } from '../../lib/phone-number.mjs';
@@ -183,6 +184,16 @@ async function validateSchedule(connection,customerId,input,quote,state) {
       await assertAddressBookingLimit(connection,customerId,input.serviceAddress,visit.preferredDate);
     }catch(error){
       if(!error.status||error.status>=500)throw error;
+      conflicts.push({visitNumber:visit.visitNumber,preferredDate:visit.preferredDate,message:error.message});
+    }
+  }
+  try {
+    const slot=normalizeBookingSlot(input.timeWindow);
+    await assertTeamCapacity(connection,quote.visits.map(visit=>({date:visit.preferredDate,start:slot.start,end:slot.end})));
+  } catch(error) {
+    if(!error.status||error.status>=500)throw error;
+    const capacityDates=error.capacityConflicts?.length?new Set(error.capacityConflicts.map(conflict=>conflict.date)):null;
+    for(const visit of quote.visits)if((!capacityDates||capacityDates.has(visit.preferredDate))&&!conflicts.some(conflict=>conflict.visitNumber===visit.visitNumber)) {
       conflicts.push({visitNumber:visit.visitNumber,preferredDate:visit.preferredDate,message:error.message});
     }
   }

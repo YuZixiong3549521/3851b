@@ -15,7 +15,7 @@ import { RegisterPage } from './components/RegisterPage';
 import { BookingModal } from './components/BookingModal';
 
 function dashboardPath(user: User) {
-  return user.role === 'Technician' ? '/technician/index.html' : user.role === 'Admin' ? '/admin/inventory' : '/customer';
+  return user.role === 'Technician' ? '/technician/index.html' : user.role === 'Admin' ? '/admin/orders' : '/customer';
 }
 
 function sectionId(hash: string) {

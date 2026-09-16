@@ -36,6 +36,9 @@ export type BookingAvailability = {
   earliestDate: string;
   timeZone: 'Asia/Singapore';
 };
+export type SlotAvailability = {
+  dates: Array<{ date: string; slots: Array<{ code: BookingInput['timeSlot']; label: string; available: boolean }> }>;
+};
 
 export type AirconUnit = {
   unitId: number;
@@ -102,6 +105,7 @@ export type Booking = {
   timeSlot: string;
   problemDescription: string | null;
   status: string;
+  rejectionReason: string | null;
   totalAmount: number | null;
   serviceName: string;
   addressLabel: string | null;

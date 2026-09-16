@@ -28,7 +28,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, onNavigate, current
   const menuButton = useRef<HTMLButtonElement>(null);
   const isCustomer = !currentUser?.role || currentUser.role === 'Customer';
   const dashboard = currentUser?.role === 'Technician' ? '/technician/index.html'
-    : currentUser?.role === 'Admin' ? '/admin/inventory' : '/customer';
+    : currentUser?.role === 'Admin' ? '/admin/orders' : '/customer';
 
   useEffect(() => setMobileMenuOpen(false), [currentPage, currentUser?.id]);
   useEffect(() => {

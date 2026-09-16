@@ -13,7 +13,7 @@ interface FooterProps {
 export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenBooking, currentUser }) => {
   const isCustomer = !currentUser?.role || currentUser.role === 'Customer';
   const dashboard = currentUser?.role === 'Technician' ? '/technician/index.html'
-    : currentUser?.role === 'Admin' ? '/admin/inventory' : '/customer';
+    : currentUser?.role === 'Admin' ? '/admin/orders' : '/customer';
   const linkClass = 'h-auto min-h-11 justify-start whitespace-normal px-0 py-2 text-left text-body-md text-ac-on-surface-variant hover:text-ac-primary';
 
   return (

@@ -2,6 +2,7 @@ import { enqueueBookingEmail } from '../booking-email.mjs';
 import { annualVisitSchedule } from './annual-bookings.mjs';
 import { assertBookableDate } from './booking-schedule.mjs';
 import { assertAddressBookingLimit,saveBookingSelection,attachBookingSelections } from './booking-options.mjs';
+import { assertTeamCapacity,normalizeBookingSlot } from '../scheduling.mjs';
 
 export async function describeCreatedBooking(connection,bookingId,{legacy=false}={}) {
   const [[row]]=await connection.execute(`SELECT booking_id AS bookingId,created_at AS createdAt,
@@ -27,6 +28,8 @@ export async function writeSelectedBookings(connection,selection,context) {
     assertBookableDate(visit.preferredDate);
     await assertAddressBookingLimit(connection,context.customerId,context.addressLine,visit.preferredDate);
   }
+  const slot=context.legacy?null:normalizeBookingSlot(context.timeSlot);
+  if(!context.legacy)await assertTeamCapacity(connection,schedule.map(visit=>({date:visit.preferredDate,start:slot.start,end:slot.end})));
   let seriesId;
   if(selection.annual) {
     const [series]=await connection.execute(`INSERT INTO annual_booking_series(customer_id,address_id,package_id,package_name,
@@ -37,8 +40,8 @@ export async function writeSelectedBookings(connection,selection,context) {
   let firstBookingId;
   for(const visit of schedule) {
     const [booking]=await connection.execute(`INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,
-      preferred_time_slot,problem_description,booking_status,total_amount) VALUES (?,?,?,?,?,?,'Submitted',?)`,
-    [context.customerId,context.addressId,selection.services[0].serviceId,visit.preferredDate,context.timeSlot,context.problemDescription||null,visit.totalAmount]);
+      preferred_time_slot,slot_start,slot_end,problem_description,booking_status,total_amount) VALUES (?,?,?,?,?,?,?,?,'Submitted',?)`,
+    [context.customerId,context.addressId,selection.services[0].serviceId,visit.preferredDate,context.timeSlot,slot?.start??null,slot?.end??null,context.problemDescription||null,visit.totalAmount]);
     firstBookingId??=booking.insertId;
     for(const unitId of context.unitIds)await connection.execute('INSERT INTO booking_aircon_unit(booking_id,unit_id) VALUES (?,?)',[booking.insertId,unitId]);
     await connection.execute('INSERT INTO web_booking_details(booking_id,service_package,contact_phone,special_notes,request_id) VALUES (?,?,?,?,?)',

@@ -15,11 +15,12 @@ import { BookingAddressField } from '@/components/booking-address-field';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { bookingConflictMessage } from '@/components/booking-availability-notice';
 import { useBookingAvailability } from '@/lib/use-booking-availability';
+import { useSlotAvailability } from '@/lib/use-slot-availability';
 import { useAssistantDraft } from '@/lib/use-assistant-draft';
 import { assistantApi, emptyAssistantDraft, verifyAssistantState, type AssistantConflict, type AssistantError, type AssistantState, type AssistantStep } from '@/lib/assistant-api';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate, formatDateTime, formatMoney, formatTimeSlot } from '@/lib/format';
-import { annualVisitAmounts } from '@/lib/annual-booking';
+import { annualVisitAmounts,annualVisitDates } from '@/lib/annual-booking';
 import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
 import { bookingSupportLink, customerSupportEmail } from '@/lib/customer-support';
 import { phoneNumberError } from '@/lib/phone-number.mjs';
@@ -31,6 +32,9 @@ type HelpTopic = 'service' | 'pricing' | 'dates' | 'changes' | null;
 const steps: AssistantStep[] = ['service', 'address', 'schedule', 'review'];
 const labels: Record<AssistantStep, string> = { service: 'Service', address: 'Address', schedule: 'Schedule', review: 'Review' };
 const times = ['09:00 AM - 11:00 AM', '11:00 AM - 01:00 PM', '02:00 PM - 04:00 PM', '04:00 PM - 06:00 PM'];
+const timeCodes:Record<string,'09:00 - 11:00'|'11:00 - 13:00'|'14:00 - 16:00'|'16:00 - 18:00'>={
+  '09:00 AM - 11:00 AM':'09:00 - 11:00','11:00 AM - 01:00 PM':'11:00 - 13:00','02:00 PM - 04:00 PM':'14:00 - 16:00','04:00 PM - 06:00 PM':'16:00 - 18:00',
+};
 const prompts: Record<Screen, string> = {
   menu: 'I can help you create a booking and explain your service options.',
   service: 'What care do you need, and how many aircon units should we service?',
@@ -89,12 +93,15 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   const selected = getBookingSelection(options, selection, draft.numberOfUnits);
   const locked = Boolean(operation || uncertain || authExpired || draftConflict || ['conflict', 'auth'].includes(store.saveStatus));
   const availability = useBookingAvailability({ serviceAddress: draft.serviceAddress, selectedDate: draft.preferredDate, enabled: Boolean(open && context && screen === 'schedule' && !locked) });
+  const annual = Boolean(draft.packageId);
+  const slotDates=annual?annualVisitDates(draft.preferredDate):draft.preferredDate?[draft.preferredDate]:[];
+  const slotAvailability=useSlotAvailability(slotDates,Boolean(open&&context&&screen==='schedule'&&!locked));
+  const selectedSlotFull=Boolean(draft.timeWindow&&!slotAvailability.isAvailable(timeCodes[draft.timeWindow]));
   const receipt = record?.status === 'completed' ? record.booking : null;
   const quote = record?.quote;
   const estimate = quote && !store.dirty && (screen === 'review' || screen === 'success') ? quote.totalAmount : selected.estimate;
-  const annual = Boolean(draft.packageId);
   const phoneError = phoneTouched ? phoneNumberError(draft.phone) : '';
-  const canReview = selected.valid && !phoneNumberError(draft.phone) && draft.serviceAddress.trim().length >= 5 && !bookingDateError(draft.preferredDate) && Boolean(draft.timeWindow);
+  const canReview = selected.valid && !phoneNumberError(draft.phone) && draft.serviceAddress.trim().length >= 5 && !bookingDateError(draft.preferredDate) && Boolean(draft.timeWindow) && !selectedSlotFull;
   const savedProblem = ['error', 'conflict', 'auth'].includes(store.saveStatus);
   const bookingId = receipt?.id ?? receipt?.bookingId;
 
@@ -185,7 +192,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
       if (message) { setError(message); return false; }
     }
     if (screen === 'schedule') {
-      const message = bookingDateError(draft.preferredDate) || (!draft.timeWindow ? 'Choose a preferred arrival window.' : '') || (availability.selectedDateBlocked ? bookingConflictMessage : '');
+      const message = bookingDateError(draft.preferredDate) || (!draft.timeWindow ? 'Choose a preferred arrival window.' : '') || (availability.selectedDateBlocked ? bookingConflictMessage : '') || (selectedSlotFull?'This service time is fully booked. Choose another available time.':'');
       if (message) { setError(message); return false; }
     }
     return true;
@@ -333,7 +340,8 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
             {availability.selectedDateBlocked && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{bookingConflictMessage}</p>}
             {availability.error && <p className="text-xs text-muted-foreground">The calendar check is unavailable. All dates will be checked before confirmation.</p>}
             {conflicts.length > 0 && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p className="font-semibold">Choose another first date to resolve these visits:</p><ul className="mt-2 space-y-2">{conflicts.map(item => <li key={item.visitNumber}><strong>Visit {item.visitNumber} · {formatDate(item.preferredDate)}</strong><br />{item.message}</li>)}</ul></div>}
-            <p className="text-sm font-medium">Preferred arrival window</p><div className="grid grid-cols-2 gap-2">{times.map(time => <Button key={time} className="h-auto whitespace-normal py-3" variant={draft.timeWindow === time ? 'default' : 'outline'} aria-pressed={draft.timeWindow === time} onClick={() => store.update({ timeWindow: time })}>{time}</Button>)}</div>
+            <p className="text-sm font-medium">Preferred arrival window</p><div className="grid grid-cols-2 gap-2">{times.map(time => <Button key={time} className="h-auto whitespace-normal py-3" disabled={!slotAvailability.isAvailable(timeCodes[time])} variant={draft.timeWindow === time ? 'default' : 'outline'} aria-pressed={draft.timeWindow === time} onClick={() => store.update({ timeWindow: time })}>{time}{slotAvailability.isAvailable(timeCodes[time])?'':' · Fully booked'}</Button>)}</div>
+            {slotAvailability.loading&&<p className="text-xs text-muted-foreground">Checking team availability…</p>}{selectedSlotFull&&<p role="alert" className="text-xs text-red-700">This service time is fully booked.</p>}
             {annual && <AnnualBookingSummary firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={selected.estimate} collapsible />}
             <p className="text-xs leading-5 text-muted-foreground">All {annual ? 'four dates' : 'dates'} are checked before review and again on confirmation. {bookingFrequencyNotice}</p>
           </fieldset>}

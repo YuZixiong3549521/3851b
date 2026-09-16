@@ -9,6 +9,8 @@ import { writeSelectedBookings,describeCreatedBooking } from './customer/booking
 import { assertAnnualRescheduleWindow } from './customer/annual-bookings.mjs';
 import { isCalendarDate,assertBookableDate } from './customer/booking-schedule.mjs';
 import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './customer/address-service.mjs';
+import { assertTeamCapacity,lockServiceDates,normalizeBookingSlot } from './scheduling.mjs';
+import { acceptStaffInvitation,validateStaffInvitation } from './staff-invitations.mjs';
 
 export const offers = [
  ['Air Conditioning Cleaning',65,45],['Regular Maintenance',85,55],
@@ -22,8 +24,10 @@ const date=z.string().refine(isCalendarDate,'Choose a valid service date.');
 export async function sessionUser(pool,req,role) {
  const id=req.session.portalUser?.id;
  if(!id) throw new AppError('Please sign in to continue.',401);
- const [[user]]=await pool.execute(`SELECT u.user_id AS id,u.full_name AS name,u.full_name AS fullName,u.email,u.phone,r.role_name AS role,p.property_type AS propertyType
- FROM user_account u JOIN role r ON r.role_id=u.role_id LEFT JOIN web_customer_profile p ON p.user_id=u.user_id WHERE u.user_id=? AND u.status='Active'`,[id]);
+ const [[user]]=await pool.execute(`SELECT u.user_id AS id,u.full_name AS name,u.full_name AS fullName,u.email,u.phone,r.role_name AS role,
+ p.property_type AS propertyType,a.access_level AS accessLevel
+ FROM user_account u JOIN role r ON r.role_id=u.role_id LEFT JOIN web_customer_profile p ON p.user_id=u.user_id
+ LEFT JOIN admin_profile a ON a.user_id=u.user_id WHERE u.user_id=? AND u.status='Active'`,[id]);
  if(!user || (role && user.role!==role)) throw new AppError('This account cannot access this portal.',403);
  return user;
 }
@@ -65,9 +69,12 @@ export async function changePublicBooking(pool,user,id,action,input){
   const [[address]]=await c.execute('SELECT address_line FROM service_address WHERE address_id=?',[b.address_id]);
   await assertAddressBookingLimit(c,customer.customerId,address.address_line,patch.preferredDate,bookingId);
   if(b.subscription_id){const [[subscription]]=await c.execute('SELECT start_date,end_date,subscription_status FROM customer_subscription WHERE subscription_id=? AND customer_id=? FOR UPDATE',[b.subscription_id,customer.customerId]);if(!subscription||subscription.subscription_status!=='Active'||patch.preferredDate<String(subscription.start_date).slice(0,10)||patch.preferredDate>String(subscription.end_date).slice(0,10))throw new AppError('Choose a date within your active membership period.',409);}
-  await c.execute('UPDATE booking SET preferred_service_date=?,preferred_time_slot=? WHERE booking_id=?',[patch.preferredDate,patch.timeWindow,bookingId]);
+  const slot=normalizeBookingSlot(patch.timeWindow);
+  await lockServiceDates(c,[b.preferred_service_date,patch.preferredDate]);
+  await assertTeamCapacity(c,[{date:patch.preferredDate,start:slot.start,end:slot.end}],{excludeBookingId:bookingId});
+  await c.execute('UPDATE booking SET preferred_service_date=?,preferred_time_slot=?,slot_start=?,slot_end=? WHERE booking_id=?',[patch.preferredDate,patch.timeWindow,slot.start,slot.end,bookingId]);
  }
- else {await c.execute("UPDATE booking SET booking_status='Cancelled' WHERE booking_id=?",[bookingId]);await restoreMembershipVisit(c,bookingId);}
+ else {await lockServiceDates(c,[b.preferred_service_date]);await c.execute("UPDATE booking SET booking_status='Cancelled' WHERE booking_id=?",[bookingId]);await restoreMembershipVisit(c,bookingId);}
  await c.execute('INSERT INTO booking_change_request(booking_id,request_type,requested_service_date,requested_time_slot,reason,request_status) VALUES (?,?,?,?,?,?)',[bookingId,action==='reschedule'?'Reschedule':'Cancel',patch.preferredDate||null,patch.timeWindow||null,'Customer self-service before assignment','Approved']);
  await c.execute('INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note) VALUES (?,?,?,?,?)',[bookingId,b.booking_status,action==='reschedule'?b.booking_status:'Cancelled',user.id,action==='reschedule'?'Customer rescheduled before assignment.':'Customer cancelled before assignment.']);
  await c.commit();return {success:true};
@@ -94,6 +101,8 @@ export function createPublicRouter(pool){
   res.json({success:true,user,csrf:req.session.csrf});
  });
  r.post('/logout',(req,res,next)=>req.session.destroy(e=>e?next(e):res.clearCookie('coolcare.sid').json({success:true})));
+ r.post('/staff-invitations/validate',limiter,async(req,res)=>res.json({success:true,invitation:await validateStaffInvitation(pool,req.body?.token)}));
+ r.post('/staff-invitations/accept',limiter,async(req,res)=>res.json(await acceptStaffInvitation(pool,req,req.body)));
  r.get('/offers',async(_req,res)=>{const options=await getBookingOptions(pool);res.json({currency:'SGD',offers:[...options.services.map(service=>({name:service.name,base:service.basePrice,perUnit:service.additionalUnitPrice,serviceId:service.serviceId,code:service.code,pricingNote:service.pricingNote})),...options.bundles.map(bundle=>({name:bundle.name,base:bundle.price,perUnit:bundle.additionalUnitPrice,packageId:bundle.packageId,serviceIds:bundle.serviceIds,includedVisits:bundle.includedVisits,code:bundle.code,pricingNote:bundle.pricingNote}))]});});
  r.use(async(req,_res,next)=>{req.customerUser=await sessionUser(pool,req,'Customer');next();});
  r.get('/bookings/user/:userId',async(req,res)=>{

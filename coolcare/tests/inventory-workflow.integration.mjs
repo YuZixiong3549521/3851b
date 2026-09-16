@@ -41,7 +41,12 @@ test('technician stock-out requires own work order, explicit excess acknowledgem
  async function req(path,method='GET',body){const response=await fetch(`http://127.0.0.1:${server.address().port}`+path,{method,headers:{Cookie:cookie,'Content-Type':'application/json','X-CSRF-Token':csrf},body:body===undefined?undefined:JSON.stringify(body)});if(response.headers.get('set-cookie'))cookie=response.headers.get('set-cookie').split(';')[0];return response;}
  try{
   assert.equal((await req('/api/technician/jobs')).status,401);csrf=(await(await req('/api/session')).json()).csrf;
-  csrf=(await(await req('/api/public/login','POST',{email:'chris.lim@coolcare.demo',password:'CoolCareDemo2026!'})).json()).csrf;
+  const [[activeTechnician]]=await c.execute(`SELECT u.email FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id
+    JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id
+    WHERE w.current_status NOT IN ('Completed','Cancelled') AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
+    ORDER BY w.job_id LIMIT 1`);
+  assert.ok(activeTechnician,'An active technician work order is required for stock issue.');
+  csrf=(await(await req('/api/public/login','POST',{email:activeTechnician.email,password:'CoolCareDemo2026!'})).json()).csrf;
   const {jobs}=await(await req('/api/technician/jobs')).json();const job=jobs.find(item=>!['Completed','Cancelled'].includes(item.status));assert.ok(job,'An active technician work order is required for stock issue.');
   const detail=await(await req(`/api/technician/jobs/${job.jobId}`)).json();assert.equal(detail.job.address,job.address);assert.ok(Array.isArray(detail.addressHistory));assert.ok(detail.addressHistory.length<=3);assert.ok(Array.isArray(detail.packageHistory));
   const options=await(await req(`/api/technician/jobs/${job.jobId}/parts`)).json();const selected=options.parts.find(p=>p.part_id===part.part_id);assert.equal(selected.recommended,job.acCount);
@@ -51,7 +56,7 @@ test('technician stock-out requires own work order, explicit excess acknowledgem
   const retry=await(await req(`/api/technician/jobs/${job.jobId}/stock-out`,'POST',accepted)).json();assert.equal(retry.replayed,true);assert.equal(retry.transaction_id,saved.transaction_id);
   const [[actor]]=await c.execute('SELECT admin_user_id,performed_by_user_id FROM inventory_transaction WHERE transaction_id=?',[saved.transaction_id]);assert.equal(actor.admin_user_id,null);assert.ok(actor.performed_by_user_id);
   assert.equal((await req(`/api/technician/jobs/${job.jobId}/stock-out`,'POST',{...accepted,request_id:randomUUID(),transaction_type:'Stock In'})).status,403);
-  const [[otherJob]]=await c.execute(`SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id WHERE u.email='farah.ahmad@coolcare.demo' LIMIT 1`);
+  const [[otherJob]]=await c.execute(`SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id WHERE u.email<>? LIMIT 1`,[activeTechnician.email]);
   assert.ok(otherJob);assert.equal((await req(`/api/technician/jobs/${otherJob.job_id}/parts`)).status,404);assert.equal((await req(`/api/technician/jobs/${otherJob.job_id}/stock-out`,'POST',{...accepted,request_id:randomUUID(),expected_stock:saved.stock_after})).status,404);
   assert.equal((await req(`/api/technician/jobs/${job.jobId}/stock-out`,'POST',{...accepted,request_id:randomUUID(),quantity:100,expected_stock:saved.stock_after})).status,409);
   assert.equal((await req(`/api/transactions/${received.transaction_id}`,'PUT',{})).status,401);

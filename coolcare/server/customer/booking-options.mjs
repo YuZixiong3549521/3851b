@@ -51,7 +51,7 @@ export function exceedsWeeklyLimit(existingDates, proposedDate) {
 export async function assertAddressBookingLimit(connection, customerId, addressLine, preferredDate, excludeBookingId = 0) {
   const [bookings] = await connection.execute(`SELECT b.preferred_service_date AS serviceDate,sa.address_line AS addressLine
     FROM booking b JOIN service_address sa ON sa.address_id=b.address_id
-    WHERE b.customer_id=? AND b.booking_status <> 'Cancelled' AND b.booking_id <> ?
+    WHERE b.customer_id=? AND b.booking_status NOT IN ('Cancelled','Rejected') AND b.booking_id <> ?
     AND b.preferred_service_date BETWEEN DATE_SUB(?,INTERVAL 6 DAY) AND DATE_ADD(?,INTERVAL 6 DAY)`,
   [customerId,excludeBookingId,preferredDate,preferredDate]);
   const address = normalizeAddress(addressLine);

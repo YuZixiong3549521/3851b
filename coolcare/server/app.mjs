@@ -2,6 +2,7 @@ import express from 'express';
 import { createCustomerRouter } from './customer/router.mjs';
 import { createTechnicianRouter } from './technician.mjs';
 import { createPublicRouter } from './public-site.mjs';
+import { createAdminOperationsRouter } from './admin-operations.mjs';
 import session from 'express-session';
 import { rateLimit } from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
@@ -181,8 +182,16 @@ export function createApp({
   });
   app.get('/api/session', async (req, res) => {
     req.session.csrf ??= randomBytes(24).toString('hex');
+    let user=req.session.user??null;
+    if(user) {
+      const [[current]]=await pool.execute(`SELECT u.user_id,u.full_name,u.email,a.access_level
+        FROM user_account u JOIN role r ON r.role_id=u.role_id JOIN admin_profile a ON a.user_id=u.user_id
+        WHERE u.user_id=? AND u.status='Active' AND r.role_name='Admin'`,[user.user_id]);
+      user=current??null;
+      req.session.user=user;
+    }
     res.json({
-      user: req.session.user ?? null,
+      user,
       csrf: req.session.csrf,
       low_stock_threshold: threshold,
     });
@@ -220,7 +229,7 @@ export function createApp({
         })
         .parse(req.body);
       const [[user]] = await pool.execute(
-        `SELECT u.user_id, u.full_name, u.email, u.password_hash, u.status, r.role_name FROM user_account u JOIN role r ON u.role_id=r.role_id JOIN admin_profile a ON a.user_id=u.user_id WHERE u.email=?`,
+      `SELECT u.user_id, u.full_name, u.email, u.password_hash, u.status, r.role_name,a.access_level FROM user_account u JOIN role r ON u.role_id=r.role_id JOIN admin_profile a ON a.user_id=u.user_id WHERE u.email=?`,
         [data.email.trim().toLowerCase()],
       );
       const hash =
@@ -244,6 +253,7 @@ export function createApp({
         user_id: user.user_id,
         full_name: user.full_name,
         email: user.email,
+        access_level: user.access_level,
       };
       req.session.portalUser = { id: user.user_id };
       req.session.csrf = randomBytes(24).toString('hex');
@@ -259,12 +269,14 @@ export function createApp({
     if (!req.session.user)
       throw new AppError('Please sign in with an admin account.', 401);
     const [[user]] = await pool.execute(
-      `SELECT u.user_id FROM user_account u JOIN role r ON r.role_id=u.role_id JOIN admin_profile a ON a.user_id=u.user_id WHERE u.user_id=? AND u.status='Active' AND r.role_name='Admin'`,
+      `SELECT u.user_id AS userId,u.full_name AS fullName,u.email,a.access_level AS accessLevel FROM user_account u JOIN role r ON r.role_id=u.role_id JOIN admin_profile a ON a.user_id=u.user_id WHERE u.user_id=? AND u.status='Active' AND r.role_name='Admin'`,
       [req.session.user.user_id],
     );
     if (!user) throw new AppError('Admin access is no longer available.', 403);
+    req.adminUser=user;
     next();
   });
+  app.use('/api/admin',createAdminOperationsRouter(pool,{origin}));
   app.get('/api/overview', async (req, res) => {
     const [[summary]] = await pool.execute(
       `SELECT COUNT(*) AS total_parts, COALESCE(SUM(current_stock),0) AS total_units, COALESCE(SUM(current_stock*unit_price),0) AS stock_value, COALESCE(SUM(current_stock<=?),0) AS low_stock, COALESCE(SUM(current_stock=0),0) AS out_of_stock FROM part`,

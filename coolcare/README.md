@@ -9,10 +9,11 @@
 - 首页：http://localhost:3000/
 - 客户端：http://localhost:3000/customer
 - 技师端：http://localhost:3000/technician/index.html
-- 库存后台：http://localhost:3000/admin/inventory
+- Admin Console：http://localhost:3000/admin/orders
+- 库存兼容入口：http://localhost:3000/admin/inventory
 
 本目录为整合后的主应用；`technician/` 在构建时输出静态页面到 `public/technician/`。
-客户 API 和库存 API 共用 `server/app.mjs` 及同一 MySQL 连接池。
+客户、Admin、Technician 和库存 API 共用 `server/app.mjs` 及同一 MySQL 连接池。公开注册只创建 Customer；员工通过邀请链接激活。首次没有 Owner 时可在 `coolcare/` 运行 `npm run staff:bootstrap-owner -- --email <email>`，脚本会提示输入其他资料和密码。
 数据库环境文件由 setup 自动生成，已加入 Git 忽略。
 
 启动和构建不依赖仓库外或旧上传项目中的文件。数据库结构、迁移、种子数据、共享 UI 和技师源码均保存在本目录。

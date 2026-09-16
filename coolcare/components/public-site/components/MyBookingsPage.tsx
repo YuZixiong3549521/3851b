@@ -74,7 +74,7 @@ const MyBookingsPage:
     savingBookingId,
     setSavingBookingId
   ] = useState<number | null>(null);
-  const activeBookings = bookings.filter(booking => !['Completed', 'Cancelled'].includes(booking.booking_status));
+  const activeBookings = bookings.filter(booking => !['Completed', 'Rejected', 'Cancelled'].includes(booking.booking_status));
 
   // =====================================
   // LOAD BOOKINGS
@@ -508,7 +508,7 @@ const MyBookingsPage:
                 0
             }}
           >
-            View and manage your active service requests. Completed and cancelled bookings are kept in your booking history.
+            View and manage your active service requests. Completed, rejected and cancelled bookings are kept in your booking history.
           </p>
           <a href="/customer/history" className="mt-3 inline-block text-sm font-semibold text-primary underline">View booking history</a>
         </div>

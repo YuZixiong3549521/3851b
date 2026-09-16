@@ -6,6 +6,7 @@ import type {
   BookingAvailabilityInput,
   BookingInput,
   BookingOptions,
+  SlotAvailability,
   CreatedBooking,
   CreateAddressInput,
   CustomerContext,
@@ -59,6 +60,8 @@ export const coolcareApi = {
     Object.entries(input).forEach(([key, value]) => { if (value !== undefined) query.set(key, String(value)); });
     return apiRequest<BookingAvailability>(`/booking-availability?${query}`);
   },
+  getSlotAvailability: async (dates: string[]) =>
+    apiRequest<SlotAvailability>(`/slot-availability?dates=${encodeURIComponent(dates.join(','))}`),
   createAddress: async (input: CreateAddressInput) => {
     const result = await apiRequest<{ address: Address }>('/addresses', { method: 'POST', body: JSON.stringify(input) });
     if (!result.address || !Number.isInteger(Number(result.address.addressId)) || Number(result.address.addressId) < 1 || typeof result.address.addressLine !== 'string') {

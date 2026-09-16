@@ -37,14 +37,24 @@ CREATE TABLE technician (
   user_id INT UNSIGNED NOT NULL UNIQUE,
   availability_status ENUM('Available', 'Busy', 'Unavailable', 'On Leave')
     NOT NULL DEFAULT 'Available',
+  last_assigned_at DATETIME NULL,
   CONSTRAINT fk_technician_user FOREIGN KEY (user_id)
     REFERENCES user_account(user_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+CREATE TABLE technician_capacity_lock (
+  lock_id TINYINT UNSIGNED PRIMARY KEY,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT chk_technician_capacity_lock CHECK (lock_id = 1)
+) ENGINE=InnoDB;
+INSERT INTO technician_capacity_lock(lock_id) VALUES (1);
 
 CREATE TABLE admin_profile (
   user_id INT UNSIGNED PRIMARY KEY,
   department VARCHAR(100),
   position VARCHAR(100),
+  access_level ENUM('Owner', 'Admin') NOT NULL DEFAULT 'Admin',
+  owner_singleton TINYINT GENERATED ALWAYS AS (CASE WHEN access_level = 'Owner' THEN 1 ELSE NULL END) STORED UNIQUE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_admin_profile_user FOREIGN KEY (user_id)
@@ -148,8 +158,10 @@ CREATE TABLE booking (
   subscription_id INT UNSIGNED NULL,
   preferred_service_date DATE NOT NULL,
   preferred_time_slot VARCHAR(50) NOT NULL,
+  slot_start TIME NULL,
+  slot_end TIME NULL,
   problem_description TEXT,
-  booking_status ENUM('Submitted', 'Confirmed', 'Assigned', 'On The Way', 'In Progress', 'Completed', 'Cancelled')
+  booking_status ENUM('Submitted', 'Confirmed', 'Assigned', 'On The Way', 'In Progress', 'Completed', 'Rejected', 'Cancelled')
     NOT NULL DEFAULT 'Submitted',
   total_amount DECIMAL(10,2),
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -258,6 +270,7 @@ CREATE TABLE assignment (
   booking_id INT UNSIGNED NOT NULL,
   technician_id INT UNSIGNED NOT NULL,
   assigned_by_admin_id INT UNSIGNED NOT NULL,
+  dispatch_request_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NULL UNIQUE,
   assignment_status ENUM('Assigned', 'Accepted', 'Declined', 'Reassigned', 'Cancelled', 'Completed')
     NOT NULL DEFAULT 'Assigned',
   assigned_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -391,6 +404,7 @@ INSERT INTO role (role_name, description) VALUES
 ON DUPLICATE KEY UPDATE description = VALUES(description);
 
 CREATE INDEX idx_booking_customer_status ON booking(customer_id, booking_status);
+CREATE INDEX idx_booking_capacity ON booking(preferred_service_date, booking_status, slot_start, slot_end);
 CREATE INDEX idx_booking_service ON booking(service_id);
 CREATE INDEX idx_subscription_customer_status ON customer_subscription(customer_id, subscription_status);
 CREATE INDEX idx_assignment_booking_status ON assignment(booking_id, assignment_status);

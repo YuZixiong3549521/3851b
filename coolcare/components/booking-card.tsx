@@ -23,6 +23,7 @@ export function BookingCard({ booking, history = false, showActions = true }: { 
       </div>
       {booking.technicianName && <div className="mt-5 rounded-xl bg-secondary/8 p-4"><Info icon={UserRound} label="Assigned technician" value={booking.technicianName} /></div>}
       <p className="mt-4 text-sm leading-6 text-muted-foreground">{bookingStatusDescription(booking.status)}</p>
+      {booking.status === 'Rejected' && booking.rejectionReason && <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-950"><p className="font-semibold">Reason from the service team</p><p className="mt-1 whitespace-pre-wrap break-words leading-6">{booking.rejectionReason}</p></div>}
       <div className="mt-5 flex flex-wrap items-center justify-between gap-4 border-t border-border/70 pt-5">
         <div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{booking.annualBundle ? 'This visit estimate' : history ? 'Recorded amount' : 'Visit estimate'}</p><p className="mt-1 text-lg font-bold">{booking.totalAmount == null ? 'To be confirmed' : formatMoney(booking.totalAmount)}</p>{booking.annualBundle && <p className="mt-1 text-xs text-muted-foreground">{formatMoney(booking.annualBundle.totalAmount)} for all four visits · Pay after each service</p>}</div>
         {showActions && <div className="flex flex-wrap gap-2">

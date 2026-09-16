@@ -1,7 +1,7 @@
 type ScheduledBooking = { preferredDate: string; timeSlot: string; status: string; bookingId?: number };
 
 export function isActiveBooking(booking: { status: string }) {
-  return !['completed', 'cancelled', 'canceled'].includes(booking.status.trim().toLowerCase());
+  return !['completed', 'rejected', 'cancelled', 'canceled'].includes(booking.status.trim().toLowerCase());
 }
 
 function appointmentStart(booking: ScheduledBooking): number {

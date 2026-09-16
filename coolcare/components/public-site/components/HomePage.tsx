@@ -76,7 +76,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onOpenBooking, c
   }, [priceRefresh]);
   const selectedAssessment = bookingForHomepageIssue(selectedIssue);
   const customer = currentUser && (!currentUser.role || currentUser.role === 'Customer');
-  const dashboardHref = currentUser?.role === 'Admin' ? '/admin/inventory' : currentUser?.role === 'Technician' ? '/technician/index.html' : '/customer';
+  const dashboardHref = currentUser?.role === 'Admin' ? '/admin/orders' : currentUser?.role === 'Technician' ? '/technician/index.html' : '/customer';
 
   return (
     <main>

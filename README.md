@@ -28,15 +28,15 @@ npm start
 | 客户预约管理（取消、改期） | `/customer/bookings`（旧 `/#/bookings` 自动转入） |
 | 客户 Dashboard / 预约 / 历史 | `/customer` |
 | 技师工单 | `/technician/index.html` |
-| 库存后台 | `/admin/inventory` |
+| Admin Console（订单、派单、员工、库存） | `/admin/orders`（`/admin/inventory` 继续兼容） |
 
 已有测试账号共用密码 `CoolCareDemo2026!`：
 
 - 客户：`alice.tan@coolcare.demo`
 - 技师：`chris.lim@coolcare.demo`
-- 管理员：`norshida@coolcare.demo`
+- Owner 管理员：`norshida@coolcare.demo`
 
-主页登录后按账号角色进入对应区域；客户可通过页头 Dashboard 进入原客户中心。也支持注册新客户。旧 SQLite 导入账号保留原有 bcrypt 密码，不覆盖同邮箱现有账号。
+主页登录后按账号角色进入对应区域；客户可通过页头 Dashboard 进入原客户中心。公开注册始终只创建 Customer。Admin 和 Technician 使用 48 小时有效的一次性邀请链接激活账号；Owner 可邀请 Admin，Owner 或 Admin 可邀请 Technician。旧 SQLite 导入账号保留原有 bcrypt 密码，不覆盖同邮箱现有账号。
 
 主页将服务和报价合并展示，空调数量选择实时使用 `/api/public/offers` 的目录价格计算清洗、维修检查、年度套餐总价及每次费用；目录加载失败时提示重试，不显示虚构价格。游客选定的服务、数量及故障说明在本次页面的登录/注册流程中保留，登录后继续预约。普通客户登录进入 Dashboard，所有 My Bookings 入口进入同一客户订单页。主页提前展示至少 14 天、工作日、同地址滚动 7 天最多两次及等待确认的预约规则。
 
@@ -53,10 +53,11 @@ npm start
 所有运行模块使用同一个 MySQL `coolcare_service_app`，地址为本机 `3307`。网站运行不依赖 SQLite 或旧项目后端。
 
 - 登录使用服务端 HttpOnly 会话、bcrypt 校验、CSRF 和登录频率限制，不保存浏览器模拟账号或密码。
-- 客户与技师身份来自登录会话，每个账号只能读取自己的预约或工单。管理员库存权限独立校验。
+- 客户与技师身份来自登录会话，每个账号只能读取自己的预约或工单。Admin Console 按 Admin/Owner 权限校验；只有 Owner 能邀请或停用 Admin、转交所有权。
 - 主页和原客户页面共用 booking、service_address、aircon_unit 等业务表，预约状态与资料可交叉读取。
-- 主页支持预约提交、查询、取消和改期。只有尚未分配的 Submitted 预约可自助修改；已安排工单的预约需联系服务团队。
+- 主页支持预约提交、查询、取消和改期。只有尚未分配的 Submitted 预约可自助修改；已确认或已安排的预约需联系服务团队。
 - 预约写入、设备关联、备注、状态历史采用事务；重复请求 ID 防止重复预约。
+- Submitted、Confirmed、Assigned、On The Way 和 In Progress 预约占用团队时段容量；提交和改期在数据库锁内重新检查，年度套餐四次访问原子占位。
 - `database/05-public-site.sql` 增加注册附加资料、预约补充资料、旧数据映射表。`npm run db:up` 自动执行非破坏性迁移与权限更新。
 - 可选的旧 SQLite 导入保留来源映射和原始状态；旧库没有价格时，导入金额保留为未知。
 
@@ -73,25 +74,27 @@ node scripts/import-accare.mjs "C:/path/to/ac-care.db"
 
 原页面的 Google / Apple 登录及邮件找回密码没有配置外部提供商，界面会明确提示不可用。预约通知已接入邮件队列，本机默认由 Mailpit 测试邮箱接收；这与找回密码是不同功能。首页已移除未实现的促销和示例评价，价格卡片读取当前数据库目录。
 
-本次整合现有页面，未新增后台派单页面或技师状态编辑页面。客户预约仍需有有效 assignment 与 work_order 后才进入技师工单列表。服务端会话目前存放内存，重启后需要重新登录。
+Admin Console 已提供订单审核、自动派单、员工邀请和库存管理；Technician 工单只能按顺序推进状态。服务端会话目前存放内存，重启后需要重新登录。
 
 ## 最新业务规则与预约邮件
 
 客户预约只需选择服务、填写地址和空调数量、选择时间并确认，不再逐台勾选已登记的空调。地址步骤的 **Add new address** 会将地址保存到当前客户账号，供本次和后续预约使用；没有已登记设备的新客户也可预约。Dashboard 的 UPCOMING 卡片及数量按新加坡当前时间筛选尚未开始的有效预约，并显示最近一单。
 
-新预约和自助改期须按新加坡日期至少提前 **14 个自然日**，只接受 **周一至周五**，周六日不营业。My Bookings 只显示未完成、未取消的订单；Completed 和 Cancelled 在 Booking History 查看，旧记录保留。
+新预约和自助改期须按新加坡日期至少提前 **14 个自然日**，只接受 **周一至周五**，周六日不营业。My Bookings 显示 Submitted、Confirmed、Assigned 及进行中的订单；Completed、Rejected 和 Cancelled 在 Booking History 查看，拒绝原因对客户可见。
 
 同一客户对同一地址，在任意连续 7 天的服务日期内最多预约两次，取消的订单不计入。客户必须注册并登录，只需选择 **Cleaning、Repair 或 Annual Cleaning Bundle**。Membership 已退出新预约流程，原有订单、订阅和报告保留。
 
 唯一年度 Bundle 一次提交保存四条关联预约，日期为首次预约及其后第 3、6、9 个月，后续日期遇周末顺延到周一，确认前显示实际日期；预约仍需服务团队确认。全年价格按四次分摊，每次服务后结算，不会在创建预约时声称完成支付。普通或化学清洗由技师检查后记录，额外工作另行确认报价。当前价格、参考来源和交付边界见 [SERVICE-PRICING.md](coolcare/SERVICE-PRICING.md)。
 
-管理员可修改入库/出库数量、时间及描述，修改保留审计记录并同步库存。技师可在自己的工单内出库；配件按每台空调用量标准提示超量，并可查看相关地址及年度 Bundle 维护报告。清洗方法评估记录同样有权限、并发版本和修改审计。
+订单固定经过 `Submitted → Confirmed → Assigned → On The Way → In Progress → Completed`。Admin 必须先在 Orders 批准，再在 Dispatch 单独触发自动派单；系统按目标日期负载、最久未派单时间和 technician ID，从无重叠工单的 Active/Available Technician 中选择。拒绝订单必须填写客户可见原因并进入 Rejected；取消、拒绝和完成都会释放团队容量。
+
+Owner/Admin 可邀请 Technician 并管理其可用状态；Owner 还可管理 Admin，并把唯一 Owner 身份原子转交给另一名 Active Admin。管理员可修改入库/出库数量、时间及描述，修改保留审计记录并同步库存。技师可在自己的工单内出库；配件按每台空调用量标准提示超量，并可查看相关地址及年度 Bundle 维护报告。清洗方法评估记录同样有权限、并发版本和修改审计。
 
 运行 `npm run db:up` 会保留旧数据并更新所需数据表，同时启动本机测试邮箱。预约后打开 **http://localhost:8025** 查看自动生成的邮件。该邮箱用于课堂演示，**不会向客户外部邮箱投递**；正式投递需要在本机配置经过验证的 SMTP 发件账号。详细规则、数据表及配置见 [BOOKING-WORKFLOWS.md](coolcare/BOOKING-WORKFLOWS.md)。
 
 ## 验证
 
-本轮仓库与数据整理已验证：脱离旧目录的安装配置、全新临时库建表与迁移、两次合成数据导入、旧数据替换前回滚试运行，以及本机替换后的 79 项回归测试、TypeScript 和完整构建。浏览器检查覆盖 390px 客户首页/历史/报告及桌面技师套餐历史、库存余额和修改审计。完整私人备份保存在本机 `.local/backups/`，不提交 GitHub。
+本轮仓库与数据整理已验证：脱离旧目录的安装配置、非破坏性迁移、合成数据、事务回滚测试、TypeScript 和完整构建。员工流程的真实 MySQL 集成测试覆盖邀请安全、Owner 唯一性、审核与派单分离、轮询、工单状态顺序及最后一个容量名额的并发竞争。完整私人备份保存在本机 `.local/backups/`，不提交 GitHub。
 
 ```powershell
 npm test
@@ -100,7 +103,7 @@ node coolcare/node_modules/typescript/bin/tsc --noEmit -p coolcare/tsconfig.json
 npm run build
 ```
 
-当前 **79 项测试**通过（37 项主应用、4 项技师、38 项真实 MySQL 集成测试）。覆盖客户与记录归属、CSRF、事务、幂等重试、地址保留与默认/归档、账号切换保护、预约限制、年度套餐、库存审计、时间戳时区及私有照片 HTTP 权限；新增助手草稿恢复、版本冲突、真实并发锁、四次日期复核、价格变更重新确认和电话号码格式检查。数据库测试通过事务回滚清理，自增编号可能出现空号。
+当前 **82 项测试**通过（37 项主应用、4 项技师、41 项真实 MySQL 集成测试）。覆盖客户与记录归属、CSRF、事务、幂等重试、地址保留与默认/归档、账号切换保护、预约限制、年度套餐、库存审计、时间戳时区及私有照片 HTTP 权限；还覆盖助手草稿恢复、员工邀请、Owner 转交、审核、拒绝、派单、重新派单、技师状态和团队容量并发锁。数据库测试通过事务回滚清理，自增编号可能出现空号。
 
 本轮浏览器检查覆盖桌面及 390px 手机布局：最近预约、年度分组与详情切换、资料保存后重新读取、新增/默认/编辑/归档地址、保留订单原地址、重复预约日期禁用、英文日历与键盘选日、真实改期/取消及历史分流、助手创建四次年度预约、报告时长、缺失照片提示及真实文件放大。日期格式测试使用中文语言环境和多个系统时区，日期控件固定显示英文。测试账号、地址、订单和照片均独立于已有数据，验证后清理。
 

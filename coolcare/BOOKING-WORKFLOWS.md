@@ -6,9 +6,11 @@
 - Each customer can have at most **two non-cancelled bookings for the same service address in any consecutive seven calendar days**, measured using preferred service dates. This is not a requirement to book seven days in advance and is not a limit of two bookings across the whole system.
 - The server checks both creation APIs and rescheduling. Formatting differences in an address are normalized; distinct apartment/unit identifiers must remain distinguishable. All creation and rescheduling requests for a customer serialize behind a database row lock, so simultaneous requests cannot bypass the limit.
 - Existing records remain intact, including any historical records that exceed the new policy. Cancelling an eligible request frees its place in the limit.
-- Both My Bookings pages show only active requests, including unfinished requests whose scheduled date has passed. Completed and cancelled records remain accessible under Booking History (`/customer/history`); completed service reports remain available. List APIs retain historical records for compatibility.
+- Both My Bookings pages show active requests, including Confirmed, Assigned and unfinished requests whose scheduled date has passed. Completed, Rejected and Cancelled records remain accessible under Booking History (`/customer/history`); rejection reasons and completed service reports remain available. List APIs retain historical records for compatibility.
 - Registered, signed-in customers choose exactly one of **Cleaning**, **Repair** and **Annual Cleaning Bundle**. The public booking dialog, customer booking page and assistant share this selection model. New requests cannot use retired services, memberships or old multi-service selections to bypass it.
 - Prices come from the database. Each booking stores service and price snapshots; historical single-service and multi-service orders remain readable. Current prices and the Singapore market references used to choose them are documented in [SERVICE-PRICING.md](SERVICE-PRICING.md).
+- Submitted, Confirmed, Assigned, On The Way and In Progress bookings reserve team capacity. Rejected, Cancelled and Completed bookings release it. The four standard time windows remain unchanged; availability responses expose only `available`, never staff counts.
+- Customer submission and rescheduling lock each affected service date and repeat the capacity check inside the write transaction. Annual bundles lock and reserve all four visit dates atomically, so one full date rolls back the whole series. A current locking read prevents two concurrent transactions from both taking the final team place.
 
 ## Saved customer assistant API
 
@@ -48,6 +50,7 @@ All endpoints below are under `/api/customer`, require a customer session, and e
 | `PATCH /bookings/:id/reschedule` | `{ preferredDate, timeWindow }`; applies the same notice, weekday, quarterly-window and address quota rules as the existing public endpoint. |
 | `PATCH /bookings/:id/status` | `{ status: "Cancelled" }`; only an unassigned Submitted visit can first be cancelled. |
 | `GET /booking-availability` | `serviceAddress` and/or owned `addressId`, `from`, `to` (maximum 62 days), optional owned `excludeBookingId`; returns blocked dates, nearby existing bookings, earliest date and Singapore timezone. Advisory only. |
+| `GET /slot-availability` | Comma-separated `dates` (one to four calendar dates); returns the four standard slots with an `available` boolean. Dashboard booking, rescheduling and the assistant share this advisory endpoint; the write transaction remains authoritative. |
 | `PATCH /profile` | `{ fullName, phone }`; sign-in email remains read-only. |
 | `PATCH /addresses/:id` | Same address fields as creation; safely preserves historical locations. |
 | `PATCH /addresses/:id/default` | Makes an active owned address the default. |
@@ -70,6 +73,24 @@ The series stores the annual price; each booking stores only its allocated visit
 
 Membership selection and new membership redemption are removed. Old package definitions are retired from the active catalogue; existing subscriptions, balances, bookings and reports remain intact for historical reading. Cancelling an eligible historical membership order still restores a previously reserved visit. Migration reruns preserve configured prices and existing series.
 
+## Staff invitations and ownership
+
+Public registration always creates a Customer and does not accept a staff role. The first Owner is created with `npm run staff:bootstrap-owner`; migration assigns the earliest valid Admin as Owner for an existing installation, with Norshida as the realistic-data Owner. A generated unique key ensures there can be only one Owner.
+
+An Owner can invite an Admin. An Owner or Admin can invite a Technician. The invited account remains Inactive until the recipient opens the 48-hour link and sets a password at `/activate`. Invitation records store only a SHA-256 token hash, reject an existing email, can be revoked or reissued, and can be consumed once. Validation and acceptance use `POST /api/public/staff-invitations/validate` and `POST /api/public/staff-invitations/accept`; neither endpoint discloses the stored token.
+
+Only the Owner can view, invite, suspend or reactivate Admin accounts and transfer ownership. Transfer locks both Admin profiles and changes the old Owner and target Active Admin in one transaction, preserving exactly one Owner. Owner/Admin can manage Technician account and availability status. A Technician with a future unfinished assignment must be reassigned before suspension, Unavailable or On Leave can be applied; the operation also refuses a change that would leave any reserved slot above the remaining team capacity.
+
+## Review, dispatch and job status
+
+The booking state machine is `Submitted → Confirmed → Assigned → On The Way → In Progress → Completed`. Approval and dispatch are deliberately separate Admin actions: Orders changes only Submitted to Confirmed; Dispatch accepts only Confirmed and creates the assignment and work order. Rejecting a Submitted booking requires a customer-visible reason and moves it to the distinct Rejected state. Customer cancellation remains Cancelled.
+
+Automatic dispatch considers only Active Technicians whose availability is neither Unavailable nor On Leave and who have no overlapping unfinished work order. It chooses the lowest unfinished-work count on the target date, then the oldest `last_assigned_at`, then technician ID. The transaction locks the booking, service date and technician roster, rechecks conflicts, creates assignment/work order/history, updates the booking to Assigned and advances `last_assigned_at`. A request UUID makes a successful retry return the original result. Before work starts, redispatch cancels the old work order, marks the old assignment Reassigned and creates the replacement atomically.
+
+Admin operations are mounted under `/api/admin`: booking list/detail, `/bookings/:id/approve`, `/reject`, `/dispatch` and `/redispatch`; technician/admin invitations and status; invitation revocation; and `/owner/transfer`. The UI is the unified Admin Console at `/admin/orders`, with Orders, Dispatch, Technicians, Owner-only Admins and Inventory. `/admin/inventory` remains a compatible entry point.
+
+Technicians update only their own work through `PATCH /api/technician/jobs/:jobId/status`. The accepted next state is fixed by the current state, so steps cannot be skipped or repeated. Each transition updates booking, work order, assignment and booking history in one transaction. Completion releases capacity.
+
 ## Inventory and technician access
 
 - Each part has a stock unit, recommended quantity per AC and usage note. Recommendations are planning defaults and are editable by an administrator. New catalog parts start with zero stock; actual receiving is recorded through Stock In.
@@ -80,9 +101,9 @@ Membership selection and new membership redemption are removed. Old package defi
 - Technician details show the linked address, recent three completed reports for that address, earlier completed visits in the same annual series and legacy package records, work performed and inventory use. Actual duration is shown only where start/end timestamps were recorded; missing historic timings are not invented.
 - A technician can save Regular or Chemical cleaning plus an assessment note on their own active Cleaning work order. `work_order_cleaning_assessment` and its revision table preserve the decision, author, time and version. Stale edits are rejected, retries are idempotent and completed/cancelled jobs are read-only. This records a technical assessment; it does not add a charge or approve extra work on the customer's behalf.
 
-## Booking emails and the local inbox
+## Transactional emails and the local inbox
 
-New bookings enqueue one email in `booking_email_outbox` in the same database transaction. A background worker sends committed messages, records the result and retries transient failures. An email failure does not delete a saved booking or require the customer to create another order. The recipient comes from the authenticated customer's database account.
+Business changes enqueue email events in the same transaction through the generic outbox. Supported messages include staff invitation, order received, order approved, rejection with its reason, and assignment with the Technician name. Existing booking email rows remain compatible. A background worker sends committed messages, records the result and retries transient failures. Delivery failure never rolls back an already committed business operation.
 
 Default local mode uses [Mailpit](https://mailpit.axllent.org/docs/install/docker/) at **http://localhost:8025**. It receives real SMTP messages from the application and displays them in a browser. It is a classroom/test inbox: messages addressed to customer accounts are captured locally and **are not delivered to external personal inboxes**. Mailpit data is stored in a separate Docker volume. It has no external forwarding configuration.
 

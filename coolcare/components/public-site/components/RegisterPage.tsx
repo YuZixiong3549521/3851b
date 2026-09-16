@@ -166,6 +166,7 @@ const handleSubmit = async (e: React.FormEvent) => {
             <p className="text-sm text-ac-on-surface-variant mt-1.5">
               Book aircon services, manage your addresses and keep your maintenance reports in one place
             </p>
+            <p className="mt-2 text-xs font-medium text-ac-on-surface-variant">Staff accounts are invitation only. This form creates a Customer account.</p>
           </div>
 
           {/* Error Alert */}

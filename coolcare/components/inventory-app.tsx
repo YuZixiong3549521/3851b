@@ -8,6 +8,10 @@ import {
   ArrowLeftRight,
   Database,
   ShieldCheck,
+  ClipboardCheck,
+  Send,
+  Users,
+  UserCog,
   LogOut,
   X,
 } from 'lucide-react';
@@ -35,12 +39,14 @@ import {
 } from '@/components/ui/alert-dialog';
 import {
   AppContext,
+  ADMIN_ROOT,
   ROOT,
   api,
   setCsrf,
   errorText,
   type User,
 } from '@/lib/inventory-client';
+import { OrdersPage,OrderDetails,StaffPage } from '@/components/admin-operations-views';
 import {
   Overview,
   PartsPage,
@@ -77,7 +83,7 @@ export default function InventoryApp() {
   }, []);
   const go = useCallback(
     (target: string, force = false) => {
-      if (!target.startsWith(ROOT)) return;
+      if (!target.startsWith(ADMIN_ROOT)) return;
       if (dirtyRef.current && !force) {
         setPending(target);
         return;
@@ -148,8 +154,14 @@ export default function InventoryApp() {
   useWebTools(user, go, refresh);
   const pathname = url.split('?')[0],
     params = new URLSearchParams(url.split('?')[1] || '');
-  const nav = [
-    { Icon: LayoutDashboard, label: 'Overview', path: ROOT },
+  const operationsNav = [
+    { Icon: ClipboardCheck, label: 'Orders', path: '/admin/orders' },
+    { Icon: Send, label: 'Dispatch', path: '/admin/dispatch' },
+    { Icon: Users, label: 'Technicians', path: '/admin/technicians' },
+    ...(user?.access_level==='Owner'?[{ Icon: UserCog, label: 'Admins', path: '/admin/admins' }]:[]),
+  ];
+  const inventoryNav = [
+    { Icon: LayoutDashboard, label: 'Inventory', path: ROOT },
     { Icon: Package, label: 'Parts', path: ROOT + '/parts' },
     {
       Icon: ArrowLeftRight,
@@ -157,12 +169,21 @@ export default function InventoryApp() {
       path: ROOT + '/transactions',
     },
   ];
-  const active = pathname.includes('/parts')
+  const active = pathname.startsWith('/admin/orders')
+    ? 'Orders'
+    : pathname.startsWith('/admin/dispatch')
+      ? 'Dispatch'
+      : pathname.startsWith('/admin/technicians')
+        ? 'Technicians'
+        : pathname.startsWith('/admin/admins')
+          ? 'Admins'
+          : pathname.includes('/parts')
     ? 'Parts'
     : pathname.includes('/transactions')
       ? 'Transactions'
-      : 'Overview';
+      : 'Inventory';
   const detailMatch = pathname.match(/\/parts\/(\d+)(\/edit)?$/);
+  const orderMatch=pathname.match(/^\/admin\/orders\/(\d+)$/);
   async function logout() {
     try {
       await api('/logout', 'POST', {});
@@ -182,9 +203,9 @@ export default function InventoryApp() {
           </div>
         </SidebarHeader>
         <SidebarContent className="side-content">
-          <p className="eyebrow">INVENTORY</p>
+          <p className="eyebrow">OPERATIONS</p>
           <SidebarMenu>
-            {nav.map(({ Icon, label, path }) => (
+            {operationsNav.map(({ Icon, label, path }) => (
               <SidebarMenuItem key={label}>
                 <SidebarMenuButton
                   size="lg"
@@ -194,6 +215,14 @@ export default function InventoryApp() {
                   <Icon />
                   <span>{label}</span>
                 </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+          <p className="eyebrow mt-7">INVENTORY</p>
+          <SidebarMenu>
+            {inventoryNav.map(({ Icon, label, path }) => (
+              <SidebarMenuItem key={label}>
+                <SidebarMenuButton size="lg" isActive={active===label} onClick={()=>go(path)}><Icon/><span>{label}</span></SidebarMenuButton>
               </SidebarMenuItem>
             ))}
           </SidebarMenu>
@@ -209,7 +238,7 @@ export default function InventoryApp() {
         <header className="topbar">
           <SidebarTrigger />
           <span>
-            Inventory <span className="muted">/ {active}</span>
+            Admin Console <span className="muted">/ {active}</span>
           </span>
           <span className="local-badge">LOCAL EDITION</span><PortalSwitcher current="inventory" />
           {user && (
@@ -272,7 +301,17 @@ export default function InventoryApp() {
                 refresh,
               }}
             >
-              {pathname === ROOT ? (
+              {pathname === '/admin/orders' ? (
+                <OrdersPage mode="review" params={params}/>
+              ) : pathname === '/admin/dispatch' ? (
+                <OrdersPage mode="dispatch" params={params}/>
+              ) : orderMatch ? (
+                <OrderDetails bookingId={Number(orderMatch[1])}/>
+              ) : pathname === '/admin/technicians' ? (
+                <StaffPage role="Technician"/>
+              ) : pathname === '/admin/admins' && user.access_level==='Owner' ? (
+                <StaffPage role="Admin"/>
+              ) : pathname === ROOT ? (
                 <Overview />
               ) : pathname === ROOT + '/parts' ? (
                 <PartsPage params={params} />
@@ -293,7 +332,7 @@ export default function InventoryApp() {
               ) : (
                 <section className="panel">
                   <h1>Page not found</h1>
-                  <Button onClick={() => go(ROOT)}>Back to Inventory</Button>
+                  <Button onClick={() => go('/admin/orders')}>Back to Orders</Button>
                 </section>
               )}
             </AppContext.Provider>
@@ -363,10 +402,10 @@ function Login({
     <>
       <div className="page-title">
         <div>
-          <p className="eyebrow">ADMIN / INVENTORY</p>
-          <h1>Your inventory, connected.</h1>
+          <p className="eyebrow">ADMIN CONSOLE</p>
+          <h1>Run CoolCare operations.</h1>
           <p className="muted">
-            Manage CoolCare parts and stock movements from one place.
+            Review bookings, dispatch technicians and manage inventory from one place.
           </p>
         </div>
       </div>

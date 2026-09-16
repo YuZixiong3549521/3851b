@@ -25,10 +25,18 @@ export function buildBookingMail(booking, services) {
   };
 }
 
+async function enqueueMail(connection,{eventKey,eventType,bookingId=null,invitationId=null,recipient,subject,text,html}) {
+  const [[existing]] = await connection.execute('SELECT recipient,status,delivery_mode FROM booking_email_outbox WHERE event_key=?',[eventKey]);
+  if(existing)return {status:existing.status==='Sent'?'sent':existing.delivery_mode==='disabled'?'disabled':'queued',mode:existing.delivery_mode,recipient:existing.recipient};
+  const mode=mailMode();
+  await connection.execute(`INSERT INTO booking_email_outbox
+    (booking_id,invitation_id,event_type,event_key,recipient,subject,body_text,body_html,message_id,delivery_mode)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`,[bookingId,invitationId,eventType,eventKey,recipient,subject,text,html,`<${randomUUID()}@coolcare.local>`,mode]);
+  return {status:mode==='disabled'?'disabled':'queued',mode,recipient};
+}
+
 // Called inside the booking transaction: a failed booking never produces a mail.
 export async function enqueueBookingEmail(connection, bookingId) {
-  const [[existing]] = await connection.execute('SELECT recipient,status,delivery_mode FROM booking_email_outbox WHERE booking_id=?', [bookingId]);
-  if (existing) return { status: existing.status === 'Sent' ? 'sent' : existing.delivery_mode === 'disabled' ? 'disabled' : 'queued', mode: existing.delivery_mode, recipient: existing.recipient };
   const [[booking]] = await connection.execute(`SELECT b.booking_id,u.full_name,u.email,b.preferred_service_date AS preferred_date,
     b.preferred_time_slot AS time_window,b.booking_status,b.total_amount,b.problem_description,sa.address_line,sc.service_name,
     bp.package_name,av.series_id AS annual_series_id,av.visit_number,abs.total_amount AS annual_total,
@@ -41,10 +49,36 @@ export async function enqueueBookingEmail(connection, bookingId) {
   if (!booking) throw new Error('Cannot queue mail for a missing booking.');
   const [items] = await connection.execute('SELECT service_name FROM booking_service WHERE booking_id=? ORDER BY service_id', [bookingId]);
   const mail = buildBookingMail(booking, items.map(item => item.service_name).join(', '));
-  const mode = mailMode();
-  await connection.execute(`INSERT INTO booking_email_outbox (booking_id,recipient,subject,body_text,body_html,message_id,delivery_mode)
-    VALUES (?,?,?,?,?,?,?)`, [bookingId, booking.email, mail.subject, mail.text, mail.html, `<${randomUUID()}@coolcare.local>`, mode]);
-  return { status: mode === 'disabled' ? 'disabled' : 'queued', mode, recipient: booking.email };
+  return enqueueMail(connection,{eventKey:`booking.received:${bookingId}`,eventType:'booking.received',bookingId,recipient:booking.email,...mail});
+}
+
+export async function enqueueBookingLifecycleEmail(connection,bookingId,eventType,{reason='',technicianName='',eventKey=`${eventType}:${bookingId}`}={}) {
+  if(!['booking.confirmed','booking.rejected','booking.assigned'].includes(eventType))throw new Error('Unsupported booking mail event.');
+  const [[booking]]=await connection.execute(`SELECT b.booking_id,b.preferred_service_date,b.preferred_time_slot,
+    u.full_name,u.email,sa.address_line,COALESCE(GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', '),MAX(sc.service_name)) AS services
+    FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN user_account u ON u.user_id=c.user_id
+    JOIN service_address sa ON sa.address_id=b.address_id JOIN service_catalog sc ON sc.service_id=b.service_id
+    LEFT JOIN booking_service bs ON bs.booking_id=b.booking_id WHERE b.booking_id=?
+    GROUP BY b.booking_id,b.preferred_service_date,b.preferred_time_slot,u.full_name,u.email,sa.address_line`,[bookingId]);
+  if(!booking)throw new Error('Cannot queue mail for a missing booking.');
+  const common=[['Booking reference',`#${booking.booking_id}`],['Services',booking.services],['Service date',booking.preferred_service_date],['Arrival window',booking.preferred_time_slot],['Service address',booking.address_line]];
+  const variants={
+    'booking.confirmed':{heading:'Booking confirmed',subject:`CoolCare booking #${bookingId} confirmed`,intro:'Your requested appointment has been reviewed and confirmed.',extra:[]},
+    'booking.rejected':{heading:'Booking request not approved',subject:`CoolCare booking #${bookingId} was not approved`,intro:'Our service team could not approve this booking request.',extra:[['Reason',reason]]},
+    'booking.assigned':{heading:'Technician assigned',subject:`CoolCare booking #${bookingId} technician assigned`,intro:'A technician has been assigned to your confirmed appointment.',extra:[['Technician',technicianName]]},
+  }[eventType];
+  const fields=[...common,...variants.extra];
+  const text=`Hi ${booking.full_name},\n\n${variants.intro}\n\n${fields.map(([name,value])=>`${name}: ${value}`).join('\n')}\n\nView the latest status in My Bookings.\nCoolCare`;
+  const html=`<div style="font:16px Arial,sans-serif;max-width:600px;color:#172b4d"><h1 style="color:#003f87">${escapeHtml(variants.heading)}</h1><p>Hi ${escapeHtml(booking.full_name)},</p><p>${escapeHtml(variants.intro)}</p><table style="width:100%;border-collapse:collapse">${fields.map(([name,value])=>`<tr><th style="padding:10px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd">${escapeHtml(name)}</th><td style="padding:10px;border-bottom:1px solid #ddd">${escapeHtml(value)}</td></tr>`).join('')}</table><p>View the latest status in My Bookings.</p><p>CoolCare</p></div>`;
+  return enqueueMail(connection,{eventKey,eventType,bookingId,recipient:booking.email,subject:variants.subject,text,html});
+}
+
+export async function enqueueStaffInvitationEmail(connection,{invitationId,roleName,recipient,fullName,token,origin}) {
+  const activationUrl=`${String(origin||'http://localhost:3000').replace(/\/$/,'')}/activate?token=${encodeURIComponent(token)}`;
+  const subject=`Activate your CoolCare ${roleName} account`;
+  const text=`Hi ${fullName},\n\nYou have been invited to join CoolCare as ${roleName}. Activate your account within 48 hours:\n${activationUrl}\n\nIf you did not expect this invitation, you can ignore this email.\nCoolCare`;
+  const html=`<div style="font:16px Arial,sans-serif;max-width:600px;color:#172b4d"><h1 style="color:#003f87">Activate your CoolCare account</h1><p>Hi ${escapeHtml(fullName)},</p><p>You have been invited to join CoolCare as <strong>${escapeHtml(roleName)}</strong>.</p><p><a href="${escapeHtml(activationUrl)}" style="display:inline-block;padding:12px 18px;background:#003f87;color:white;text-decoration:none;border-radius:8px">Set your password</a></p><p>This single-use link expires in 48 hours.</p><p>If you did not expect this invitation, you can ignore this email.</p></div>`;
+  return enqueueMail(connection,{eventKey:`staff.invited:${invitationId}`,eventType:'staff.invited',invitationId,recipient,subject,text,html});
 }
 
 export function createMailTransport(mode = mailMode()) {

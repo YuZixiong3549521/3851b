@@ -177,8 +177,9 @@ export async function seedRealisticData(connection,{asOf}={}) {
     const start=plusMinutes(sqlUtc(plan.date,window.start),5),end=plusMinutes(start,plan.duration??90);
     const cancelledAt=sqlUtc(plan.date<asOf?previousWeekday(addCalendarDays(plan.date,-5)):dates.past(2),'15:00:00');
     const updatedAt=plan.status==='Completed'?end:plan.status==='Cancelled'?cancelledAt:plan.status==='Assigned'?assignedAt:plan.status==='Confirmed'?confirmedAt:createdAt;
-    const [inserted]=await connection.execute(`INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,preferred_time_slot,problem_description,booking_status,total_amount,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`,[owner.customerId,plan.address.addressId,selection.services[0].serviceId,plan.date,window.label,plan.notes,plan.status,amount,createdAt,updatedAt]);
+    const slotEnd=plusMinutes(`${plan.date} ${window.start}`,120).slice(11,19);
+    const [inserted]=await connection.execute(`INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,preferred_time_slot,slot_start,slot_end,problem_description,booking_status,total_amount,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,[owner.customerId,plan.address.addressId,selection.services[0].serviceId,plan.date,window.label,window.start,slotEnd,plan.notes,plan.status,amount,createdAt,updatedAt]);
     const row={key:plan.key,bookingId:inserted.insertId,customerId:owner.customerId,addressId:plan.address.addressId,status:plan.status,date:plan.date,totalAmount:amount,service:plan.serviceCode};bookings.push(row);
     for(const unitId of plan.address.unitIds)await connection.execute('INSERT INTO booking_aircon_unit(booking_id,unit_id) VALUES (?,?)',[row.bookingId,unitId]);
     await connection.execute('INSERT INTO web_booking_details(booking_id,service_package,contact_phone,special_notes,request_id) VALUES (?,?,?,?,?)',

@@ -208,6 +208,7 @@ test('annual later-visit quota failure and fourth-email failure roll back the co
   const annual=body({packageId:bundle.packageId,serviceIds:bundle.serviceIds,preferredDate:firstDate});
   await assert.rejects(createPublicBooking(db,user,annual),error=>error.status===409);
   let [[counts]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(counts.n,2);
+  await c.execute("UPDATE booking SET booking_status='Cancelled' WHERE customer_id=?",[user.customerId]);
   const base=await db.getConnection();let queued=0;
   const broken={...db,getConnection:async()=>({...base,execute:async(sql,values)=>{
     if(sql.startsWith('INSERT INTO booking_email_outbox')&&++queued===4)throw new Error('Injected fourth email failure');

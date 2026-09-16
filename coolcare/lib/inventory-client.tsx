@@ -1,6 +1,7 @@
 'use client';
 import { createContext, useContext, useEffect, useState } from 'react';
 export const ROOT = '/admin/inventory';
+export const ADMIN_ROOT = '/admin';
 export type Part = {
   part_id: number;
   part_name: string;
@@ -34,7 +35,24 @@ export type List<T> = {
   page: number;
   pageSize: number;
 };
-export type User = { user_id: number; full_name: string; email: string };
+export type User = { user_id: number; full_name: string; email: string; access_level: 'Owner' | 'Admin' };
+export type AdminBooking = {
+  bookingId: number; status: string; preferredDate: string; timeSlot: string; totalAmount: number | null;
+  createdAt: string; customerName: string; email: string; addressLine: string; serviceName: string;
+  numberOfUnits: number; technicianName: string | null;
+};
+export type AdminBookingDetail = AdminBooking & {
+  phone: string | null; postalCode: string | null; problemDescription: string | null;
+  timeline: Array<{ historyId: number; oldStatus: string | null; status: string; note: string | null; changedAt: string; changedBy: string | null }>;
+  assignments: Array<{ assignmentId: number; status: string; assignedAt: string; technicianName: string; jobId: number; workStatus: string }>;
+};
+export type StaffMember = {
+  userId: number; technicianId?: number; fullName: string; email: string; phone: string | null; status: 'Active' | 'Inactive' | 'Suspended';
+  createdAt: string; accessLevel?: 'Owner' | 'Admin'; availability?: 'Available' | 'Busy' | 'Unavailable' | 'On Leave';
+  lastAssignedAt?: string | null; invitationId?: number | null; invitationExpiresAt?: string | null;
+  invitationAcceptedAt?: string | null; invitationRevokedAt?: string | null;
+  futureWorkOrders?: number;
+};
 export type Options = {
   parts: Part[];
   jobs: { job_id: number; current_status: string }[];

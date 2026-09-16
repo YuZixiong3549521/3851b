@@ -13,7 +13,8 @@ import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate, formatMoney } from '@/lib/format';
-import { assertBookingConfirmation } from '@/lib/annual-booking';
+import { annualVisitDates,assertBookingConfirmation } from '@/lib/annual-booking';
+import { useSlotAvailability } from '@/lib/use-slot-availability';
 import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
 import type { Address, AnnualBundle, BookingOptions, EmailNotification } from '@/lib/coolcare-types';
 import { apiFetch as fetch } from '../api';
@@ -28,6 +29,12 @@ interface BookingModalProps {
   onNavigate: (page: PageRoute) => void;
   onBookingConfirmed: (summary: string) => void;
 }
+const publicSlots=[
+  {label:'09:00 AM - 11:00 AM',code:'09:00 - 11:00'},
+  {label:'11:00 AM - 01:00 PM',code:'11:00 - 13:00'},
+  {label:'02:00 PM - 04:00 PM',code:'14:00 - 16:00'},
+  {label:'04:00 PM - 06:00 PM',code:'16:00 - 18:00'},
+] as const;
 
 export const BookingModal: React.FC<BookingModalProps> = ({
   isOpen,
@@ -113,9 +120,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [submitting,setSubmitting]=useState(false);
   const [requestId,setRequestId]=useState('');
   const availability = useBookingAvailability({ serviceAddress: address, selectedDate: date, enabled: Boolean(isOpen && currentUser && pricesReady && step === 'form' && !retryLocked) });
+  const selectedServices = getBookingSelection(options, selection, unitsCount);
+  const slotDates=selectedServices.isAnnual?annualVisitDates(date):date?[date]:[];
+  const slotAvailability=useSlotAvailability(slotDates,Boolean(isOpen&&currentUser&&pricesReady&&step==='form'&&!retryLocked));
+  const selectedSlotCode=publicSlots.find(slot=>slot.label===timeSlot)?.code??'09:00 - 11:00';
+  const selectedSlotFull=!slotAvailability.isAvailable(selectedSlotCode);
   if (!isOpen) return null;
 
-  const selectedServices = getBookingSelection(options, selection, unitsCount);
   const serviceType = selectedServices.label;
   const estimatedTotal = selectedServices.estimate;
 
@@ -129,6 +140,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   if(requestInFlight.current||addressEditorOpen||(!pendingRequest.current && (!pricesReady||!selectedServices.valid)))return;
   if (!pendingRequest.current && availability.selectedDateBlocked) { setError(bookingConflictMessage); return; }
+  if (!pendingRequest.current && selectedSlotFull) { setError('This service time is fully booked. Choose another available time.'); return; }
   if (!pendingRequest.current && (address.trim().length < 5 || address.trim().length > 255)) { setError('Enter a service address between 5 and 255 characters.'); return; }
   if (!pendingRequest.current && bookingDateError(date)) { setError(bookingDateError(date)); return; }
   requestInFlight.current = true;
@@ -286,23 +298,26 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   4. Preferred Arrival Time Window
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                  {['09:00 AM - 11:00 AM', '11:00 AM - 01:00 PM', '02:00 PM - 04:00 PM', '04:00 PM - 06:00 PM'].map(
+                  {publicSlots.map(
                     (slot) => (
                       <Button variant="ghost"
-                        key={slot}
+                        key={slot.code}
                         type="button"
-                        onClick={() => setTimeSlot(slot)}
+                        disabled={!slotAvailability.isAvailable(slot.code)}
+                        onClick={() => setTimeSlot(slot.label)}
                         className={`h-auto whitespace-normal py-2 px-2 rounded-xl border text-center transition-all cursor-pointer font-medium ${
-                          timeSlot === slot
+                          timeSlot === slot.label
                             ? 'bg-ac-primary text-ac-on-primary border-ac-primary font-bold shadow-xs'
                             : 'bg-ac-surface-container-lowest border-ac-outline-variant hover:border-ac-primary text-ac-on-surface'
                         }`}
                       >
-                        {slot}
+                        {slot.label}{slotAvailability.isAvailable(slot.code)?'':' · Fully booked'}
                       </Button>
                     )
                   )}
                 </div>
+                {slotAvailability.loading&&<p className="mt-2 text-xs text-ac-on-surface-variant">Checking team availability…</p>}
+                {selectedSlotFull&&<p role="alert" className="mt-2 text-xs text-ac-error">This service time is fully booked.</p>}
                 <p className="mt-3 rounded-xl bg-ac-primary/5 p-3 text-sm leading-6 text-ac-on-surface-variant">{bookingScheduleNotice}</p><p className="mt-2 text-xs leading-5 text-ac-on-surface-variant">{bookingFrequencyNotice}</p>
               </div>
 
@@ -369,7 +384,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                     Cancel
                   </Button>
                   <Button variant="ghost"
-                    type="submit" disabled={submitting || addressEditorOpen || (!pendingRequest.current && (!pricesReady || !selectedServices.valid || availability.selectedDateBlocked))}
+                    type="submit" disabled={submitting || addressEditorOpen || (!pendingRequest.current && (!pricesReady || !selectedServices.valid || availability.selectedDateBlocked || selectedSlotFull || slotAvailability.loading))}
                     className="flex-1 sm:flex-initial px-6 py-2.5 bg-ac-primary text-ac-on-primary rounded-full text-sm font-semibold hover:opacity-90 active:scale-95 cursor-pointer border-none shadow-sm transition-all flex items-center justify-center gap-1.5"
                   >
                     {submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm Booking'}

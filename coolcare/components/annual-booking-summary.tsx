@@ -22,6 +22,7 @@ export function AnnualBookingSummary({ firstDate, timeSlot, totalAmount, saved, 
   const visits = saved?.visits ?? annualVisitDates(firstDate ?? '').map((preferredDate, index) => ({ bookingId: undefined, visitNumber: index + 1, preferredDate, timeSlot: timeSlot ?? '', totalAmount: amounts[index], status: 'Preferred date' }));
   const completed = visits.filter(visit => visit.status === 'Completed').length;
   const cancelled = visits.filter(visit => visit.status === 'Cancelled').length;
+  const rejected = visits.filter(visit => visit.status === 'Rejected').length;
   const next = saved ? upcomingBookings(saved.visits, now)[0] : undefined;
   const showDetails = !collapsible || expanded;
   return <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 text-left text-sm">
@@ -29,7 +30,7 @@ export function AnnualBookingSummary({ firstDate, timeSlot, totalAmount, saved, 
     <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2"><span className="text-muted-foreground">Four quarterly visits</span><strong className="text-lg text-primary">{formatMoney(saved?.totalAmount ?? totalAmount)}</strong></div>
     <p className="mt-1 text-xs leading-5 text-muted-foreground">Pay after each visit. Additional work is quoted for your approval.</p>
     {saved && <div className="mt-4 space-y-2">
-      <p className="font-medium">{completed} of {visits.length} completed · {visits.length - completed - cancelled} remaining{cancelled ? ` · ${cancelled} cancelled` : ''}</p>
+      <p className="font-medium">{completed} of {visits.length} completed · {visits.length - completed - cancelled - rejected} remaining{rejected ? ` · ${rejected} rejected` : ''}{cancelled ? ` · ${cancelled} cancelled` : ''}</p>
       <div role="progressbar" aria-label="Completed annual cleaning visits" aria-valuemin={0} aria-valuemax={visits.length} aria-valuenow={completed} className="h-1.5 overflow-hidden rounded-full bg-primary/10"><div className="h-full rounded-full bg-primary" style={{ width: `${visits.length ? completed / visits.length * 100 : 0}%` }} /></div>
       <p className="text-muted-foreground">{next ? `Next visit: ${formatDate(next.preferredDate)}` : 'No future visit is currently scheduled.'}</p>
     </div>}

@@ -21,8 +21,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate, formatMoney } from '@/lib/format';
-import { assertBookingConfirmation } from '@/lib/annual-booking';
+import { annualVisitDates,assertBookingConfirmation } from '@/lib/annual-booking';
 import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
+import { useSlotAvailability } from '@/lib/use-slot-availability';
 import type { Address, BookingInput, BookingOptions, CreatedBooking, CustomerContext } from '@/lib/coolcare-types';
 
 const steps = ['Service', 'Address', 'Schedule', 'Review'];
@@ -70,6 +71,9 @@ export default function BookServicePage() {
   const total = form.numberOfUnits > 0 ? selectedServices.estimate : 0;
   const minimumDate = earliestBookingDate();
   const availability = useBookingAvailability({ serviceAddress: form.serviceAddress, selectedDate: form.preferredDate, enabled: Boolean(context && !created && step >= 2 && !retryLocked) });
+  const slotDates=selectedServices.isAnnual?annualVisitDates(form.preferredDate):form.preferredDate?[form.preferredDate]:[];
+  const slotAvailability=useSlotAvailability(slotDates,Boolean(context&&!created&&step>=3&&!retryLocked));
+  const selectedSlotFull=Boolean(form.timeSlot&&!slotAvailability.isAvailable(form.timeSlot));
 
   const submitBooking = useCallback(async (input: BookingInput) => {
     if (!context) throw new Error('Wait for your account details to load before booking.');
@@ -157,6 +161,7 @@ export default function BookServicePage() {
     if (step === 3 && bookingDateError(form.preferredDate)) return bookingDateError(form.preferredDate);
     if (step === 3 && availability.selectedDateBlocked) return bookingConflictMessage;
     if (step === 3 && !form.timeSlot) return 'Choose a preferred time slot.';
+    if (step === 3 && selectedSlotFull) return 'This service time is fully booked. Choose another available time.';
     return '';
   }
 
@@ -169,7 +174,7 @@ export default function BookServicePage() {
 
   async function handleConfirm() {
     if (!selectedServices.valid || !form.timeSlot || submittingRequest.current || addressEditorOpen) return;
-    if (!pendingRequest.current && availability.selectedDateBlocked) { setFieldError(bookingConflictMessage); return; }
+    if (!pendingRequest.current && (availability.selectedDateBlocked||selectedSlotFull)) { setFieldError(availability.selectedDateBlocked?bookingConflictMessage:'This service time is fully booked. Choose another available time.'); return; }
     try {
       await submitBooking({
         ...selectedServices.payload,
@@ -236,7 +241,7 @@ export default function BookServicePage() {
 
               {step === 3 && (
                 <div><h2 className="text-xl font-bold">Choose a preferred schedule</h2><p className="mt-1 text-sm text-muted-foreground">{bookingScheduleNotice}</p>
-                  <div className="mt-6 grid gap-5 sm:grid-cols-2"><div><FieldLabel htmlFor="preferred-date">{selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'}</FieldLabel><EnglishDatePicker id="preferred-date" label={selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'} min={minimumDate} aria-invalid={Boolean(bookingDateError(form.preferredDate)) || availability.selectedDateBlocked} value={form.preferredDate} blockedDates={availability.blockedDates} onMonthChange={availability.onMonthChange} onChange={value => { setForm(current => ({ ...current, preferredDate: value })); setFieldError(bookingDateError(value)); }} className="mt-2" /></div><div><FieldLabel htmlFor="time-slot">Preferred time</FieldLabel><Select value={form.timeSlot || undefined} onValueChange={(value) => setForm((current) => ({ ...current, timeSlot: value as BookingInput['timeSlot'] }))}><SelectTrigger id="time-slot" className="mt-2 h-12 w-full"><SelectValue placeholder="Choose a time slot" /></SelectTrigger><SelectContent>{timeSlots.map((slot) => <SelectItem key={slot} value={slot}>{slot}</SelectItem>)}</SelectContent></Select></div></div>
+                  <div className="mt-6 grid gap-5 sm:grid-cols-2"><div><FieldLabel htmlFor="preferred-date">{selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'}</FieldLabel><EnglishDatePicker id="preferred-date" label={selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'} min={minimumDate} aria-invalid={Boolean(bookingDateError(form.preferredDate)) || availability.selectedDateBlocked} value={form.preferredDate} blockedDates={availability.blockedDates} onMonthChange={availability.onMonthChange} onChange={value => { setForm(current => ({ ...current, preferredDate: value })); setFieldError(bookingDateError(value)); }} className="mt-2" /></div><div><FieldLabel htmlFor="time-slot">Preferred time</FieldLabel><Select value={form.timeSlot || undefined} onValueChange={(value) => setForm((current) => ({ ...current, timeSlot: value as BookingInput['timeSlot'] }))}><SelectTrigger id="time-slot" className="mt-2 h-12 w-full"><SelectValue placeholder="Choose a time slot" /></SelectTrigger><SelectContent>{timeSlots.map((slot) => <SelectItem key={slot} value={slot} disabled={!slotAvailability.isAvailable(slot)}>{slot}{slotAvailability.isAvailable(slot)?'':' · Fully booked'}</SelectItem>)}</SelectContent></Select>{slotAvailability.loading&&<p className="mt-2 text-xs text-muted-foreground">Checking team availability…</p>}{slotAvailability.error&&<p className="mt-2 text-xs text-amber-800">Availability will be checked again when you confirm.</p>}{selectedSlotFull&&<p role="alert" className="mt-2 text-xs text-red-700">This service time is fully booked.</p>}</div></div>
                   <BookingAvailabilityNotice availability={availability} />
                   <p className="mt-3 text-xs text-muted-foreground">{bookingFrequencyNotice} The service team will confirm availability.</p>
                   {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} collapsible /></div>}
@@ -260,7 +265,7 @@ export default function BookServicePage() {
               )}
 
               {fieldError && <FieldError className="mt-5">{fieldError}</FieldError>}
-              <div className="fixed inset-x-0 bottom-[calc(64px+max(8px,env(safe-area-inset-bottom)))] z-30 flex items-center justify-between gap-3 border-t bg-background/95 px-5 py-3 backdrop-blur lg:static lg:mt-8 lg:border-0 lg:bg-transparent lg:p-0"><Button variant="ghost" disabled={step === 1 || submitting || retryLocked || addressEditorOpen} onClick={() => { setFieldError(''); setStep((current) => Math.max(1, current - 1)); }}><ArrowLeft className="size-4" aria-hidden="true" />Back</Button>{step < 4 ? <Button disabled={addressEditorOpen || (step === 3 && availability.selectedDateBlocked)} onClick={nextStep}>Continue<ArrowRight className="size-4" aria-hidden="true" /></Button> : <Button onClick={handleConfirm} disabled={submitting || (!retryLocked && availability.selectedDateBlocked)}>{submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm booking'}<Check className="size-4" aria-hidden="true" /></Button>}</div>
+              <div className="fixed inset-x-0 bottom-[calc(64px+max(8px,env(safe-area-inset-bottom)))] z-30 flex items-center justify-between gap-3 border-t bg-background/95 px-5 py-3 backdrop-blur lg:static lg:mt-8 lg:border-0 lg:bg-transparent lg:p-0"><Button variant="ghost" disabled={step === 1 || submitting || retryLocked || addressEditorOpen} onClick={() => { setFieldError(''); setStep((current) => Math.max(1, current - 1)); }}><ArrowLeft className="size-4" aria-hidden="true" />Back</Button>{step < 4 ? <Button disabled={addressEditorOpen || (step === 3 && (availability.selectedDateBlocked||selectedSlotFull||slotAvailability.loading))} onClick={nextStep}>Continue<ArrowRight className="size-4" aria-hidden="true" /></Button> : <Button onClick={handleConfirm} disabled={submitting || (!retryLocked && (availability.selectedDateBlocked||selectedSlotFull))}>{submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm booking'}<Check className="size-4" aria-hidden="true" /></Button>}</div>
             </CardContent></Card>
           </>
         )}

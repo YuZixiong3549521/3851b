@@ -6,7 +6,7 @@ import { getDemoCustomer } from './customer.mjs';
 import { createBooking, getBookingReport, listBookings,getBookingDetail } from './booking-service.mjs';
 import { getBookingOptions } from './booking-options.mjs';
 import { createCustomerAddress,manageCustomerAddress } from './address-service.mjs';
-import { updateCustomerProfile,getBookingAvailability } from './customer-management.mjs';
+import { updateCustomerProfile,getBookingAvailability,getBookingSlotAvailability } from './customer-management.mjs';
 import { getOwnedReportPhoto } from './report-photos.mjs';
 import { getAssistantDraft,saveAssistantDraft,reviewAssistantDraft,confirmAssistantDraft,newAssistantDraft } from './assistant-workflow.mjs';
 
@@ -67,6 +67,9 @@ app.delete('/addresses/:id',asyncRoute(async(request,response)=>{
 }));
 app.get('/booking-availability',asyncRoute(async(request,response)=>{
   response.json(await getBookingAvailability(pool,request.customerUser.id,request.query));
+}));
+app.get('/slot-availability',asyncRoute(async(request,response)=>{
+  response.json(await getBookingSlotAvailability(pool,request.query.dates));
 }));
 
 app.get('/booking-options', asyncRoute(async (request,response) => {

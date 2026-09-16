@@ -122,6 +122,32 @@ export async function getTechnicianJobDetails(pool, technicianId, jobId) {
   return {job:{...job,report:report?attach(report):null,inventory:inventory.filter(t=>t.jobId===jobId),cleaningAssessment:cleaningAssessment??null},addressHistory:addressHistory.map(attach),packageHistory:packageHistory.map(attach),packages,annualHistory:annualHistory.map(attach),cleaningAssessmentHistory};
 }
 
+const statusTransition={Assigned:'On The Way','On The Way':'In Progress','In Progress':'Completed'};
+export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw) {
+  const data=z.object({requestId:z.uuid(),expectedStatus:z.enum(['Assigned','On The Way','In Progress']),status:z.enum(['On The Way','In Progress','Completed'])}).strict().parse(raw);
+  const connection=await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[work]]=await connection.execute(`SELECT w.*,a.technician_id,a.assignment_status,b.booking_status
+      FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
+      JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id
+      JOIN booking b ON b.booking_id=w.booking_id
+      WHERE w.job_id=? AND t.user_id=? AND u.status='Active' FOR UPDATE`,[jobId,technicianUserId]);
+    if(!work||['Declined','Reassigned','Cancelled'].includes(work.assignment_status))throw new AppError('Job not found for this technician.',404);
+    if(work.current_status===data.status){await connection.commit();return {jobId,status:data.status,replayed:true};}
+    if(work.current_status!==data.expectedStatus||statusTransition[work.current_status]!==data.status) {
+      throw new AppError('Reload this work order and complete each status step in order.',409);
+    }
+    await connection.execute('UPDATE work_order SET current_status=? WHERE job_id=?',[data.status,jobId]);
+    await connection.execute('UPDATE booking SET booking_status=? WHERE booking_id=?',[data.status,work.booking_id]);
+    await connection.execute('UPDATE assignment SET assignment_status=? WHERE assignment_id=?',[data.status==='Completed'?'Completed':'Accepted',work.assignment_id]);
+    const notes={'On The Way':'Technician is travelling to the confirmed service address.','In Progress':'Technician arrived and started the service.','Completed':'Technician completed the service visit.'};
+    await connection.execute(`INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)
+      VALUES (?,?,?,?,?)`,[work.booking_id,work.booking_status,data.status,technicianUserId,notes[data.status]]);
+    await connection.commit();return {jobId,bookingId:work.booking_id,status:data.status,replayed:false};
+  }catch(error){await connection.rollback();throw error;}finally{connection.release();}
+}
+
 async function stockOptions(pool,technicianId,jobId) {
   const [job]=await getTechnicianJobs(pool,technicianId,jobId);
   if(!job)throw new AppError('Job not found for this technician.',404);
@@ -149,6 +175,7 @@ export function createTechnicianRouter(pool) {
     res.json(await stockOptions(pool,technician.technicianId,idSchema.parse(req.params.jobId)));
   });
   router.patch('/jobs/:jobId/cleaning-assessment',async(req,res)=>res.json(await saveCleaningAssessment(pool,req.technicianUser.id,idSchema.parse(req.params.jobId),req.body)));
+  router.patch('/jobs/:jobId/status',async(req,res)=>res.json(await updateTechnicianJobStatus(pool,req.technicianUser.id,idSchema.parse(req.params.jobId),req.body)));
   router.post('/jobs/:jobId/stock-out',async(req,res)=>{
     const jobId=idSchema.parse(req.params.jobId);
     if(req.body.transaction_type!==undefined&&req.body.transaction_type!=='Stock Out')throw new AppError('Technicians can only issue stock.',403);

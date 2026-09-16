@@ -4,6 +4,7 @@ import { getDemoCustomer } from './customer.mjs';
 import { lockCustomer,normalizeAddress,exceedsWeeklyLimit } from './booking-options.mjs';
 import { isCalendarDate,addCalendarDays,minimumBookingDate,nextWeekday,isWeekday,BOOKING_TIME_ZONE } from './booking-schedule.mjs';
 import { addressLineSchema } from './address-service.mjs';
+import { getTeamSlotAvailability } from '../scheduling.mjs';
 
 export async function updateCustomerProfile(pool,userId,untrustedInput) {
   const parsed=z.object({fullName:z.string().trim().min(1).max(120),phone:z.string().trim().max(30).refine(value=>value===''||value.length>=3,'Enter a valid phone number.').nullable(),expectedUserId:z.coerce.number().int().positive().optional()}).strict().safeParse(untrustedInput);
@@ -53,7 +54,7 @@ export async function getBookingAvailability(pool,userId,untrustedInput) {
     const [rows]=await pool.execute(`SELECT b.booking_id AS bookingId,b.preferred_service_date AS preferredDate,
       b.preferred_time_slot AS timeSlot,b.booking_status AS status,sa.address_line AS addressLine
       FROM booking b JOIN service_address sa ON sa.address_id=b.address_id
-      WHERE b.customer_id=? AND b.booking_status<>'Cancelled' AND b.booking_id<>?
+      WHERE b.customer_id=? AND b.booking_status NOT IN ('Cancelled','Rejected') AND b.booking_id<>?
       AND b.preferred_service_date BETWEEN ? AND ? ORDER BY b.preferred_service_date,b.booking_id`,
       [customer.customerId,input.excludeBookingId??0,addCalendarDays(input.from,-6),addCalendarDays(input.to,6)]);
     existingBookings=rows.filter(row=>normalizeAddress(row.addressLine)===normalizeAddress(addressLine)).map(({addressLine,...booking})=>booking);
@@ -65,4 +66,10 @@ export async function getBookingAvailability(pool,userId,untrustedInput) {
     if(date<earliestDate||!isWeekday(date)||exceedsWeeklyLimit(existingDates,date))blockedDates.push(date);
   }
   return {blockedDates,existingBookings,earliestDate,timeZone:BOOKING_TIME_ZONE};
+}
+
+export async function getBookingSlotAvailability(pool,untrustedDates) {
+  const dates=String(untrustedDates??'').split(',').map(value=>value.trim()).filter(Boolean);
+  if(!dates.length||dates.length>4||dates.some(value=>!isCalendarDate(value)))throw new HttpError(400,'Choose between one and four valid service dates.');
+  return getTeamSlotAvailability(pool,dates);
 }

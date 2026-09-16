@@ -53,6 +53,114 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+@scope (body:has(.inventory-surface)) {
+  .admin-detail-grid,
+  .admin-staff-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+    gap: 22px;
+    align-items: start;
+  }
+  .admin-staff-grid {
+    grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  }
+  .admin-timeline {
+    margin-top: 20px;
+    display: grid;
+    gap: 0;
+  }
+  .admin-timeline li {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    gap: 12px;
+    min-height: 72px;
+    position: relative;
+  }
+  .admin-timeline li > span {
+    width: 11px;
+    height: 11px;
+    margin-top: 5px;
+    border-radius: 999px;
+    background: var(--primary);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 14%, white);
+  }
+  .admin-timeline li:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 18px;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+  }
+  .admin-timeline strong,
+  .admin-timeline small {
+    display: block;
+  }
+  .admin-timeline small,
+  .admin-timeline p {
+    margin-top: 4px;
+    color: var(--muted-foreground);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  @media (max-width: 900px) {
+    .admin-detail-grid,
+    .admin-staff-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  @media (max-width: 650px) {
+    .admin-operations-table [data-slot='table-container'] {
+      overflow: visible;
+    }
+    .admin-operations-table [data-slot='table'],
+    .admin-operations-table [data-slot='table-body'],
+    .admin-operations-table [data-slot='table-row'] {
+      display: block;
+      width: 100%;
+    }
+    .admin-operations-table [data-slot='table-header'] {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+    .admin-operations-table [data-slot='table-row'] {
+      padding: 10px 4px;
+    }
+    .admin-operations-table [data-slot='table-cell'] {
+      position: relative;
+      display: block;
+      min-height: 42px;
+      padding: 10px 12px 10px 112px;
+      text-align: left !important;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .admin-operations-table [data-slot='table-cell']::before {
+      content: attr(data-label);
+      position: absolute;
+      top: 11px;
+      left: 12px;
+      width: 86px;
+      color: var(--muted-foreground);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .admin-operations-table [data-slot='table-cell']:has(.actions:empty) {
+      display: none;
+    }
+    .admin-operations-table [data-slot='select'] {
+      width: 100%;
+    }
+  }
+}
+
 body {
   font-family: 'Inter', 'Segoe UI', Arial, Helvetica, sans-serif;
 }
