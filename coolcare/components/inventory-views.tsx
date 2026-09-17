@@ -104,7 +104,7 @@ export function Overview() {
     <>
       <PageTitle
         title="Inventory Overview"
-        subtitle="An up-to-date view of your parts and stock."
+        subtitle="Current stock quantities, values, and reorder warnings."
         actions={
           <>
             <Button variant="outline" onClick={() => go(txPath())}>
@@ -126,35 +126,40 @@ export function Overview() {
               {
                 label: 'TOTAL STOCK VALUE',
                 value: money(data.summary.stock_value),
-                note: 'Current units × unit price',
+                note: 'Value of on-hand stock at current unit prices',
                 icon: Wallet,
                 target: ROOT + '/parts?sort=value&order=desc',
               },
               {
                 label: 'TOTAL PARTS',
                 value: data.summary.total_parts,
-                note: 'Across all part statuses',
+                note: 'Part records across all statuses',
                 icon: Package,
                 target: ROOT + '/parts',
               },
               {
                 label: 'LOW STOCK',
                 value: data.summary.low_stock,
-                note: `${threshold} units or fewer · includes zero`,
+                note: `At or below ${threshold} units, including zero`,
                 icon: CircleAlert,
                 target: ROOT + '/parts?stock=low',
               },
               {
-                label: 'TOTAL UNITS',
+                label: 'UNITS ON HAND',
                 value: data.summary.total_units,
-                note: `${data.summary.out_of_stock} parts out of stock`,
+                note:
+                  data.summary.out_of_stock === 0
+                    ? 'No parts are currently out of stock'
+                    : `${data.summary.out_of_stock} ${data.summary.out_of_stock === 1 ? 'part is' : 'parts are'} currently out of stock`,
                 icon: ArrowLeftRight,
                 target: ROOT + '/parts?sort=stock&order=desc',
               },
             ].map(({ label, value, note, icon: Icon, target }) => (
-              <Button variant="ghost"
-                className="stat text-left"
+              <Button
+                variant="ghost"
+                className="stat h-auto min-w-0 shrink whitespace-normal text-left"
                 key={label}
+                aria-label={`${label}: ${value}. ${note}`}
                 onClick={() => go(target)}
               >
                 <span>
@@ -170,7 +175,7 @@ export function Overview() {
             <section className="panel">
               <div className="panel-heading">
                 <h2>Stock levels</h2>
-                <span className="muted meta">Lowest stock first</span>
+                <span className="muted meta">Sorted by lowest quantity</span>
               </div>
               {data.parts.length ? (
                 <div className="stock-chart">
@@ -221,16 +226,19 @@ export function Overview() {
                 />
               )}
               <p className="form-hint">
-                Low-stock threshold: {threshold} units. Inventory values use the
-                current unit price.
+                Low stock means {threshold} units or fewer. Stock value uses
+                each part&apos;s current unit price.
               </p>
             </section>
             <section className="panel attention-panel">
               <CircleAlert className="attention-icon" />
-              <h2>Needs attention</h2>
+              <h2>Low-stock items</h2>
               <p className="attention-total">
                 {data.summary.low_stock}
-                <span> low-stock parts</span>
+                <span>
+                  {' '}
+                  low-stock {data.summary.low_stock === 1 ? 'part' : 'parts'}
+                </span>
               </p>
               {data.parts
                 .filter((p) => p.current_stock <= threshold)
@@ -242,7 +250,10 @@ export function Overview() {
                     onClick={() => go(partPath(p.part_id))}
                   >
                     <span>{p.part_name}</span>
-                    <b>{p.current_stock} left</b>
+                    <b>
+                      {p.current_stock}{' '}
+                      {p.current_stock === 1 ? 'unit' : 'units'} remaining
+                    </b>
                   </Button>
                 ))}
               {!data.summary.low_stock && (
@@ -255,7 +266,7 @@ export function Overview() {
                 className="w-full"
                 onClick={() => go(ROOT + '/parts?stock=low')}
               >
-                Review stock
+                Review low-stock parts
                 <ArrowRight />
               </Button>
             </section>

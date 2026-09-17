@@ -602,11 +602,23 @@ h2 {
   gap: 18px;
   margin-bottom: 26px;
 }
-.stat {
+.stats .stat {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  align-content: start;
+  align-items: start;
+  justify-content: stretch;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 138px;
   background: white;
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 23px;
+  padding: 20px 22px;
+  line-height: 1.35;
+  white-space: normal;
 }
 .stat > span {
   color: #64768a;
@@ -616,14 +628,20 @@ h2 {
 }
 .stat strong {
   display: block;
-  font-size: 30px;
-  margin: 10px 0 4px;
+  min-width: 0;
+  font-size: clamp(25px, 2vw, 30px);
+  margin: 2px 0 0;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 .stat small {
+  display: block;
   color: #697d8d;
   font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
 }
 .panel {
   background: white;
@@ -687,13 +705,12 @@ form label {
     font-size: 25px;
   }
   .stats {
+    grid-template-columns: 1fr;
     gap: 10px;
   }
-  .stat {
+  .stats .stat {
     padding: 16px;
-  }
-  .stat strong {
-    font-size: 24px;
+    min-height: 124px;
   }
   .local-badge {
     display: none;
@@ -1286,7 +1303,7 @@ form [data-slot='select-trigger'] {
   .table-panel {
     padding: 0;
   }
-  .stat strong {
+  .stats .stat strong {
     font-size: 23px;
   }
   .date-filter {
