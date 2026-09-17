@@ -277,6 +277,11 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       secondDispatch.technician.technicianId,
       firstDispatch.technician.technicianId,
     );
+    // Submitted requests also reserve capacity. Fill any remaining team places
+    // instead of assuming every local database contains exactly two technicians.
+    for (let index = 2; index < technicians.length; index++) {
+      await create(`Capacity filler ${randomUUID()}, Singapore`);
+    }
     await assert.rejects(
       create(`Capacity QA ${randomUUID()}, Singapore`),
       (error) => error.status === 409 && /fully booked/i.test(error.message),
