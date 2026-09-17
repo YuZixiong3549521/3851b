@@ -46,6 +46,11 @@ export type AdminBookingDetail = AdminBooking & {
   timeline: Array<{ historyId: number; oldStatus: string | null; status: string; note: string | null; changedAt: string; changedBy: string | null }>;
   assignments: Array<{ assignmentId: number; status: string; assignedAt: string; technicianName: string; jobId: number; workStatus: string }>;
 };
+export type AdminSchedule = {
+  from: string;
+  to: string;
+  rows: AdminBooking[];
+};
 export type StaffMember = {
   userId: number; technicianId?: number; fullName: string; email: string; phone: string | null; status: 'Active' | 'Inactive' | 'Suspended';
   createdAt: string; accessLevel?: 'Owner' | 'Admin'; availability?: 'Available' | 'Busy' | 'Unavailable' | 'On Leave';

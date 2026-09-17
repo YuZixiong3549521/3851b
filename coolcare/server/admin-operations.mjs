@@ -5,6 +5,16 @@ import { AppError, idSchema } from './inventory.mjs';
 import { enqueueBookingLifecycleEmail } from './booking-email.mjs';
 import { inviteStaff } from './staff-invitations.mjs';
 import {
+  assertAddressBookingLimit,
+  lockCustomer,
+} from './customer/booking-options.mjs';
+import { assertAnnualRescheduleWindow } from './customer/annual-bookings.mjs';
+import {
+  assertBookableDate,
+  isCalendarDate,
+} from './customer/booking-schedule.mjs';
+import {
+  assertTeamCapacity,
   lockServiceDates,
   lockTechnicianRoster,
   normalizeBookingSlot,
@@ -14,6 +24,30 @@ const requestSchema = z.object({ requestId: z.uuid() }).strict();
 const rejectSchema = requestSchema
   .extend({ reason: z.string().trim().min(3).max(500) })
   .strict();
+const rescheduleSchema = requestSchema
+  .extend({
+    preferredDate: z
+      .string()
+      .refine(isCalendarDate, 'Choose a valid service date.'),
+    timeSlot: z.string().trim().min(1).max(50),
+  })
+  .strict();
+const scheduleQuerySchema = z
+  .object({
+    from: z.string().refine(isCalendarDate, 'Choose a valid start date.'),
+    to: z.string().refine(isCalendarDate, 'Choose a valid end date.'),
+  })
+  .strict()
+  .refine(
+    ({ from, to }) => {
+      const days =
+        (new Date(`${to}T00:00:00Z`).getTime() -
+          new Date(`${from}T00:00:00Z`).getTime()) /
+        86400000;
+      return days >= 0 && days <= 30;
+    },
+    'Choose a date range of 31 days or fewer.',
+  );
 const pageSchema = z.object({
   status: z
     .enum([
@@ -135,11 +169,6 @@ export async function approveBooking(pool, actor, bookingId, raw) {
       VALUES (?,'Submitted','Confirmed',?,'Booking request reviewed and approved by the service team.')`,
       [bookingId, actor.userId],
     );
-    await enqueueBookingLifecycleEmail(
-      connection,
-      bookingId,
-      'booking.confirmed',
-    );
     const result = { bookingId, status: 'Confirmed' };
     await finishOperation(connection, {
       requestId: data.requestId,
@@ -187,12 +216,6 @@ export async function rejectBooking(pool, actor, bookingId, raw) {
       `INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)
       VALUES (?,'Submitted','Rejected',?,?)`,
       [bookingId, actor.userId, data.reason],
-    );
-    await enqueueBookingLifecycleEmail(
-      connection,
-      bookingId,
-      'booking.rejected',
-      { reason: data.reason },
     );
     const result = { bookingId, status: 'Rejected', reason: data.reason };
     await finishOperation(connection, {
@@ -435,6 +458,146 @@ export async function dispatchBooking(
   }
 }
 
+export async function rescheduleAdminBooking(
+  pool,
+  actor,
+  bookingId,
+  raw,
+) {
+  const data = rescheduleSchema.parse(raw),
+    connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [[identity]] = await connection.execute(
+      `SELECT c.user_id AS userId FROM booking b
+      JOIN customer c ON c.customer_id=b.customer_id WHERE b.booking_id=?`,
+      [bookingId],
+    );
+    if (!identity) throw new AppError('Booking not found.', 404);
+    const customer = await lockCustomer(connection, identity.userId);
+    const operation = await beginOperation(connection, {
+      requestId: data.requestId,
+      bookingId,
+      actorUserId: actor.userId,
+      type: 'Reschedule',
+      payload: data,
+    });
+    if (operation.replayed) {
+      await connection.commit();
+      return { ...operation.result, replayed: true };
+    }
+    const booking = await lockedBooking(connection, bookingId);
+    if (!['Submitted', 'Confirmed'].includes(booking.booking_status))
+      throw new AppError(
+        'Only unassigned bookings awaiting review or dispatch can be rescheduled.',
+        409,
+      );
+    const [[assignment]] = await connection.execute(
+      'SELECT COUNT(*) AS count FROM assignment WHERE booking_id=?',
+      [bookingId],
+    );
+    if (Number(assignment.count) > 0)
+      throw new AppError(
+        'This booking already has an assignment and its schedule is locked.',
+        409,
+      );
+    assertBookableDate(data.preferredDate);
+    await assertAnnualRescheduleWindow(
+      connection,
+      bookingId,
+      data.preferredDate,
+    );
+    await assertAddressBookingLimit(
+      connection,
+      customer.customerId,
+      booking.address_line,
+      data.preferredDate,
+      bookingId,
+    );
+    if (booking.subscription_id) {
+      const [[subscription]] = await connection.execute(
+        `SELECT start_date,end_date,subscription_status FROM customer_subscription
+        WHERE subscription_id=? AND customer_id=? FOR UPDATE`,
+        [booking.subscription_id, customer.customerId],
+      );
+      if (
+        !subscription ||
+        subscription.subscription_status !== 'Active' ||
+        data.preferredDate < String(subscription.start_date).slice(0, 10) ||
+        data.preferredDate > String(subscription.end_date).slice(0, 10)
+      )
+        throw new AppError(
+          'Choose a date within the customer’s active membership period.',
+          409,
+        );
+    }
+    const slot = normalizeBookingSlot(data.timeSlot),
+      oldDate = String(booking.preferred_service_date).slice(0, 10),
+      oldTimeSlot = booking.preferred_time_slot;
+    await lockServiceDates(connection, [oldDate, data.preferredDate]);
+    await assertTeamCapacity(
+      connection,
+      [
+        {
+          date: data.preferredDate,
+          start: slot.start,
+          end: slot.end,
+        },
+      ],
+      { excludeBookingId: bookingId },
+    );
+    await connection.execute(
+      `UPDATE booking SET preferred_service_date=?,preferred_time_slot=?,slot_start=?,slot_end=?
+      WHERE booking_id=?`,
+      [data.preferredDate, slot.code, slot.start, slot.end, bookingId],
+    );
+    await connection.execute(
+      `INSERT INTO booking_change_request
+      (booking_id,request_type,requested_service_date,requested_time_slot,reason,request_status)
+      VALUES (?,'Reschedule',?,?,?,'Approved')`,
+      [
+        bookingId,
+        data.preferredDate,
+        slot.code,
+        'Appointment adjusted by an administrator before dispatch.',
+      ],
+    );
+    await connection.execute(
+      `INSERT INTO booking_status_history
+      (booking_id,old_status,new_status,changed_by_user_id,change_note)
+      VALUES (?,?,?,?,?)`,
+      [
+        bookingId,
+        booking.booking_status,
+        booking.booking_status,
+        actor.userId,
+        `Appointment changed from ${oldDate} ${oldTimeSlot} to ${data.preferredDate} ${slot.code} before dispatch.`,
+      ],
+    );
+    const result = {
+      bookingId,
+      status: booking.booking_status,
+      preferredDate: data.preferredDate,
+      timeSlot: slot.code,
+    };
+    await finishOperation(connection, {
+      requestId: data.requestId,
+      bookingId,
+      actorUserId: actor.userId,
+      type: 'Reschedule',
+      hash: operation.hash,
+      result,
+    });
+    await connection.commit();
+    return result;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 export async function listAdminBookings(pool, query) {
   const data = pageSchema.parse(query),
     where = [],
@@ -476,6 +639,35 @@ export async function listAdminBookings(pool, query) {
     [...values, data.pageSize, (page - 1) * data.pageSize],
   );
   return { rows, total: Number(total), page, pageSize: data.pageSize };
+}
+
+export async function listAdminSchedule(pool, query) {
+  const data = scheduleQuerySchema.parse(query);
+  const [rows] = await pool.execute(
+    `SELECT b.booking_id AS bookingId,b.booking_status AS status,
+    b.preferred_service_date AS preferredDate,b.preferred_time_slot AS timeSlot,
+    b.total_amount AS totalAmount,b.created_at AS createdAt,u.full_name AS customerName,u.email,
+    sa.address_line AS addressLine,
+    COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
+    (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
+    (SELECT technician_user.full_name FROM assignment latest_assignment
+      JOIN technician latest_technician ON latest_technician.technician_id=latest_assignment.technician_id
+      JOIN user_account technician_user ON technician_user.user_id=latest_technician.user_id
+      WHERE latest_assignment.booking_id=b.booking_id
+      ORDER BY latest_assignment.assignment_id DESC LIMIT 1) AS technicianName
+    FROM booking b JOIN customer c ON c.customer_id=b.customer_id
+    JOIN user_account u ON u.user_id=c.user_id
+    JOIN service_address sa ON sa.address_id=b.address_id
+    JOIN service_catalog sc ON sc.service_id=b.service_id
+    LEFT JOIN booking_service bs ON bs.booking_id=b.booking_id
+    WHERE b.preferred_service_date BETWEEN ? AND ?
+    AND b.booking_status NOT IN ('Rejected','Cancelled')
+    GROUP BY b.booking_id,b.booking_status,b.preferred_service_date,b.preferred_time_slot,
+      b.total_amount,b.created_at,u.full_name,u.email,sa.address_line,sc.service_name
+    ORDER BY b.preferred_service_date,b.slot_start,b.booking_id`,
+    [data.from, data.to],
+  );
+  return { from: data.from, to: data.to, rows };
 }
 
 export async function getAdminBooking(pool, bookingId) {
@@ -742,6 +934,9 @@ export function createAdminOperationsRouter(pool, { origin } = {}) {
   router.get('/bookings', async (req, res) =>
     res.json(await listAdminBookings(pool, req.query)),
   );
+  router.get('/schedule', async (req, res) =>
+    res.json(await listAdminSchedule(pool, req.query)),
+  );
   router.get('/bookings/:id', async (req, res) =>
     res.json({
       booking: await getAdminBooking(pool, idSchema.parse(req.params.id)),
@@ -760,6 +955,16 @@ export function createAdminOperationsRouter(pool, { origin } = {}) {
   router.post('/bookings/:id/reject', async (req, res) =>
     res.json(
       await rejectBooking(
+        pool,
+        req.adminUser,
+        idSchema.parse(req.params.id),
+        req.body,
+      ),
+    ),
+  );
+  router.patch('/bookings/:id/reschedule', async (req, res) =>
+    res.json(
+      await rescheduleAdminBooking(
         pool,
         req.adminUser,
         idSchema.parse(req.params.id),

@@ -46,7 +46,7 @@ import {
   errorText,
   type User,
 } from '@/lib/inventory-client';
-import { OrdersPage,OrderDetails,StaffPage } from '@/components/admin-operations-views';
+import { DispatchCalendarPage,OrdersPage,OrderDetails,StaffPage } from '@/components/admin-operations-views';
 import {
   Overview,
   PartsPage,
@@ -304,7 +304,7 @@ export default function InventoryApp() {
               {pathname === '/admin/orders' ? (
                 <OrdersPage mode="review" params={params}/>
               ) : pathname === '/admin/dispatch' ? (
-                <OrdersPage mode="dispatch" params={params}/>
+                <DispatchCalendarPage params={params}/>
               ) : orderMatch ? (
                 <OrderDetails bookingId={Number(orderMatch[1])}/>
               ) : pathname === '/admin/technicians' ? (

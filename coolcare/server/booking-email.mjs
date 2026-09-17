@@ -52,8 +52,8 @@ export async function enqueueBookingEmail(connection, bookingId) {
   return enqueueMail(connection,{eventKey:`booking.received:${bookingId}`,eventType:'booking.received',bookingId,recipient:booking.email,...mail});
 }
 
-export async function enqueueBookingLifecycleEmail(connection,bookingId,eventType,{reason='',technicianName='',eventKey=`${eventType}:${bookingId}`}={}) {
-  if(!['booking.confirmed','booking.rejected','booking.assigned'].includes(eventType))throw new Error('Unsupported booking mail event.');
+export async function enqueueBookingLifecycleEmail(connection,bookingId,eventType,{technicianName='',eventKey=`${eventType}:${bookingId}`}={}) {
+  if(eventType!=='booking.assigned')throw new Error('Unsupported booking mail event.');
   const [[booking]]=await connection.execute(`SELECT b.booking_id,b.preferred_service_date,b.preferred_time_slot,
     u.full_name,u.email,sa.address_line,COALESCE(GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', '),MAX(sc.service_name)) AS services
     FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN user_account u ON u.user_id=c.user_id
@@ -63,9 +63,7 @@ export async function enqueueBookingLifecycleEmail(connection,bookingId,eventTyp
   if(!booking)throw new Error('Cannot queue mail for a missing booking.');
   const common=[['Booking reference',`#${booking.booking_id}`],['Services',booking.services],['Service date',booking.preferred_service_date],['Arrival window',booking.preferred_time_slot],['Service address',booking.address_line]];
   const variants={
-    'booking.confirmed':{heading:'Booking confirmed',subject:`CoolCare booking #${bookingId} confirmed`,intro:'Your requested appointment has been reviewed and confirmed.',extra:[]},
-    'booking.rejected':{heading:'Booking request not approved',subject:`CoolCare booking #${bookingId} was not approved`,intro:'Our service team could not approve this booking request.',extra:[['Reason',reason]]},
-    'booking.assigned':{heading:'Technician assigned',subject:`CoolCare booking #${bookingId} technician assigned`,intro:'A technician has been assigned to your confirmed appointment.',extra:[['Technician',technicianName]]},
+    'booking.assigned':{heading:'Booking confirmed and technician assigned',subject:`CoolCare booking #${bookingId} confirmed`,intro:'Your booking has been reviewed, confirmed and assigned to a technician.',extra:[['Technician',technicianName]]},
   }[eventType];
   const fields=[...common,...variants.extra];
   const text=`Hi ${booking.full_name},\n\n${variants.intro}\n\n${fields.map(([name,value])=>`${name}: ${value}`).join('\n')}\n\nView the latest status in My Bookings.\nCoolCare`;

@@ -11,7 +11,9 @@ import {
 import {
   approveBooking,
   dispatchBooking,
+  listAdminSchedule,
   rejectBooking,
+  rescheduleAdminBooking,
   revokeInvitation,
   transferOwner,
   updateTechnician,
@@ -207,13 +209,13 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
   rollbackFixture(async (db, connection) => {
     const { owner } = await actors(connection);
     const [[customer]] =
-      await connection.execute(`SELECT u.user_id AS id,u.phone,c.customer_id AS customerId FROM user_account u
+      await connection.execute(`SELECT u.user_id AS id,u.email,u.phone,c.customer_id AS customerId FROM user_account u
     JOIN customer c ON c.user_id=u.user_id WHERE u.email='alice.tan@coolcare.demo'`);
     const [[service]] = await connection.execute(
       "SELECT service_id AS serviceId FROM simple_service_catalog WHERE code='cleaning'",
     );
     const [technicians] =
-      await connection.execute(`SELECT t.technician_id AS technicianId,t.user_id AS userId FROM technician t
+      await connection.execute(`SELECT t.technician_id AS technicianId,t.user_id AS userId,u.email,u.full_name AS fullName FROM technician t
     JOIN user_account u ON u.user_id=t.user_id ORDER BY t.technician_id`);
     assert.ok(technicians.length >= 2);
     await lockTechnicianRoster(connection);
@@ -236,7 +238,45 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
         requestId: randomUUID(),
       });
 
-    const first = await create();
+    const first = await create(),
+      rescheduledDate = nextWeekday(addCalendarDays(date, 3)),
+      rescheduleRequest = randomUUID();
+    const rescheduled = await rescheduleAdminBooking(
+      db,
+      owner,
+      first.bookingId,
+      {
+        requestId: rescheduleRequest,
+        preferredDate: rescheduledDate,
+        timeSlot: '14:00 - 16:00',
+      },
+    );
+    assert.equal(rescheduled.preferredDate, rescheduledDate);
+    assert.equal(rescheduled.timeSlot, '14:00 - 16:00');
+    assert.equal(
+      (
+        await rescheduleAdminBooking(db, owner, first.bookingId, {
+          requestId: rescheduleRequest,
+          preferredDate: rescheduledDate,
+          timeSlot: '14:00 - 16:00',
+        })
+      ).replayed,
+      true,
+    );
+    const scheduled = await listAdminSchedule(db, {
+      from: rescheduledDate,
+      to: rescheduledDate,
+    });
+    assert.equal(
+      scheduled.rows.find((row) => row.bookingId === first.bookingId)?.timeSlot,
+      '14:00 - 16:00',
+    );
+    const [[changeAudit]] = await connection.execute(
+      `SELECT COUNT(*) AS count FROM booking_change_request
+      WHERE booking_id=? AND request_type='Reschedule' AND request_status='Approved'`,
+      [first.bookingId],
+    );
+    assert.equal(Number(changeAudit.count), 1);
     await assert.rejects(
       dispatchBooking(db, owner, first.bookingId, { requestId: randomUUID() }),
       (error) => error.status === 409 && /Approve/.test(error.message),
@@ -249,6 +289,12 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       ).status,
       'Confirmed',
     );
+    const [[reviewMailCount]] = await connection.execute(
+      `SELECT COUNT(*) AS count FROM booking_email_outbox WHERE booking_id=?
+      AND event_type IN ('booking.confirmed','booking.rejected','booking.assigned')`,
+      [first.bookingId],
+    );
+    assert.equal(Number(reviewMailCount.count), 0);
     const dispatchRequest = randomUUID(),
       firstDispatch = await dispatchBooking(db, owner, first.bookingId, {
         requestId: dispatchRequest,
@@ -265,6 +311,34 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       ).replayed,
       true,
     );
+    const [[dispatchMail]] = await connection.execute(
+      `SELECT recipient,event_type,subject,body_text FROM booking_email_outbox
+      WHERE booking_id=? AND event_type='booking.assigned'`,
+      [first.bookingId],
+    );
+    assert.equal(dispatchMail.recipient, customer.email);
+    assert.equal(dispatchMail.event_type, 'booking.assigned');
+    assert.match(dispatchMail.subject, /confirmed/i);
+    assert.match(dispatchMail.body_text, new RegExp(rescheduledDate));
+    assert.match(dispatchMail.body_text, /14:00 - 16:00/);
+    assert.match(
+      dispatchMail.body_text,
+      new RegExp(technicians[0].fullName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+    const [[technicianMailCount]] = await connection.execute(
+      `SELECT COUNT(*) AS count FROM booking_email_outbox
+      WHERE booking_id=? AND recipient=?`,
+      [first.bookingId, technicians[0].email],
+    );
+    assert.equal(Number(technicianMailCount.count), 0);
+    await assert.rejects(
+      rescheduleAdminBooking(db, owner, first.bookingId, {
+        requestId: randomUUID(),
+        preferredDate: nextWeekday(addCalendarDays(rescheduledDate, 1)),
+        timeSlot: '16:00 - 18:00',
+      }),
+      (error) => error.status === 409 && /unassigned/i.test(error.message),
+    );
 
     const second = await create();
     await approveBooking(db, owner, second.bookingId, {
@@ -277,15 +351,23 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       secondDispatch.technician.technicianId,
       firstDispatch.technician.technicianId,
     );
-    // Submitted requests also reserve capacity. Fill any remaining team places
-    // instead of assuming every local database contains exactly two technicians.
-    for (let index = 2; index < technicians.length; index++) {
-      await create(`Capacity filler ${randomUUID()}, Singapore`);
+    // Submitted requests also reserve capacity. The first booking moved to a
+    // different slot, so fill every remaining place without assuming the local
+    // database contains exactly two technicians.
+    const capacityFillers = [];
+    for (let index = 1; index < technicians.length; index++) {
+      capacityFillers.push(
+        await create(`Capacity filler ${randomUUID()}, Singapore`),
+      );
     }
     await assert.rejects(
       create(`Capacity QA ${randomUUID()}, Singapore`),
       (error) => error.status === 409 && /fully booked/i.test(error.message),
     );
+    await rejectBooking(db, owner, capacityFillers[0].bookingId, {
+      requestId: randomUUID(),
+      reason: 'Capacity test place released.',
+    });
 
     await assert.rejects(
       updateTechnicianJobStatus(
@@ -396,7 +478,7 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
     AND event_type IN ('booking.confirmed','booking.assigned','booking.rejected')`,
       [first.bookingId, freed.bookingId],
     );
-    assert.equal(Number(mailCount.count), 3);
+    assert.equal(Number(mailCount.count), 1);
     await assert.rejects(
       updateTechnician(db, secondDispatch.technician.technicianId, {
         availability: 'On Leave',

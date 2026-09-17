@@ -104,13 +104,168 @@
     font-size: 12px;
     line-height: 1.5;
   }
+  .admin-schedule-editor {
+    display: grid;
+    gap: 18px;
+    margin-top: 24px;
+    padding: 18px;
+    border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--border));
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--primary) 4%, white);
+  }
+  .admin-schedule-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .schedule-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    margin-bottom: 24px;
+  }
+  .schedule-calendar-panel {
+    padding: 0;
+    overflow: hidden;
+  }
+  .schedule-calendar-heading,
+  .schedule-queue-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 22px 24px;
+  }
+  .schedule-calendar-heading > svg {
+    width: 28px;
+    height: 28px;
+    color: var(--primary);
+  }
+  .schedule-calendar-scroll {
+    overflow-x: auto;
+    border-top: 1px solid var(--border);
+  }
+  .schedule-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(155px, 1fr));
+    min-width: 1085px;
+  }
+  .schedule-day {
+    min-height: 380px;
+    border-right: 1px solid var(--border);
+    background: #fff;
+  }
+  .schedule-day:last-child {
+    border-right: 0;
+  }
+  .schedule-day > header {
+    display: grid;
+    gap: 3px;
+    min-height: 66px;
+    padding: 13px 12px;
+    border-bottom: 1px solid var(--border);
+    background: #f7f9fb;
+  }
+  .schedule-day > header.today {
+    color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 9%, white);
+  }
+  .schedule-day > header span {
+    color: var(--muted-foreground);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .schedule-day > header strong {
+    font-size: 13px;
+  }
+  .schedule-day-body {
+    display: grid;
+    align-content: start;
+    gap: 9px;
+    padding: 10px;
+  }
+  .schedule-booking {
+    display: grid;
+    gap: 5px;
+    width: 100%;
+    padding: 11px;
+    border: 1px solid #cdd9e4;
+    border-left: 4px solid #71869a;
+    border-radius: 9px;
+    background: #fff;
+    color: var(--foreground);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 120ms ease, box-shadow 120ms ease,
+      transform 120ms ease;
+  }
+  .schedule-booking:hover,
+  .schedule-booking:focus-visible {
+    border-color: var(--primary);
+    box-shadow: 0 6px 16px rgb(15 45 70 / 10%);
+    transform: translateY(-1px);
+    outline: none;
+  }
+  .schedule-booking[data-status='Submitted'] {
+    border-left-color: #d78d16;
+  }
+  .schedule-booking[data-status='Confirmed'] {
+    border-left-color: #2067a8;
+    background: #f5faff;
+  }
+  .schedule-booking[data-status='Assigned'],
+  .schedule-booking[data-status='On The Way'],
+  .schedule-booking[data-status='In Progress'] {
+    border-left-color: #21835d;
+  }
+  .schedule-booking[data-status='Completed'] {
+    border-left-color: #768395;
+    background: #f8f9fa;
+  }
+  .schedule-booking > span,
+  .schedule-booking > small {
+    overflow-wrap: anywhere;
+  }
+  .schedule-booking > small {
+    color: var(--muted-foreground);
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  .schedule-booking-time {
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 750;
+  }
+  .schedule-booking [class*='status'] {
+    margin-top: 3px;
+  }
+  .schedule-empty {
+    padding: 24px 6px;
+    color: var(--muted-foreground);
+    font-size: 12px;
+    text-align: center;
+  }
   @media (max-width: 900px) {
     .admin-detail-grid,
     .admin-staff-grid {
       grid-template-columns: 1fr;
     }
+    .schedule-summary {
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
   }
   @media (max-width: 650px) {
+    .admin-schedule-fields {
+      grid-template-columns: 1fr;
+    }
+    .schedule-calendar-heading,
+    .schedule-queue-heading {
+      align-items: flex-start;
+      padding: 18px;
+    }
     .admin-operations-table [data-slot='table-container'] {
       overflow: visible;
     }

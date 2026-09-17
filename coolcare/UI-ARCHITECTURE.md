@@ -51,7 +51,7 @@ The avatar menu replaces the customer staff switcher. `/customer/account` update
 
 ## Admin Console and staff activation
 
-`InventoryApp` is now the shared Admin Console shell. `/admin/orders` is the default Admin destination, while `/admin/inventory` remains a direct compatible route. The navigation exposes Orders, Dispatch, Technicians and Inventory; Active Owners also see Admins. Orders supports Submitted review and a reason-required rejection dialog. Dispatch lists Confirmed requests and invokes automatic assignment without presenting a manual technician picker.
+`InventoryApp` is now the shared Admin Console shell. `/admin/orders` is the default Admin destination, while `/admin/inventory` remains a direct compatible route. The navigation exposes Orders, Dispatch, Technicians and Inventory; Active Owners also see Admins. Orders supports Submitted review and a reason-required rejection dialog. Submitted and Confirmed detail pages use the shared English date picker to adjust the appointment before assignment. Dispatch combines a Monday-to-Sunday calendar with the Confirmed queue and invokes automatic assignment without presenting a manual technician picker. The calendar scrolls horizontally on narrow screens so each day and booking card retains readable details.
 
 Technician management combines account state, availability and future-work counts, and exposes invitation, suspension/reactivation and availability controls. The Owner-only Admin view supports invitation, suspension/reactivation and atomic ownership transfer. Pending invitations can be revoked or reissued. `/activate` validates the emailed one-time token and lets the recipient set a password without exposing any role selector on public registration.
 
@@ -59,7 +59,7 @@ The Technician drawer exposes one status action at a time: Assigned, On The Way,
 
 ## Data boundary (existing portals)
 
-React calls `/api/...`; Express validates the request and session, checks authorization and accesses MySQL. React never receives database credentials. Postman calls the same API. Migration `13-staff-dispatch.sql` adds invitations, Owner access, normalized slot times, Rejected status, dispatch idempotency and the generic email outbox while retaining existing accounts, bookings, assignments and work orders.
+React calls `/api/...`; Express validates the request and session, checks authorization and accesses MySQL. React never receives database credentials. Postman calls the same API. Migration `13-staff-dispatch.sql` adds invitations, Owner access, normalized slot times, Rejected status, dispatch idempotency and the generic email outbox while retaining existing accounts, bookings, assignments and work orders. Migration `14-admin-schedule.sql` adds Admin-reschedule idempotency to that operation log; the weekly calendar reads the existing booking and assignment records without duplicating schedule data.
 
 ## Validation
 

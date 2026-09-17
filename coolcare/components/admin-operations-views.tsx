@@ -1,8 +1,11 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  CalendarDays,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -21,6 +24,12 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { BookingStatus } from '@/components/booking-status';
+import { EnglishDatePicker } from '@/components/english-date-picker';
+import {
+  bookingDateError,
+  earliestBookingDate,
+  singaporeToday,
+} from '@/lib/booking-schedule';
 import {
   api,
   ApiError,
@@ -30,6 +39,7 @@ import {
   useResource,
   type AdminBooking,
   type AdminBookingDetail,
+  type AdminSchedule,
   type List,
   type StaffMember,
 } from '@/lib/inventory-client';
@@ -44,6 +54,38 @@ const displayDate = (value: string) =>
   }).format(new Date(`${String(value).slice(0, 10)}T00:00:00Z`));
 const displayMoment = (value: string | null | undefined) =>
   value ? String(value).replace('T', ' ').slice(0, 16) : 'Not recorded';
+const timeSlots = [
+  { value: '09:00 - 11:00', label: '09:00 AM - 11:00 AM' },
+  { value: '11:00 - 13:00', label: '11:00 AM - 01:00 PM' },
+  { value: '14:00 - 16:00', label: '02:00 PM - 04:00 PM' },
+  { value: '16:00 - 18:00', label: '04:00 PM - 06:00 PM' },
+];
+const canonicalTimeSlot = (value: string) =>
+  ({
+    '09:00 AM - 11:00 AM': '09:00 - 11:00',
+    '11:00 AM - 01:00 PM': '11:00 - 13:00',
+    '11:30 AM - 01:30 PM': '11:00 - 13:00',
+    '02:00 PM - 04:00 PM': '14:00 - 16:00',
+    '04:00 PM - 06:00 PM': '16:00 - 18:00',
+    '04:30 PM - 06:30 PM': '16:00 - 18:00',
+  })[value] ?? value;
+const calendarDate = (value: string) => String(value).slice(0, 10);
+const shiftDate = (value: string, days: number) => {
+  const date = new Date(`${calendarDate(value)}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+const mondayOf = (value: string) => {
+  const date = new Date(`${calendarDate(value)}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return mondayOf(singaporeToday());
+  const day = date.getUTCDay();
+  return shiftDate(value, -(day === 0 ? 6 : day - 1));
+};
+const weekday = (value: string) =>
+  new Intl.DateTimeFormat('en-SG', {
+    weekday: 'short',
+    timeZone: 'UTC',
+  }).format(new Date(`${value}T00:00:00Z`));
 
 function Heading({
   eyebrow,
@@ -185,20 +227,272 @@ export function OrdersPage({
   );
 }
 
+export function DispatchCalendarPage({
+  params,
+}: {
+  params: URLSearchParams;
+}) {
+  const { go, version, refresh } = useInventory(),
+    weekStart = mondayOf(params.get('week') || singaporeToday()),
+    weekEnd = shiftDate(weekStart, 6),
+    page = Math.max(1, Number(params.get('page') || 1)),
+    schedule = useResource<AdminSchedule>(
+      `/admin/schedule?from=${weekStart}&to=${weekEnd}`,
+      version,
+    ),
+    queue = useResource<List<AdminBooking>>(
+      `/admin/bookings?status=Confirmed&page=${page}&pageSize=20`,
+      version,
+    ),
+    days = Array.from({ length: 7 }, (_, index) => shiftDate(weekStart, index)),
+    rows = schedule.data?.rows ?? [],
+    assignedCount = rows.filter((row) =>
+      ['Assigned', 'On The Way', 'In Progress'].includes(row.status),
+    ).length;
+  const moveWeek = (daysToMove: number) =>
+    go(`/admin/dispatch?week=${shiftDate(weekStart, daysToMove)}`);
+  return (
+    <>
+      <Heading
+        eyebrow="ORDERS / DISPATCH"
+        title="Weekly dispatch schedule"
+        description={`${displayDate(weekStart)} – ${displayDate(weekEnd)} · Open a confirmed booking to review its time and assign a technician automatically.`}
+        actions={
+          <div className="actions">
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Previous week"
+              onClick={() => moveWeek(-7)}
+            >
+              <ChevronLeft />
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => go(`/admin/dispatch?week=${mondayOf(singaporeToday())}`)}
+            >
+              Today
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Next week"
+              onClick={() => moveWeek(7)}
+            >
+              <ChevronRight />
+            </Button>
+            <Button variant="outline" onClick={refresh}>
+              <RefreshCw />
+              Refresh
+            </Button>
+          </div>
+        }
+      />
+      <div className="schedule-summary">
+        <div className="stat">
+          <span>AWAITING DISPATCH</span>
+          <strong>{queue.data?.total ?? '—'}</strong>
+          <small>Confirmed bookings across all dates</small>
+        </div>
+        <div className="stat">
+          <span>WEEKLY VISITS</span>
+          <strong>{schedule.data ? rows.length : '—'}</strong>
+          <small>Active and completed bookings shown</small>
+        </div>
+        <div className="stat">
+          <span>ASSIGNED THIS WEEK</span>
+          <strong>{schedule.data ? assignedCount : '—'}</strong>
+          <small>Assigned or currently in progress</small>
+        </div>
+      </div>
+      <LoadState {...schedule} />
+      {schedule.data && (
+        <section className="panel schedule-calendar-panel">
+          <div className="schedule-calendar-heading">
+            <div>
+              <h2>Team calendar</h2>
+              <p className="muted">
+                Submitted requests are visible for planning. Technician names
+                appear after automatic dispatch.
+              </p>
+            </div>
+            <CalendarDays aria-hidden="true" />
+          </div>
+          <div className="schedule-calendar-scroll">
+            <div className="schedule-calendar-grid">
+              {days.map((day, index) => {
+                const bookings = rows.filter(
+                  (row) => calendarDate(row.preferredDate) === day,
+                );
+                return (
+                  <section className="schedule-day" key={day}>
+                    <header className={day === singaporeToday() ? 'today' : ''}>
+                      <span>{weekday(day)}</span>
+                      <strong>{displayDate(day)}</strong>
+                    </header>
+                    <div className="schedule-day-body">
+                      {bookings.length ? (
+                        bookings.map((booking) => (
+                          <button
+                            type="button"
+                            className="schedule-booking"
+                            data-status={booking.status}
+                            key={booking.bookingId}
+                            onClick={() =>
+                              go(`/admin/orders/${booking.bookingId}`)
+                            }
+                            aria-label={`Open booking ${booking.bookingId} for ${booking.customerName}`}
+                          >
+                            <span className="schedule-booking-time">
+                              {booking.timeSlot}
+                            </span>
+                            <strong>
+                              BK-{String(booking.bookingId).padStart(4, '0')}
+                            </strong>
+                            <span>{booking.customerName}</span>
+                            <small>{booking.serviceName}</small>
+                            <small>
+                              {booking.technicianName || 'Awaiting dispatch'}
+                            </small>
+                            <BookingStatus status={booking.status} />
+                          </button>
+                        ))
+                      ) : (
+                        <p className="schedule-empty">
+                          {index > 4 ? 'Closed' : 'No visits'}
+                        </p>
+                      )}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+      <LoadState {...queue} />
+      {queue.data &&
+        (queue.data.rows.length ? (
+          <section className="panel table-panel admin-operations-table mt-6">
+            <div className="schedule-queue-heading">
+              <div>
+                <h2>Confirmed bookings awaiting dispatch</h2>
+                <p className="muted">
+                  Open a booking to adjust its appointment or assign the next
+                  available technician.
+                </p>
+              </div>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Booking</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Service</TableHead>
+                  <TableHead>Schedule</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {queue.data.rows.map((row) => (
+                  <TableRow key={row.bookingId}>
+                    <TableCell data-label="Booking">
+                      <strong>
+                        BK-{String(row.bookingId).padStart(4, '0')}
+                      </strong>
+                    </TableCell>
+                    <TableCell data-label="Customer">
+                      <strong>{row.customerName}</strong>
+                      <small className="block muted">{row.email}</small>
+                    </TableCell>
+                    <TableCell data-label="Service">
+                      {row.serviceName}
+                    </TableCell>
+                    <TableCell data-label="Schedule">
+                      {displayDate(row.preferredDate)}
+                      <small className="block muted">{row.timeSlot}</small>
+                    </TableCell>
+                    <TableCell data-label="Action" className="text-right">
+                      <Button
+                        size="sm"
+                        onClick={() => go(`/admin/orders/${row.bookingId}`)}
+                      >
+                        Open dispatch
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <Pager
+              total={queue.data.total}
+              page={queue.data.page}
+              pageSize={queue.data.pageSize}
+              onPage={(next) =>
+                go(`/admin/dispatch?week=${weekStart}&page=${next}`)
+              }
+            />
+          </section>
+        ) : (
+          <NoResults
+            title="No confirmed bookings awaiting dispatch"
+            description="Approved bookings will appear here until assigned."
+          />
+        ))}
+    </>
+  );
+}
+
 export function OrderDetails({ bookingId }: { bookingId: number }) {
-  const { go, version, refresh, notify } = useInventory(),
+  const { go, version, refresh, notify, setDirty } = useInventory(),
     resource = useResource<{ booking: AdminBookingDetail }>(
       `/admin/bookings/${bookingId}`,
       version,
     ),
     booking = resource.data?.booking;
   const [reason, setReason] = useState(''),
+    [scheduleDraft, setScheduleDraft] = useState<{
+      bookingId: number;
+      preferredDate: string;
+      timeSlot: string;
+    } | null>(null),
     [busy, setBusy] = useState(''),
     [error, setError] = useState('');
   const pending = useRef<{ type: string; requestId: string } | null>(null);
+  const schedule =
+      scheduleDraft?.bookingId === bookingId
+        ? scheduleDraft
+        : booking
+          ? {
+              bookingId,
+              preferredDate: calendarDate(booking.preferredDate),
+              timeSlot: canonicalTimeSlot(booking.timeSlot),
+            }
+          : { bookingId, preferredDate: '', timeSlot: '' },
+    canEditSchedule = Boolean(
+      booking && ['Submitted', 'Confirmed'].includes(booking.status),
+    ),
+    scheduleDirty = Boolean(
+      booking &&
+        (schedule.preferredDate !== calendarDate(booking.preferredDate) ||
+          schedule.timeSlot !== canonicalTimeSlot(booking.timeSlot)),
+    ),
+    scheduleError = schedule.preferredDate
+      ? bookingDateError(schedule.preferredDate)
+      : 'Choose a service date.';
+  useEffect(() => {
+    setDirty(scheduleDirty);
+    return () => setDirty(false);
+  }, [scheduleDirty, setDirty]);
   async function action(
     type: 'approve' | 'reject' | 'dispatch' | 'redispatch',
   ) {
+    if (scheduleDirty) {
+      setError(
+        'Save or discard the appointment changes before reviewing or dispatching this booking.',
+      );
+      return;
+    }
     if (type === 'reject' && reason.trim().length < 3) {
       setError('Enter a clear rejection reason for the customer.');
       return;
@@ -220,9 +514,39 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       setReason('');
       notify(
         type === 'dispatch' || type === 'redispatch'
-          ? `Assigned to ${result.technician?.fullName}.`
-          : `Booking ${type === 'approve' ? 'approved' : 'rejected'}.`,
+          ? `Assigned to ${result.technician?.fullName}. Customer email queued.`
+          : `Booking ${type === 'approve' ? 'approved' : 'rejected'}. No customer email was sent.`,
       );
+      refresh();
+    } catch (cause) {
+      setError(errorText(cause));
+      if (cause instanceof ApiError && cause.status < 500)
+        pending.current = null;
+    } finally {
+      setBusy('');
+    }
+  }
+  async function saveSchedule() {
+    if (!canEditSchedule || !scheduleDirty) return;
+    if (scheduleError) {
+      setError(scheduleError);
+      return;
+    }
+    const requestType = `reschedule:${schedule.preferredDate}:${schedule.timeSlot}`;
+    setBusy('reschedule');
+    setError('');
+    if (pending.current?.type !== requestType)
+      pending.current = { type: requestType, requestId: crypto.randomUUID() };
+    try {
+      await api(`/admin/bookings/${bookingId}/reschedule`, 'PATCH', {
+        requestId: pending.current.requestId,
+        preferredDate: schedule.preferredDate,
+        timeSlot: schedule.timeSlot,
+      });
+      pending.current = null;
+      setScheduleDraft(null);
+      setDirty(false);
+      notify('Appointment updated. No customer email was sent.');
       refresh();
     } catch (cause) {
       setError(errorText(cause));
@@ -294,11 +618,100 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </dd>
                 </div>
               </dl>
+              <div className="admin-schedule-editor">
+                <div>
+                  <h3 className="font-semibold">Appointment schedule</h3>
+                  <p className="mt-1 text-sm muted">
+                    {canEditSchedule
+                      ? 'Adjust the date or arrival window before dispatch. The customer is emailed only after a technician is assigned.'
+                      : 'The appointment is locked after dispatch.'}
+                  </p>
+                </div>
+                <div className="admin-schedule-fields">
+                  <div className="block text-sm font-semibold">
+                    <span>Service date</span>
+                    <EnglishDatePicker
+                      label="Service date"
+                      min={earliestBookingDate()}
+                      value={schedule.preferredDate}
+                      disabled={!canEditSchedule || Boolean(busy)}
+                      aria-invalid={Boolean(scheduleDirty && scheduleError)}
+                      onChange={(preferredDate) => {
+                        setScheduleDraft({
+                          bookingId,
+                          preferredDate,
+                          timeSlot: schedule.timeSlot,
+                        });
+                        setError('');
+                      }}
+                      className="mt-2"
+                    />
+                  </div>
+                  <label className="block text-sm font-semibold">
+                    Arrival window
+                    <NativeSelect
+                      className="mt-2 h-12 w-full"
+                      value={schedule.timeSlot}
+                      disabled={!canEditSchedule || Boolean(busy)}
+                      onChange={(event) => {
+                        setScheduleDraft({
+                          bookingId,
+                          preferredDate: schedule.preferredDate,
+                          timeSlot: event.target.value,
+                        });
+                        setError('');
+                      }}
+                    >
+                      {timeSlots.map((slot) => (
+                        <option key={slot.value} value={slot.value}>
+                          {slot.label}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                  </label>
+                </div>
+                {canEditSchedule && (
+                  <div className="actions">
+                    <Button
+                      variant="outline"
+                      disabled={
+                        Boolean(busy) || !scheduleDirty || Boolean(scheduleError)
+                      }
+                      onClick={saveSchedule}
+                    >
+                      <CalendarDays />
+                      {busy === 'reschedule'
+                        ? 'Saving appointment…'
+                        : 'Save appointment'}
+                    </Button>
+                    {scheduleDirty && (
+                      <Button
+                        variant="ghost"
+                        disabled={Boolean(busy)}
+                        onClick={() => {
+                          setScheduleDraft(null);
+                          setError('');
+                        }}
+                      >
+                        Discard changes
+                      </Button>
+                    )}
+                    {scheduleDirty && scheduleError && (
+                      <p
+                        className="basis-full text-sm text-red-700"
+                        role="alert"
+                      >
+                        {scheduleError}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
               {booking.status === 'Submitted' && (
                 <div className="mt-6 space-y-3">
                   <div className="actions">
                     <Button
-                      disabled={Boolean(busy)}
+                      disabled={Boolean(busy) || scheduleDirty}
                       onClick={() => action('approve')}
                     >
                       <CheckCircle2 />
@@ -321,7 +734,11 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </label>
                   <Button
                     variant="destructive"
-                    disabled={Boolean(busy) || reason.trim().length < 3}
+                    disabled={
+                      Boolean(busy) ||
+                      scheduleDirty ||
+                      reason.trim().length < 3
+                    }
                     onClick={() => action('reject')}
                   >
                     <XCircle />
@@ -336,11 +753,12 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </h3>
                   <p className="mt-1 text-sm muted">
                     CoolCare will choose an available technician using daily
-                    workload and rotation order.
+                    workload and rotation order. The customer email is queued
+                    only after the assignment succeeds.
                   </p>
                   <Button
                     className="mt-4"
-                    disabled={Boolean(busy)}
+                    disabled={Boolean(busy) || scheduleDirty}
                     onClick={() => action('dispatch')}
                   >
                     <Send />
