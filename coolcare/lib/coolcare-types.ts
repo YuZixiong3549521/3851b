@@ -143,15 +143,12 @@ export type AnnualBundle = {
   visits: AnnualVisit[];
 };
 
-export type EmailNotification = { status: 'queued' | 'sent' | 'disabled'; mode: 'local' | 'smtp'; recipient: string };
-
 export type CreatedBooking = {
   bookingId: number;
   bookingReference: string;
   status: string;
   serviceName: string;
   totalAmount: number;
-  emailNotification?: EmailNotification;
   annualBundle?: AnnualBundle | null;
 };
 

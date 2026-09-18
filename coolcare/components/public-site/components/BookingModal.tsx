@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { BookingServiceSelection, bookingEmailMessage, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
+import { BookingServiceSelection, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
 import { BookingAddressField } from '@/components/booking-address-field';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { BookingAvailabilityNotice, bookingConflictMessage } from '@/components/booking-availability-notice';
@@ -16,7 +16,7 @@ import { formatDate, formatMoney } from '@/lib/format';
 import { annualVisitDates,assertBookingConfirmation } from '@/lib/annual-booking';
 import { useSlotAvailability } from '@/lib/use-slot-availability';
 import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
-import type { Address, AnnualBundle, BookingOptions, EmailNotification } from '@/lib/coolcare-types';
+import type { Address, AnnualBundle, BookingOptions } from '@/lib/coolcare-types';
 import { apiFetch as fetch } from '../api';
 import React, { useState, useEffect, useRef } from 'react';
 import type { BookingIntent, User, PageRoute } from '../types';
@@ -58,7 +58,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [error, setError] = useState('');
   const [retryLocked, setRetryLocked] = useState(false);
   const [addressEditorOpen, setAddressEditorOpen] = useState(false);
-  const [created, setCreated] = useState<{ id: number; status: string; totalAmount: number; emailNotification?: EmailNotification; annualBundle?: AnnualBundle | null } | null>(null);
+  const [created, setCreated] = useState<{ id: number; status: string; totalAmount: number; annualBundle?: AnnualBundle | null } | null>(null);
   const ownerId = useRef<string | number | null>(null);
   const lastPrefill = useRef<string | undefined>(undefined);
   const lastAutomaticSymptom = useRef('');
@@ -166,7 +166,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     }
 
     assertBookingConfirmation(data.booking, Boolean(pendingRequest.current.packageId));
-    setCreated({ ...data.booking, emailNotification: data.booking.emailNotification ?? data.emailNotification }); setRetryLocked(false); pendingRequest.current = null;
+    setCreated(data.booking); setRetryLocked(false); pendingRequest.current = null;
     setStep('success');
 
     onBookingConfirmed(
@@ -433,7 +433,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               </div>
             </div>
             {created?.annualBundle && <AnnualBookingSummary saved={created.annualBundle} totalAmount={created.annualBundle.totalAmount} />}
-            {created?.emailNotification && <p role="status" className="text-sm text-ac-on-surface-variant">{bookingEmailMessage(created.emailNotification)}</p>}
             <Button variant="ghost"
               type="button"
               onClick={() => { handleFinish(); onNavigate('bookings'); }}

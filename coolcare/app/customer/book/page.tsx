@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CalendarCheck, Check, Clock3, MapPin, Snowflake, Wind } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
-import { BookingServiceSelection, bookingEmailMessage, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
+import { BookingServiceSelection, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
 import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingAddressField } from '@/components/booking-address-field';
@@ -273,7 +273,6 @@ export default function BookServicePage() {
         {created && (
           <>
           <Alert className="rounded-3xl border-secondary/25 bg-[linear-gradient(145deg,#eff5ff,#ecfffb)] p-7 sm:p-10"><div className="grid size-14 place-items-center rounded-full bg-secondary text-white"><Check className="size-7" aria-hidden="true" /></div><div className="ml-0 sm:ml-2"><AlertTitle className="text-2xl font-bold">{created.annualBundle ? 'Four booking requests saved' : 'Booking submitted'}</AlertTitle><AlertDescription className="mt-3 max-w-xl text-base leading-7">{created.annualBundle ? 'Your four quarterly cleaning visits have been saved as requests. The service team will confirm each date and time.' : 'Your ' + created.serviceName + ' request has been saved. The service team will confirm availability.'}</AlertDescription><div className="mt-5 flex flex-wrap gap-6"><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Reference</p><p className="mt-1 font-mono font-bold text-foreground">{created.bookingReference}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</p><p className="mt-1 font-semibold text-amber-700">{bookingStatusLabel(created.status)}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{created.annualBundle ? 'Annual estimate' : 'Visit estimate'}</p><p className="mt-1 font-semibold text-foreground">{formatMoney(created.annualBundle?.totalAmount ?? created.totalAmount)}</p></div></div><div className="mt-7 flex flex-wrap gap-3"><Button nativeButton={false} render={<Link href="/customer/bookings" />}>View my bookings</Button><Button variant="outline" onClick={startAnotherBooking}>Book another service</Button></div></div></Alert>
-          {created.emailNotification && <p role="status" className="mt-4 text-sm text-muted-foreground">{bookingEmailMessage(created.emailNotification)}</p>}
           {created.annualBundle && <div className="mt-5"><AnnualBookingSummary saved={created.annualBundle} totalAmount={created.annualBundle.totalAmount} /></div>}
           </>
         )}

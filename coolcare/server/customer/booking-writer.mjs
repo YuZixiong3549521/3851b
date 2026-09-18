@@ -1,22 +1,13 @@
-import { enqueueBookingEmail } from '../booking-email.mjs';
 import { annualVisitSchedule } from './annual-bookings.mjs';
 import { assertBookableDate } from './booking-schedule.mjs';
 import { assertAddressBookingLimit,saveBookingSelection,attachBookingSelections } from './booking-options.mjs';
 import { assertTeamCapacity,normalizeBookingSlot } from '../scheduling.mjs';
 
-export async function describeCreatedBooking(connection,bookingId,{legacy=false}={}) {
+export async function describeCreatedBooking(connection,bookingId) {
   const [[row]]=await connection.execute(`SELECT booking_id AS bookingId,created_at AS createdAt,
     booking_status AS status,total_amount AS totalAmount FROM booking WHERE booking_id=?`,[bookingId]);
   const [booking]=await attachBookingSelections(connection,[row]);
-  let emailNotification;
-  if(!legacy) {
-    const visits=booking.annualBundle?.visits??[{bookingId}];
-    for(const visit of visits) {
-      const notification=await enqueueBookingEmail(connection,visit.bookingId);
-      if(visit.bookingId===bookingId)emailNotification=notification;
-    }
-  }
-  return {...booking,totalAmount:booking.totalAmount==null?null:Number(booking.totalAmount),emailNotification};
+  return {...booking,totalAmount:booking.totalAmount==null?null:Number(booking.totalAmount)};
 }
 
 // The caller holds the customer lock and owns the transaction for all four visits.
@@ -52,5 +43,5 @@ export async function writeSelectedBookings(connection,selection,context) {
     await connection.execute("INSERT INTO booking_status_history(booking_id,new_status,changed_by_user_id,change_note) VALUES (?,'Submitted',?,?)",
       [booking.insertId,context.userId,selection.annual?`Annual cleaning visit ${visit.visitNumber} of 4 requested; appointment awaits confirmation.`:context.source]);
   }
-  return describeCreatedBooking(connection,firstBookingId,{legacy:context.legacy});
+  return describeCreatedBooking(connection,firstBookingId);
 }

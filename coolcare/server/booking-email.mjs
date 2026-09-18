@@ -4,24 +4,21 @@ import { randomUUID } from 'node:crypto';
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 export function mailMode() { return ['smtp', 'disabled'].includes(process.env.MAIL_MODE) ? process.env.MAIL_MODE : 'local'; }
 
-export function buildBookingMail(booking, services) {
-  const date = new Intl.DateTimeFormat('en-SG', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${booking.preferred_date}T00:00:00Z`));
+export function buildAssignedBookingMail(booking, technicianName) {
+  const date = new Intl.DateTimeFormat('en-SG', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${booking.preferred_service_date}T00:00:00Z`));
   const fields = [
-    ['Booking reference', `#${booking.booking_id}`], ['Services', services || booking.service_name],
-    ...(booking.package_name ? [['Package', booking.package_name]] : []),
-    ...(booking.annual_series_id ? [['Annual bundle reference',`#${booking.annual_series_id}`],['Quarterly visit',`${booking.visit_number} of 4`]] : []),
-    ['Preferred date', date], ['Preferred arrival', booking.time_window], ['Service address', booking.address_line],
-    ['Aircon units', booking.unit_count], ['Status', booking.booking_status],
-    [booking.annual_series_id?'Amount allocated to this visit':'Estimated amount', booking.total_amount == null ? 'To be confirmed' : `SGD ${Number(booking.total_amount).toFixed(2)}`],
-    ...(booking.annual_series_id ? [['Total for all four visits',`SGD ${Number(booking.annual_total).toFixed(2)} (not an additional charge)`]] : []),
-    ...(booking.problem_description ? [['Notes', booking.problem_description]] : []),
+    ['Booking reference', `#${booking.booking_id}`],
+    ['Services', booking.services],
+    ['Service date', date],
+    ['Arrival window', booking.preferred_time_slot],
+    ['Service address', booking.address_line],
+    ['Technician', technicianName],
   ];
-  const greeting = `Hi ${booking.full_name},`;
-  const intro = 'Your CoolCare booking request has been saved. Our service team will confirm appointment availability. No payment has been taken.';
+  const intro = 'Your booking has been reviewed, confirmed and assigned to a technician.';
   return {
-    subject: `CoolCare booking #${booking.booking_id}${booking.annual_series_id?` — annual visit ${booking.visit_number} of 4`:''} received`,
-    text: `${greeting}\n\n${intro}\n\n${fields.map(([name, value]) => `${name}: ${value}`).join('\n')}\n\nYou can view this request in My Bookings.\nCoolCare`,
-    html: `<div style="font:16px Arial,sans-serif;max-width:600px;color:#172b4d"><h1 style="color:#003f87">Booking request received</h1><p>${escapeHtml(greeting)}</p><p>${intro}</p><table style="width:100%;border-collapse:collapse">${fields.map(([name, value]) => `<tr><th style="padding:10px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd">${escapeHtml(name)}</th><td style="padding:10px;border-bottom:1px solid #ddd;white-space:pre-wrap">${escapeHtml(value)}</td></tr>`).join('')}</table><p>You can view this request in My Bookings.</p><p>CoolCare</p></div>`,
+    subject: `CoolCare booking #${booking.booking_id} confirmed`,
+    text: `Hi ${booking.full_name},\n\n${intro}\n\n${fields.map(([name,value])=>`${name}: ${value}`).join('\n')}\n\nView the latest status in My Bookings.\nCoolCare`,
+    html: `<div style="font:16px Arial,sans-serif;max-width:600px;color:#172b4d"><h1 style="color:#003f87">Booking confirmed and technician assigned</h1><p>Hi ${escapeHtml(booking.full_name)},</p><p>${escapeHtml(intro)}</p><table style="width:100%;border-collapse:collapse">${fields.map(([name,value])=>`<tr><th style="padding:10px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd">${escapeHtml(name)}</th><td style="padding:10px;border-bottom:1px solid #ddd">${escapeHtml(value)}</td></tr>`).join('')}</table><p>View the latest status in My Bookings.</p><p>CoolCare</p></div>`,
   };
 }
 
@@ -35,23 +32,6 @@ async function enqueueMail(connection,{eventKey,eventType,bookingId=null,invitat
   return {status:mode==='disabled'?'disabled':'queued',mode,recipient};
 }
 
-// Called inside the booking transaction: a failed booking never produces a mail.
-export async function enqueueBookingEmail(connection, bookingId) {
-  const [[booking]] = await connection.execute(`SELECT b.booking_id,u.full_name,u.email,b.preferred_service_date AS preferred_date,
-    b.preferred_time_slot AS time_window,b.booking_status,b.total_amount,b.problem_description,sa.address_line,sc.service_name,
-    bp.package_name,av.series_id AS annual_series_id,av.visit_number,abs.total_amount AS annual_total,
-    (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS unit_count
-    FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN user_account u ON u.user_id=c.user_id
-    JOIN service_address sa ON sa.address_id=b.address_id JOIN service_catalog sc ON sc.service_id=b.service_id
-    LEFT JOIN booking_package bp ON bp.booking_id=b.booking_id
-    LEFT JOIN annual_booking_visit av ON av.booking_id=b.booking_id
-    LEFT JOIN annual_booking_series abs ON abs.series_id=av.series_id WHERE b.booking_id=?`, [bookingId]);
-  if (!booking) throw new Error('Cannot queue mail for a missing booking.');
-  const [items] = await connection.execute('SELECT service_name FROM booking_service WHERE booking_id=? ORDER BY service_id', [bookingId]);
-  const mail = buildBookingMail(booking, items.map(item => item.service_name).join(', '));
-  return enqueueMail(connection,{eventKey:`booking.received:${bookingId}`,eventType:'booking.received',bookingId,recipient:booking.email,...mail});
-}
-
 export async function enqueueBookingLifecycleEmail(connection,bookingId,eventType,{technicianName='',eventKey=`${eventType}:${bookingId}`}={}) {
   if(eventType!=='booking.assigned')throw new Error('Unsupported booking mail event.');
   const [[booking]]=await connection.execute(`SELECT b.booking_id,b.preferred_service_date,b.preferred_time_slot,
@@ -61,14 +41,8 @@ export async function enqueueBookingLifecycleEmail(connection,bookingId,eventTyp
     LEFT JOIN booking_service bs ON bs.booking_id=b.booking_id WHERE b.booking_id=?
     GROUP BY b.booking_id,b.preferred_service_date,b.preferred_time_slot,u.full_name,u.email,sa.address_line`,[bookingId]);
   if(!booking)throw new Error('Cannot queue mail for a missing booking.');
-  const common=[['Booking reference',`#${booking.booking_id}`],['Services',booking.services],['Service date',booking.preferred_service_date],['Arrival window',booking.preferred_time_slot],['Service address',booking.address_line]];
-  const variants={
-    'booking.assigned':{heading:'Booking confirmed and technician assigned',subject:`CoolCare booking #${bookingId} confirmed`,intro:'Your booking has been reviewed, confirmed and assigned to a technician.',extra:[['Technician',technicianName]]},
-  }[eventType];
-  const fields=[...common,...variants.extra];
-  const text=`Hi ${booking.full_name},\n\n${variants.intro}\n\n${fields.map(([name,value])=>`${name}: ${value}`).join('\n')}\n\nView the latest status in My Bookings.\nCoolCare`;
-  const html=`<div style="font:16px Arial,sans-serif;max-width:600px;color:#172b4d"><h1 style="color:#003f87">${escapeHtml(variants.heading)}</h1><p>Hi ${escapeHtml(booking.full_name)},</p><p>${escapeHtml(variants.intro)}</p><table style="width:100%;border-collapse:collapse">${fields.map(([name,value])=>`<tr><th style="padding:10px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd">${escapeHtml(name)}</th><td style="padding:10px;border-bottom:1px solid #ddd">${escapeHtml(value)}</td></tr>`).join('')}</table><p>View the latest status in My Bookings.</p><p>CoolCare</p></div>`;
-  return enqueueMail(connection,{eventKey,eventType,bookingId,recipient:booking.email,subject:variants.subject,text,html});
+  const mail=buildAssignedBookingMail(booking,technicianName);
+  return enqueueMail(connection,{eventKey,eventType,bookingId,recipient:booking.email,...mail});
 }
 
 export async function enqueueStaffInvitationEmail(connection,{invitationId,roleName,recipient,fullName,token,origin}) {

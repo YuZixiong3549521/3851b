@@ -243,7 +243,7 @@ test('assistant annual review reports every conflicting quarter and confirmation
   assert.equal(confirm.status,409);assert.equal(confirm.data.code,'SCHEDULE_CONFLICT');
   assert.deepEqual(confirm.data.details.conflicts.map(conflict=>conflict.visitNumber),[4]);
   assert.deepEqual(await recordCounts(connection,customerId),before,'a conflict on visit four cannot create the first three visits');
-  assert.equal(before.series,0);assert.equal(before.bookings,9);assert.equal(before.emails,9);
+  assert.equal(before.series,0);assert.equal(before.bookings,9);assert.equal(before.emails,0);
 }));
 
 test('assistant requires a new reviewed price before committing, without modifying the live catalogue',async()=>fixture(async({connection,hooks,customer})=>{
@@ -288,8 +288,8 @@ test('assistant annual confirmation is atomic, recovers a lost response, and rep
     const input=confirmInput(client,reviewed);
     let inserts=0;
     hooks.before=sql=>{
-      if(sql.startsWith('INSERT INTO booking_email_outbox')&&++inserts===4) {
-        const error=new Error('Injected fourth assistant email failure');error.status=503;throw error;
+      if(sql.startsWith('INSERT INTO booking(')&&++inserts===4) {
+        const error=new Error('Injected fourth assistant booking failure');error.status=503;throw error;
       }
     };
     const failed=await client.request(`${prefix}/confirm`,'POST',input);
@@ -305,7 +305,7 @@ test('assistant annual confirmation is atomic, recovers a lost response, and rep
     const series=completed.booking.annualBundle;assert.equal(series.visits.length,4);assert.equal(series.totalAmount,260);
     assert.deepEqual(series.visits.map(visit=>visit.preferredDate),reviewed.quote.visits.map(visit=>visit.preferredDate));
     assert.ok(series.visits.every(visit=>visit.status==='Submitted'&&visit.totalAmount===65));
-    assert.deepEqual(await recordCounts(connection,customerId),{bookings:4,series:1,addresses:1,units:2,emails:4});
+    assert.deepEqual(await recordCounts(connection,customerId),{bookings:4,series:1,addresses:1,units:2,emails:0});
     const [[links]]=await connection.execute(`SELECT COUNT(*) AS n,COUNT(DISTINCT u.unit_id) AS units FROM booking_aircon_unit u
       JOIN annual_booking_visit v ON v.booking_id=u.booking_id WHERE v.series_id=?`,[series.seriesId]);
     assert.equal(links.n,8);assert.equal(links.units,2);
@@ -315,7 +315,7 @@ test('assistant annual confirmation is atomic, recovers a lost response, and rep
     const returning=newClient();await returning.login(account);
     const retry=await returning.request(`${prefix}/confirm`,'POST',input);
     assert.equal(retry.status,200);assert.deepEqual(retry.data.booking,completed.booking);
-    assert.deepEqual(await recordCounts(connection,customerId),{bookings:4,series:1,addresses:1,units:2,emails:4});
+    assert.deepEqual(await recordCounts(connection,customerId),{bookings:4,series:1,addresses:1,units:2,emails:0});
     const badAccount=await returning.request(`${prefix}/confirm`,'POST',{...input,expectedUserId:returning.user.id+100000});
     assert.equal(badAccount.status,409);assert.equal(badAccount.data.code,'ACCOUNT_CHANGED','account checks also precede completed receipt recovery');
   });} finally {t.mock.timers.reset();}
@@ -341,5 +341,5 @@ test('assistant reset and confirmation races preserve the winning request and ar
   assert.equal(recovered.status,200);assert.deepEqual(recovered.data.booking,confirmed.data.booking,'an archived completed request still returns its immutable receipt');
   assert.equal((await client.request(`${prefix}/draft`)).data.state.draftId,newDraft.data.state.draftId,'receipt recovery does not replace the newer current draft');
   const [[active]]=await connection.execute('SELECT COUNT(*) AS n FROM assistant_booking_draft WHERE current_customer_id=?',[customerId]);assert.equal(active.n,1);
-  assert.deepEqual(await recordCounts(connection,customerId),{bookings:1,series:0,addresses:1,units:2,emails:1});
+  assert.deepEqual(await recordCounts(connection,customerId),{bookings:1,series:0,addresses:1,units:2,emails:0});
 }));

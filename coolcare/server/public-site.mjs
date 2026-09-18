@@ -38,7 +38,7 @@ export async function createPublicBooking(pool,user,input,{legacy=false}={}) {
  try {
   await conn.beginTransaction();
   const customer=await lockCustomer(conn,user.id);
-  if(data.requestId){const [[existing]]=await conn.execute('SELECT b.booking_id FROM web_booking_details d JOIN booking b ON b.booking_id=d.booking_id WHERE d.request_id=? AND b.customer_id=?',[data.requestId,customer.customerId]);if(existing){const booking=await describeCreatedBooking(conn,existing.booking_id,{legacy});await conn.commit();return {...booking,id:booking.bookingId};}}
+  if(data.requestId){const [[existing]]=await conn.execute('SELECT b.booking_id FROM web_booking_details d JOIN booking b ON b.booking_id=d.booking_id WHERE d.request_id=? AND b.customer_id=?',[data.requestId,customer.customerId]);if(existing){const booking=await describeCreatedBooking(conn,existing.booking_id);await conn.commit();return {...booking,id:booking.bookingId};}}
   const selection=await resolveBookingSelection(conn,customer.customerId,data,data.numberOfUnits,{legacy});
   const address=await findOrCreateServiceAddress(conn,customer.customerId,data.serviceAddress,{addressId:data.addressId});
   const unitIds=await addressUnitIds(conn,customer.customerId,address.addressId,data.numberOfUnits);

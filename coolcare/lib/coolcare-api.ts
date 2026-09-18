@@ -12,7 +12,6 @@ import type {
   CustomerContext,
   Customer,
   UpdateProfileInput,
-  EmailNotification,
   Service,
   ServiceReport,
 } from './coolcare-types';
@@ -80,10 +79,10 @@ export const coolcareApi = {
   getReport: async (bookingId: number) =>
     (await apiRequest<{ report: ServiceReport }>(`/bookings/${bookingId}/report`)).report,
   createBooking: async (input: BookingInput) => {
-    const result = await apiRequest<{ booking: CreatedBooking; emailNotification?: EmailNotification }>('/bookings', {
+    const result = await apiRequest<{ booking: CreatedBooking }>('/bookings', {
       method: 'POST',
       body: JSON.stringify(input),
     });
-    return { ...result.booking, emailNotification: result.emailNotification ?? result.booking.emailNotification };
+    return result.booking;
   },
 };

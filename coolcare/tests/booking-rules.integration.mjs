@@ -51,7 +51,7 @@ for(const route of ['public','customer'])test(`${route} enforces Singapore day-1
     assert.equal((await create(input)).bookingId,id,'same request still returns its receipt even after the original date is past');
     await assert.rejects(create({...input,requestId:randomUUID()}),error=>error.status===400&&error.message.includes('14 calendar days'));
     const [[count]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(count.n,1);
-    const [[mail]]=await c.execute('SELECT COUNT(*) AS n FROM booking_email_outbox WHERE booking_id=?',[id]);assert.equal(mail.n,1);
+    const [[mail]]=await c.execute('SELECT COUNT(*) AS n FROM booking_email_outbox WHERE booking_id=?',[id]);assert.equal(mail.n,0);
   });} finally {t.mock.timers.reset();}
 });
 
@@ -82,7 +82,7 @@ test('both booking routes enforce normalized address limits, cancellation and re
   const [[count]]=await c.execute('SELECT COUNT(*) AS n FROM service_address WHERE customer_id=?',[user.customerId]);
   assert.equal(count.n,2,'format variants reuse the existing address');
   const [[email]]=await c.execute('SELECT COUNT(*) AS n FROM booking_email_outbox WHERE booking_id=?',[replacement.bookingId]);
-  assert.equal(email.n,1,'retry queues one email');
+  assert.equal(email.n,0,'retry remains silent before dispatch');
 }));
 
 test('only three current choices are exposed, prices are authoritative and equipment belongs to the address',async()=>rollbackFixture(async(db,c,user)=>{
@@ -141,20 +141,16 @@ test('retired services and memberships reject new bookings while historical rows
   assert.equal(history.totalAmount,110);assert.equal(history.services[0].name,serviceName);
 },{privileged:true}));
 
-test('failure while queueing email rolls back order, links and quota usage',async()=>rollbackFixture(async(db,c,user)=>{
+test('booking submission does not queue customer email before dispatch',async()=>rollbackFixture(async(db,c,user)=>{
   const input=body();
-  const base=await db.getConnection();
-  const broken={...db,getConnection:async()=>({...base,execute:async(sql,values)=>{
-    if(sql.startsWith('INSERT INTO booking_email_outbox'))throw new Error('Injected outbox failure');
-    return base.execute(sql,values);
-  }})};
-  await assert.rejects(createPublicBooking(broken,user,input),/Injected outbox failure/);
-  const [[bookings]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(bookings.n,0);
-  const [[addresses]]=await c.execute('SELECT COUNT(*) AS n FROM service_address WHERE customer_id=?',[user.customerId]);assert.equal(addresses.n,0);
-  assert.ok((await createPublicBooking(db,user,input)).id);
+  const created=await createPublicBooking(db,user,input);
+  assert.ok(created.id);
+  assert.equal((await createPublicBooking(db,user,input)).id,created.id);
+  const [[mail]]=await c.execute('SELECT COUNT(*) AS n FROM booking_email_outbox WHERE booking_id=?',[created.id]);
+  assert.equal(Number(mail.n),0);
 }));
 
-for(const route of ['public','customer'])test(`${route} annual bundle creates four real quarterly visits and emails, supports retry and scoped changes`,async()=>rollbackFixture(async(db,c,user)=>{
+for(const route of ['public','customer'])test(`${route} annual bundle creates four real quarterly visits without pre-dispatch email, supports retry and scoped changes`,async()=>rollbackFixture(async(db,c,user)=>{
   const options=await getBookingOptions(db,user.customerId);
   const bundle=options.bundles[0];
   const firstDate=nextWeekday(`${new Date().getFullYear()+1}-01-31`);
@@ -176,14 +172,12 @@ for(const route of ['public','customer'])test(`${route} annual bundle creates fo
   assert.ok(series.visits.every(visit=>isWeekday(visit.preferredDate)));
   assert.deepEqual(series.visits.map(visit=>visit.windowStart),[0,3,6,9].map(month=>addCalendarMonths(firstDate,month)));
   assert.equal((await create()).annualBundle.seriesId,series.seriesId);
-  const [[counts]]=await c.execute(`SELECT COUNT(DISTINCT b.booking_id) AS bookings,COUNT(bu.unit_id) AS units,COUNT(DISTINCT e.email_id) AS emails
-    FROM booking b JOIN booking_aircon_unit bu ON bu.booking_id=b.booking_id JOIN booking_email_outbox e ON e.booking_id=b.booking_id WHERE b.customer_id=?`,[user.customerId]);
-  assert.equal(counts.bookings,4);assert.equal(counts.units,8);assert.equal(counts.emails,4);
-  const [mail]=await c.execute(`SELECT e.body_text FROM booking_email_outbox e JOIN annual_booking_visit v ON v.booking_id=e.booking_id WHERE v.series_id=? ORDER BY v.visit_number`,[series.seriesId]);
-  mail.forEach((message,index)=>{
-    assert.match(message.body_text,new RegExp(`Quarterly visit: ${index+1} of 4`));
-    assert.match(message.body_text,/Amount allocated to this visit/);assert.match(message.body_text,/not an additional charge/);
-  });
+  const [[counts]]=await c.execute(`SELECT COUNT(DISTINCT b.booking_id) AS bookings,COUNT(bu.unit_id) AS units
+    FROM booking b JOIN booking_aircon_unit bu ON bu.booking_id=b.booking_id WHERE b.customer_id=?`,[user.customerId]);
+  assert.equal(counts.bookings,4);assert.equal(counts.units,8);
+  const [[mail]]=await c.execute(`SELECT COUNT(*) AS count FROM booking_email_outbox e
+    JOIN annual_booking_visit v ON v.booking_id=e.booking_id WHERE v.series_id=?`,[series.seriesId]);
+  assert.equal(Number(mail.count),0);
   const second=series.visits[1];
   await assert.rejects(changePublicBooking(db,user,second.bookingId,'reschedule',{preferredDate:nextWeekday(second.windowEnd),timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===409);
   await assert.rejects(changePublicBooking(db,user,second.bookingId,'reschedule',{preferredDate:firstDate,timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===409);
@@ -198,7 +192,7 @@ for(const route of ['public','customer'])test(`${route} annual bundle creates fo
   assert.equal(listed.length,4);assert.ok(listed.every(item=>item.annualBundle.seriesId===series.seriesId));
 }));
 
-test('annual later-visit quota failure and fourth-email failure roll back the complete series',async()=>rollbackFixture(async(db,c,user)=>{
+test('annual later-visit quota failure rolls back the complete series and successful retry remains silent before dispatch',async()=>rollbackFixture(async(db,c,user)=>{
   const options=await getBookingOptions(db,user.customerId);
   const bundle=options.bundles[0];
   const firstDate=date(0);
@@ -209,16 +203,11 @@ test('annual later-visit quota failure and fourth-email failure roll back the co
   await assert.rejects(createPublicBooking(db,user,annual),error=>error.status===409);
   let [[counts]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(counts.n,2);
   await c.execute("UPDATE booking SET booking_status='Cancelled' WHERE customer_id=?",[user.customerId]);
-  const base=await db.getConnection();let queued=0;
-  const broken={...db,getConnection:async()=>({...base,execute:async(sql,values)=>{
-    if(sql.startsWith('INSERT INTO booking_email_outbox')&&++queued===4)throw new Error('Injected fourth email failure');
-    return base.execute(sql,values);
-  }})};
-  await assert.rejects(createPublicBooking(broken,user,{...annual,serviceAddress:'Atomic Annual Address'}),/Injected fourth email failure/);
-  [[counts]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(counts.n,2);
-  const [[series]]=await c.execute('SELECT COUNT(*) AS n FROM annual_booking_series WHERE customer_id=?',[user.customerId]);assert.equal(series.n,0);
-  const [[emails]]=await c.execute('SELECT COUNT(*) AS n FROM booking_email_outbox e JOIN booking b ON b.booking_id=e.booking_id WHERE b.customer_id=?',[user.customerId]);assert.equal(emails.n,2);
-  assert.equal((await createPublicBooking(db,user,{...annual,serviceAddress:'Atomic Annual Address'})).annualBundle.visits.length,4);
+  const created=await createPublicBooking(db,user,{...annual,serviceAddress:'Atomic Annual Address'});
+  assert.equal(created.annualBundle.visits.length,4);
+  [[counts]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(counts.n,6);
+  const [[series]]=await c.execute('SELECT COUNT(*) AS n FROM annual_booking_series WHERE customer_id=?',[user.customerId]);assert.equal(series.n,1);
+  const [[emails]]=await c.execute('SELECT COUNT(*) AS n FROM booking_email_outbox e JOIN booking b ON b.booking_id=e.booking_id WHERE b.customer_id=?',[user.customerId]);assert.equal(emails.n,0);
 }));
 
 test('public and customer requests wait for the same customer lock before reading booking limits',async()=>{

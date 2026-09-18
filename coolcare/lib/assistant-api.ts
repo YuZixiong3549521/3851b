@@ -1,6 +1,6 @@
 import { apiFetch } from '@/components/public-site/api';
 import { assertBookingConfirmation } from '@/lib/annual-booking';
-import type { AnnualBundle, EmailNotification } from '@/lib/coolcare-types';
+import type { AnnualBundle } from '@/lib/coolcare-types';
 
 export type AssistantStep = 'service' | 'address' | 'schedule' | 'review';
 export type AssistantDraft = {
@@ -29,7 +29,6 @@ export type AssistantReceipt = {
   bookingReference?: string;
   status: string;
   totalAmount: number;
-  emailNotification?: EmailNotification;
   annualBundle?: AnnualBundle | null;
 };
 export type AssistantState = {

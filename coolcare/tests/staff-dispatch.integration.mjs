@@ -290,8 +290,7 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       'Confirmed',
     );
     const [[reviewMailCount]] = await connection.execute(
-      `SELECT COUNT(*) AS count FROM booking_email_outbox WHERE booking_id=?
-      AND event_type IN ('booking.confirmed','booking.rejected','booking.assigned')`,
+      'SELECT COUNT(*) AS count FROM booking_email_outbox WHERE booking_id=?',
       [first.bookingId],
     );
     assert.equal(Number(reviewMailCount.count), 0);
@@ -319,7 +318,13 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
     assert.equal(dispatchMail.recipient, customer.email);
     assert.equal(dispatchMail.event_type, 'booking.assigned');
     assert.match(dispatchMail.subject, /confirmed/i);
-    assert.match(dispatchMail.body_text, new RegExp(rescheduledDate));
+    const emailDate = new Intl.DateTimeFormat('en-SG', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(new Date(`${rescheduledDate}T00:00:00Z`));
+    assert.match(dispatchMail.body_text, new RegExp(emailDate));
     assert.match(dispatchMail.body_text, /14:00 - 16:00/);
     assert.match(
       dispatchMail.body_text,

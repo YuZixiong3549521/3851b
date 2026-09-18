@@ -55,7 +55,7 @@ test('new customer can save an address without AC records and book by count thro
     context=await state();assert.equal(context.units.length,2);
     const [[links]]=await c.execute(`SELECT COUNT(*) AS n,COUNT(DISTINCT bu.unit_id) AS equipment FROM booking_aircon_unit bu
       JOIN annual_booking_visit v ON v.booking_id=bu.booking_id WHERE v.series_id=?`,[annual.annualBundle.seriesId]);assert.equal(links.n,8);assert.equal(links.equipment,2);
-    const [[messages]]=await c.execute(`SELECT COUNT(*) AS n FROM booking_email_outbox e JOIN annual_booking_visit v ON v.booking_id=e.booking_id WHERE v.series_id=?`,[annual.annualBundle.seriesId]);assert.equal(messages.n,4);
+    const [[messages]]=await c.execute(`SELECT COUNT(*) AS n FROM booking_email_outbox e JOIN annual_booking_visit v ON v.booking_id=e.booking_id WHERE v.series_id=?`,[annual.annualBundle.seriesId]);assert.equal(messages.n,0);
     const direct={serviceAddress:'25 Direct Typed Street #03-04',numberOfUnits:3,serviceIds:[options.services.find(service=>service.code==='cleaning').serviceId],preferredDate:payload.preferredDate,timeSlot:payload.timeSlot,requestId:randomUUID(),expectedUserId:login.user.id};
     const directResponse=await request('/api/customer/bookings','POST',direct);assert.equal(directResponse.status,201);
     const oneOff=(await directResponse.json()).booking;assert.equal(oneOff.totalAmount,100);

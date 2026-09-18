@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
-import { bookingEmailMessage, bookingFrequencyNotice, getBookingSelection } from '@/components/booking-service-selection';
+import { bookingFrequencyNotice, getBookingSelection } from '@/components/booking-service-selection';
 import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingAddressField } from '@/components/booking-address-field';
@@ -361,7 +361,6 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
             {annual && <AnnualBookingSummary firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={estimate} saved={receipt?.annualBundle} compact />}
             {selected.pricingNote && <p className="text-xs leading-5 text-muted-foreground">{selected.pricingNote}</p>}
             {!receipt && <p className="text-xs leading-5 text-muted-foreground">Your request will be saved as Awaiting confirmation. Preferred dates and times still need the service team's confirmation.</p>}
-            {receipt?.emailNotification && <p role="status" className="text-sm text-muted-foreground">{bookingEmailMessage(receipt.emailNotification)}</p>}
           </>}
           {screen !== 'menu' && screen !== 'review' && screen !== 'success' && selected.valid && <details className="rounded-xl border p-3 text-sm"><summary className="cursor-pointer font-medium">Your selected answers</summary><dl className="mt-3 space-y-2 text-xs"><div><dt className="text-muted-foreground">Service</dt><dd>{selected.label} · {draft.numberOfUnits} unit(s) · {formatMoney(selected.estimate)} {annual ? 'per year' : 'per visit'}</dd></div>{draft.serviceAddress && <div><dt className="text-muted-foreground">Address</dt><dd className="break-words">{draft.serviceAddress}</dd></div>}{draft.preferredDate && <div><dt className="text-muted-foreground">Preferred date</dt><dd>{formatDate(draft.preferredDate)} · {formatTimeSlot(draft.timeWindow)}</dd></div>}</dl></details>}
           {screen !== 'success' && <div className="border-t pt-3">

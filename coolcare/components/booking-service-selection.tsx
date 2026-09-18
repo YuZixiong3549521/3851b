@@ -3,7 +3,7 @@
 import { CalendarDays, Check, Sparkles, Wrench } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatMoney } from '@/lib/format';
-import type { BookingOptions, EmailNotification } from '@/lib/coolcare-types';
+import type { BookingOptions } from '@/lib/coolcare-types';
 
 export type BookingSelection = {
   mode: 'custom' | 'bundle';
@@ -14,13 +14,6 @@ export type BookingSelection = {
 export const emptyBookingSelection: BookingSelection = { mode: 'custom', serviceIds: [] };
 export const bookingFrequencyNotice = 'To avoid duplicate visits, you can make up to two bookings for the same address in any 7-day period. Cancelled bookings do not count.';
 export const cleaningMethodNotice = 'For residential wall-mounted air conditioners. The technician will assess the unit and decide whether regular or chemical cleaning is appropriate. Chemical cleaning, repairs and any additional work require an agreed quote before proceeding.';
-
-export function bookingEmailMessage(notification?: EmailNotification) {
-  if (!notification) return '';
-  if (notification.status === 'disabled') return 'Booking email is currently unavailable. Your booking has been saved.';
-  if (notification.status === 'sent') return notification.mode === 'local' ? 'Booking email delivered to the local demo inbox.' : 'Booking email sent to ' + notification.recipient + '.';
-  return notification.mode === 'local' ? 'Booking email queued for the local demo inbox.' : 'Your booking email is queued.';
-}
 
 export function getBookingSelection(options: BookingOptions | null, selection: BookingSelection, unitCount: number) {
   const bundle = options?.bundles.find(item => item.packageId === selection.packageId && item.code === 'annual-cleaning');
