@@ -1,3 +1,4 @@
+import {listServicePhotos} from './service-photo-upload.mjs';
 import express from 'express';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -698,7 +699,8 @@ export async function getAdminBooking(pool, bookingId) {
     LEFT JOIN work_order w ON w.assignment_id=a.assignment_id WHERE a.booking_id=? ORDER BY a.assignment_id DESC`,
     [bookingId],
   );
-  return { ...booking, timeline, assignments };
+  const [reports]=await pool.execute(`SELECT w.job_id AS jobId,r.report_id AS reportId,r.work_performed AS workPerformed,r.problem_found AS problemFound,r.solution_applied AS solutionApplied,r.checklist_result AS checklist,r.customer_signature_url AS customerSignatureUrl,r.technician_signature_url AS technicianSignatureUrl,r.started_at AS startedAt,r.completed_at AS completedAt FROM service_report r JOIN work_order w ON w.job_id=r.job_id WHERE w.booking_id=? AND r.submitted_time IS NOT NULL ORDER BY r.report_id DESC`,[bookingId]);
+  return { ...booking, timeline, assignments, reports:await Promise.all(reports.map(async r=>({...r,photos:await listServicePhotos(pool,r.jobId)}))) };
 }
 
 export async function listStaff(pool, roleName) {

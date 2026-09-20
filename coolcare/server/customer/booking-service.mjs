@@ -205,6 +205,7 @@ export async function getBookingReport(pool, bookingId, userId) {
        sr.problem_found AS problemFound,
        sr.solution_applied AS solutionApplied,
        sr.checklist_result AS checklistResult,
+       sr.customer_signature_url AS customerSignatureUrl,sr.technician_signature_url AS technicianSignatureUrl,
        UNIX_TIMESTAMP(sr.submitted_time) AS submittedTimeEpoch,
        ca.cleaning_method AS cleaningMethod,
        ca.assessment_note AS assessmentNote

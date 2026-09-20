@@ -164,6 +164,8 @@ export type ServiceReport = {
   problemFound: string | null;
   solutionApplied: string | null;
   checklistResult: string | null;
+  customerSignatureUrl?: string | null;
+  technicianSignatureUrl?: string | null;
   submittedTime: string | null;
   cleaningMethod?: 'Regular' | 'Chemical' | null;
   assessmentNote?: string | null;

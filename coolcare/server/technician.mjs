@@ -1,3 +1,4 @@
+import {registerTechnicianPages} from './technician-pages.mjs';
 import express from 'express';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
@@ -90,6 +91,7 @@ export async function getTechnicianJobDetails(pool, technicianId, jobId) {
     b.subscription_id AS subscriptionId,mp.package_name AS packageName,sa.address_line AS address,
     DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,r.work_performed AS workPerformed,
     r.problem_found AS problemFound,r.solution_applied AS solutionApplied,r.checklist_result AS checklist,
+    r.customer_signature_url AS customerSignatureUrl,r.technician_signature_url AS technicianSignatureUrl,
     r.submitted_time AS submittedAt,r.started_at AS startedAt,r.completed_at AS completedAt,
     ca.cleaning_method AS cleaningMethod,ca.assessment_note AS cleaningAssessmentNote,
     CASE WHEN r.started_at IS NOT NULL AND r.completed_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE,r.started_at,r.completed_at) ELSE NULL END AS durationMinutes
@@ -123,20 +125,48 @@ export async function getTechnicianJobDetails(pool, technicianId, jobId) {
 }
 
 const statusTransition={Assigned:'On The Way','On The Way':'In Progress','In Progress':'Completed'};
+export const serviceReportSchema = z.object({
+ workPerformed: z.string().trim().min(5).max(5000),
+ problemFound: z.string().trim().max(5000).default(''),
+ solutionApplied: z.string().trim().max(5000).default(''),
+ checklist: z.string().trim().min(3).max(5000),
+}).strict();
+export const statusUpdateSchema = z.object({requestId:z.uuid(),expectedStatus:z.enum(['Assigned','On The Way','In Progress']),status:z.enum(['On The Way','In Progress','Completed']),report:serviceReportSchema.optional()}).strict().superRefine((data,ctx)=>{
+ if(data.status==='Completed'&&!data.report)ctx.addIssue({code:'custom',path:['report'],message:'A service report is required to complete the job.'});
+ if(data.status!=='Completed'&&data.report)ctx.addIssue({code:'custom',path:['report'],message:'Submit the report when completing the job.'});
+});
 export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw) {
-  const data=z.object({requestId:z.uuid(),expectedStatus:z.enum(['Assigned','On The Way','In Progress']),status:z.enum(['On The Way','In Progress','Completed'])}).strict().parse(raw);
+  const data=statusUpdateSchema.parse(raw);
+  const hash=createHash('sha256').update(JSON.stringify({technicianUserId,jobId,data})).digest('hex');
   const connection=await pool.getConnection();
   try {
     await connection.beginTransaction();
-    const [[work]]=await connection.execute(`SELECT w.*,a.technician_id,a.assignment_status,b.booking_status
+    const [[work]]=await connection.execute(`SELECT w.*,a.technician_id,a.assignment_status,b.booking_status,r.customer_signature_url,r.technician_signature_url
       FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
       JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id
       JOIN booking b ON b.booking_id=w.booking_id
+      LEFT JOIN service_report r ON r.job_id=w.job_id
       WHERE w.job_id=? AND t.user_id=? AND u.status='Active' FOR UPDATE`,[jobId,technicianUserId]);
     if(!work||['Declined','Reassigned','Cancelled'].includes(work.assignment_status))throw new AppError('Job not found for this technician.',404);
-    if(work.current_status===data.status){await connection.commit();return {jobId,status:data.status,replayed:true};}
+    const [[previous]]=await connection.execute('SELECT payload_hash,result_json FROM technician_work_operation WHERE request_id=?',[data.requestId]);
+    if(previous){
+      if(previous.payload_hash!==hash)throw new AppError('This request ID has already been used for a different update.',409);
+      await connection.commit();return {...(typeof previous.result_json==='string'?JSON.parse(previous.result_json):previous.result_json),replayed:true};
+    }
     if(work.current_status!==data.expectedStatus||statusTransition[work.current_status]!==data.status) {
       throw new AppError('Reload this work order and complete each status step in order.',409);
+    }
+    if(data.status==='In Progress'){
+      await connection.execute(`INSERT INTO service_report(job_id,work_performed,started_at)
+        VALUES (?,'',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))
+        ON DUPLICATE KEY UPDATE started_at=COALESCE(started_at,VALUES(started_at))`,[jobId]);
+    }
+    if(data.status==='Completed'&&(work.customer_signature_url||work.technician_signature_url))throw new AppError('Use Service Reports to update a signed report.',409);
+    if(data.status==='Completed'){
+      const r=data.report;
+      await connection.execute(`INSERT INTO service_report(job_id,work_performed,problem_found,solution_applied,checklist_result,submitted_time,completed_at)
+        VALUES (?,?,?,?,?,CURRENT_TIMESTAMP,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))
+        ON DUPLICATE KEY UPDATE work_performed=VALUES(work_performed),problem_found=VALUES(problem_found),solution_applied=VALUES(solution_applied),checklist_result=VALUES(checklist_result),submitted_time=VALUES(submitted_time),completed_at=VALUES(completed_at)`,[jobId,r.workPerformed,r.problemFound,r.solutionApplied,r.checklist]);
     }
     await connection.execute('UPDATE work_order SET current_status=? WHERE job_id=?',[data.status,jobId]);
     await connection.execute('UPDATE booking SET booking_status=? WHERE booking_id=?',[data.status,work.booking_id]);
@@ -144,7 +174,9 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
     const notes={'On The Way':'Technician is travelling to the confirmed service address.','In Progress':'Technician arrived and started the service.','Completed':'Technician completed the service visit.'};
     await connection.execute(`INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)
       VALUES (?,?,?,?,?)`,[work.booking_id,work.booking_status,data.status,technicianUserId,notes[data.status]]);
-    await connection.commit();return {jobId,bookingId:work.booking_id,status:data.status,replayed:false};
+    const result={jobId,bookingId:work.booking_id,status:data.status,replayed:false};
+    await connection.execute('INSERT INTO technician_work_operation(request_id,job_id,actor_user_id,payload_hash,result_json) VALUES(?,?,?,?,?)',[data.requestId,jobId,technicianUserId,hash,JSON.stringify(result)]);
+    await connection.commit();return result;
   }catch(error){await connection.rollback();throw error;}finally{connection.release();}
 }
 
@@ -161,6 +193,7 @@ async function stockOptions(pool,technicianId,jobId) {
 export function createTechnicianRouter(pool) {
   const router = express.Router();
   router.use(async(req,_res,next)=>{req.technicianUser=await sessionUser(pool,req,'Technician');next();});
+  registerTechnicianPages(router,pool);
   router.get('/jobs',async (req,res)=>{
     const technician=await getTechnician(pool,req.technicianUser.email);
     res.json({technician,jobs:await getTechnicianJobs(pool,technician.technicianId)});

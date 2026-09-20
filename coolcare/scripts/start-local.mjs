@@ -6,7 +6,7 @@ if (!existsSync(resolve(cwd, '.env.local'))) {
   console.error('Run npm run setup first.');
   process.exit(1);
 }
-const technicianBuild = spawnSync(process.execPath, ['node_modules/vite/bin/vite.js', 'build'], {
+const technicianBuild = spawnSync(process.execPath, ['node_modules/vite/bin/vite.js', 'build', '--configLoader', 'native'], {
   cwd: resolve(cwd, 'technician'), stdio: 'inherit', windowsHide: true,
 });
 if (technicianBuild.error || technicianBuild.status !== 0) process.exit(1);
