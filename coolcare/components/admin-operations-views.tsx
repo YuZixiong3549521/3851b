@@ -1,4 +1,6 @@
 'use client';
+import {ServicePhotoGallery} from '@/components/service-photo-gallery';
+import {SignatureImage} from '@/components/signature-image';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -804,6 +806,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </li>
                 ))}
               </ol>
+              {booking.reports?.map(report=><section key={report.reportId} className="mt-7 space-y-2"><h2>Service report</h2><h3>Service process photos</h3><ServicePhotoGallery photos={report.photos||[]}/><p><strong>Work performed:</strong> {report.workPerformed}</p><p><strong>Problem found:</strong> {report.problemFound||'Not recorded'}</p><p><strong>Solution:</strong> {report.solutionApplied||'Not recorded'}</p><p><strong>Checks completed:</strong> {report.checklist||'Not recorded'}</p><div className="grid gap-4 sm:grid-cols-2"><section><h3>Customer signature</h3><SignatureImage url={report.customerSignatureUrl} label="Customer signature"/></section><section><h3>Technician signature</h3><SignatureImage url={report.technicianSignatureUrl} label="Technician signature"/></section></div><p>Started: {report.startedAt ? displayMoment(report.startedAt) : 'Not recorded'} · Completed: {report.completedAt ? displayMoment(report.completedAt) : 'Not recorded'}</p></section>)}
               {booking.assignments.length > 0 && (
                 <>
                   <h2 className="mt-7">Assignments</h2>
@@ -1147,3 +1150,4 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
     </>
   );
 }
+

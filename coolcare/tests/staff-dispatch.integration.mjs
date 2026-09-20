@@ -10,6 +10,7 @@ import {
 } from '../server/customer/booking-schedule.mjs';
 import {
   approveBooking,
+  getAdminBooking,
   dispatchBooking,
   listAdminSchedule,
   rejectBooking,
@@ -445,8 +446,15 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
         requestId: randomUUID(),
         expectedStatus: 'In Progress',
         status: 'Completed',
+          report: {workPerformed:'Cleaned and inspected the unit.',problemFound:'Dirty filters',solutionApplied:'Cleaned filters',checklist:'Cooling and drainage checked'},
       },
     );
+    const [[savedReport]]=await connection.execute('SELECT * FROM service_report WHERE job_id=?',[firstDispatch.jobId]);
+    assert.equal(savedReport.work_performed,'Cleaned and inspected the unit.');
+    assert.ok(savedReport.started_at);assert.ok(savedReport.completed_at);assert.ok(savedReport.submitted_time);
+    assert.ok(savedReport.completed_at>=savedReport.started_at);
+    const adminDetail=await getAdminBooking(db,first.bookingId);
+    assert.equal(adminDetail.reports[0].workPerformed,savedReport.work_performed);
     const [[completed]] = await connection.execute(
       `SELECT b.booking_status,w.current_status,a.assignment_status FROM booking b
     JOIN work_order w ON w.booking_id=b.booking_id JOIN assignment a ON a.assignment_id=w.assignment_id WHERE b.booking_id=?`,

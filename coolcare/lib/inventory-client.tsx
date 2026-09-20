@@ -42,6 +42,7 @@ export type AdminBooking = {
   numberOfUnits: number; technicianName: string | null;
 };
 export type AdminBookingDetail = AdminBooking & {
+  reports?: Array<{photos?:Array<{photoId:number;url:string|null;description:string|null;uploadedAt:string}>;customerSignatureUrl?:string|null;technicianSignatureUrl?:string|null;reportId:number;workPerformed:string;problemFound:string|null;solutionApplied:string|null;checklist:string|null;startedAt:string|null;completedAt:string|null}>;
   phone: string | null; postalCode: string | null; problemDescription: string | null;
   timeline: Array<{ historyId: number; oldStatus: string | null; status: string; note: string | null; changedAt: string; changedBy: string | null }>;
   assignments: Array<{ assignmentId: number; status: string; assignedAt: string; technicianName: string; jobId: number; workStatus: string }>;
@@ -170,3 +171,4 @@ export function safeBack(params: URLSearchParams, fallback = ROOT + '/parts') {
 export function errorText(e: unknown) {
   return e instanceof Error ? e.message : 'Unable to save. Please try again.';
 }
+

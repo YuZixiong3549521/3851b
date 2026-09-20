@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import {SignatureImage} from '@/components/signature-image';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { ArrowLeft, CalendarDays, Camera, CheckCircle2, ClipboardCheck, Clock3, Package, Printer, Snowflake, Timer, UserRound, Wrench, ZoomIn } from 'lucide-react';
@@ -57,6 +58,7 @@ function ServiceReportContent({ bookingId }: { bookingId: number }) {
           <ReportSection icon={ClipboardCheck} title="Checklist result" text={report.checklistResult || 'No checklist result was recorded.'} success />
         </div>
 
+        <section className="mt-6 grid gap-6 sm:grid-cols-2">{(['customer','technician'] as const).map(who=><Card key={who}><CardHeader><CardTitle>{who==='customer'?'Customer signature':'Technician signature'}</CardTitle></CardHeader><CardContent><SignatureImage url={who==='customer'?report.customerSignatureUrl:report.technicianSignatureUrl} label={who+' signature'}/></CardContent></Card>)}</section>
         <Card className="report-section mt-6 border-border/80 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2 text-xl"><Package className="size-5 text-primary" aria-hidden="true" />Parts used</CardTitle></CardHeader><CardContent>{report.partsUsed?.length ? <div className="divide-y divide-border">{report.partsUsed.map(part => <div key={part.partId} className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0"><div className="min-w-0"><p className="break-words text-sm font-semibold">{part.partName}</p><p className="mt-1 text-xs text-muted-foreground">Part #{part.partId}</p></div><p className="shrink-0 text-sm font-semibold">{new Intl.NumberFormat('en-SG', { maximumFractionDigits: 3 }).format(part.quantity)}{part.unit ? ' ' + part.unit : ''}</p></div>)}</div> : <p className="text-sm text-muted-foreground">No parts were recorded as used on this work order.</p>}</CardContent></Card>
 
         <Card className="report-photos mt-6 border-border/80 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2 text-xl"><Camera className="size-5 text-primary" aria-hidden="true" />Service photos</CardTitle></CardHeader><CardContent>{report.photos.length ? <div className="grid gap-4 sm:grid-cols-2">{report.photos.map(photo => <ReportPhotoCard key={photo.photoId} photo={photo} onOpen={() => setSelectedPhoto(photo)} />)}</div> : <p className="text-sm text-muted-foreground">No service photos were attached to this report.</p>}</CardContent></Card>

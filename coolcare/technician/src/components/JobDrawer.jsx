@@ -1,3 +1,4 @@
+import {SignatureImage} from '@/components/signature-image';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +19,7 @@ function InventoryUsed({ items = [] }) {
         <li key={item.transactionId}>
           <strong>{item.partName}</strong>: {item.quantity} {item.stockUnit} ·{' '}
           {item.type}
+          <small>Transaction time: {formatMoment(item.occurredAt)}</small>
           {item.remarks && <small>{item.remarks}</small>}
         </li>
       ))}
@@ -61,6 +63,8 @@ function Report({ report }) {
         <strong>Start / finish:</strong> {report.startedAt || 'Not recorded'} /{' '}
         {report.completedAt || 'Not recorded'}
       </p>
+      <h4>Customer signature</h4><SignatureImage url={report.customerSignatureUrl} label="Customer signature"/>
+      <h4>Technician signature</h4><SignatureImage url={report.technicianSignatureUrl} label="Technician signature"/>
       <h4>Parts used</h4>
       <InventoryUsed items={report.inventory} />
     </div>
@@ -105,6 +109,7 @@ function WorkStatusActions({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [uncertain, setUncertain] = useState(false);
+  const [report,setReport]=useState({workPerformed:'',problemFound:'',solutionApplied:'',checklist:''});
   const pending = useRef(null),
     inFlight = useRef(false);
   if (!next || mockMode) return null;
@@ -114,6 +119,7 @@ function WorkStatusActions({
       requestId: crypto.randomUUID(),
       expectedStatus: current,
       status: next,
+      ...(next==='Completed'?{report}:{}),
     };
     inFlight.current = true;
     setBusy(true);
@@ -141,15 +147,21 @@ function WorkStatusActions({
       setBusy(false);
     }
   }
+  if(next==='Completed')return <section className="tech-status-actions"><h3>Complete service report</h3><p>Review the service details and collect signatures in Service Reports.</p><Button disabled={externallyLocked} onClick={()=>{window.location.hash='reports';}}>Open Service Reports</Button></section>;
   const label =
     next === 'On The Way'
       ? 'Start journey'
       : next === 'In Progress'
         ? 'Start service'
-        : 'Complete service';
+        : 'Submit report & complete';
   return (
     <section className="tech-status-actions">
       <h3>Work order status</h3>
+      {next==='Completed' && <fieldset disabled={busy||uncertain||externallyLocked} className="space-y-3">
+        <legend>Service report</legend>
+        <p>Describe the completed service. Parts already issued are recorded automatically.</p>
+        {[['workPerformed','Work performed (required)',5],['problemFound','Problem found',0],['solutionApplied','Solution applied',0],['checklist','Checks completed (required)',3]].map(([key,label,min])=><label className="block" key={key} htmlFor={'report-'+key}>{label}<Textarea id={'report-'+key} value={report[key]} minLength={min} maxLength={5000} required={min>0} onChange={e=>setReport(r=>({...r,[key]:e.target.value}))}/></label>)}
+      </fieldset>}
       <p>
         Update this work order one step at a time. The customer will see the
         same status.
@@ -168,7 +180,7 @@ function WorkStatusActions({
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
-          disabled={busy || (externallyLocked && !uncertain)}
+          disabled={busy || (externallyLocked && !uncertain) || (!uncertain && next==='Completed' && (report.workPerformed.trim().length<5 || report.checklist.trim().length<3))}
           onClick={advance}
         >
           {busy ? 'Updating…' : uncertain ? 'Retry same update' : label}

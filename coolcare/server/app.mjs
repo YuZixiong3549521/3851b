@@ -1,3 +1,5 @@
+import {registerServicePhotoMedia} from './service-photo-upload.mjs';
+import {registerSignatureMedia} from './report-signatures.mjs';
 import express from 'express';
 import { createCustomerRouter } from './customer/router.mjs';
 import { createTechnicianRouter } from './technician.mjs';
@@ -150,7 +152,9 @@ export function createApp({
       return res.status(403).json({ error: 'Untrusted request origin.' });
     next();
   });
-  app.use(express.json({ limit: '16kb' }));
+  app.use('/api/technician/reports/:jobId/signatures/:signer', express.json({limit:'3mb'}));
+  app.use('/api/technician/reports/:jobId/photos',express.json({limit:'8mb'}));
+  app.use(express.json({ limit: '64kb' }));
   // Memory sessions are intentional for this local-only edition. Restart => sign in again.
   app.use(
     session({
@@ -208,6 +212,8 @@ export function createApp({
         });
     next();
   });
+  registerSignatureMedia(app,pool);
+  registerServicePhotoMedia(app,pool);
   app.use('/api/public', createPublicRouter(pool));
   app.use('/api/customer', createCustomerRouter(pool));
   app.use('/api/technician', createTechnicianRouter(pool));
@@ -492,3 +498,6 @@ export function createApp({
   });
   return app;
 }
+
+
+

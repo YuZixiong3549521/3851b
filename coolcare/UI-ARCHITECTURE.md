@@ -78,3 +78,17 @@ Browser checks cover login requirements, current homepage prices and booking pre
 The customer management acceptance check covers desktop and 390px layouts, profile persistence, defaults, address replacement/archive without rewriting old orders, chronological/grouped orders, owned details, cancellation/rescheduling and the assistant's real four-visit submission. English calendar labels and keyboard navigation were inspected, and date tests run under a Chinese locale and several timezones. A private synthetic QA image verified authenticated photo loading/zoom separately from missing legacy-image fallbacks. Isolated QA records and the test image are cleaned after verification. The operating-system print/PDF dialog is not part of this browser acceptance scope.
 
 The updated assistant was checked at 1280px and 390px: phone errors, new-address saving, service/symptom selection, reload and re-login recovery, direct review edits, English calendars, an obsolete quote requiring a second confirmation, real four-visit creation, receipt restoration, the exact new-order link, a fresh draft after success, and stale-session edit rejection/reload. The obsolete quote was confined to a synthetic customer's draft; shared catalogue prices were not changed. Original orders remained unchanged and synthetic records were removed. External mailbox delivery remains outside this local Mailpit acceptance check.
+
+## Technician Service Reports and Profile
+
+The technician hash routes `#reports` and `#profile` reuse the sidebar/header, shared buttons, inputs, dialogs and the fixed-English date picker. Reports become pending once a service starts; submitted reports have a read view, edit form and revision history. Report submission completes the visit atomically, while later corrections preserve original times. Profile keeps account/email/role read-only and allows name, phone, descriptive primary region and dispatch availability updates. Password changes require the current password. No fabricated counts, account information or fallback reports are displayed in these pages.
+
+## Signature capture
+
+Service Reports uses a pointer-based canvas and accessible image-upload control, with inline preview and clear/re-sign actions. The private media route is shared by Technician, Customer and Admin report views. Editing service text resets current signature inputs; backend validation binds newly uploaded images to that text and the report version. Images are never placed in public assets. Historical unavailable external signature links are rendered as a missing-image notice, not fetched from third-party hosts.
+
+## Service process photos
+
+Service Reports includes a separate attachment section with multi-file selection, previews, per-photo notes, upload progress and idempotent retry. Photos are saved explicitly and independently of signed service text. The gallery supports full-image viewing and is reused in Admin report details; Customer reports reuse their existing photo gallery. Shared buttons and textareas preserve keyboard access and mobile layout.
+
+Technician Dashboard shows Total Jobs, In Progress, Upcoming Jobs and Completed Jobs. Its four cards use four columns on desktop and two on narrow screens. Service process photos appear within the report before customer and technician signatures in both edit and read views; uploads retain their explicit save button and existing API.
