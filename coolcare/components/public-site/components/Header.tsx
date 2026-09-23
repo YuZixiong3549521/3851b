@@ -1,17 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SiteIcon } from '@/components/ui/site-icon';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
-  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { PortalAccountMenu } from '@/components/portal-account-menu';
+import { getPortalHome } from '@/lib/portal-session.mjs';
 import type { OpenBooking, PageRoute, User } from '../types';
 
 interface HeaderProps {
   currentPage: PageRoute;
   onNavigate: (page: PageRoute, hash?: string) => void;
   currentUser: User | null;
-  onLogout: () => void;
   onOpenBooking: OpenBooking;
 }
 
@@ -23,12 +20,11 @@ const navigation = [
   { label: 'Contact', hash: 'contact' },
 ];
 
-export const Header: React.FC<HeaderProps> = ({ currentPage, onNavigate, currentUser, onLogout, onOpenBooking }) => {
+export const Header: React.FC<HeaderProps> = ({ currentPage, onNavigate, currentUser, onOpenBooking }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
   const isCustomer = !currentUser?.role || currentUser.role === 'Customer';
-  const dashboard = currentUser?.role === 'Technician' ? '/technician/index.html'
-    : currentUser?.role === 'Admin' ? '/admin/orders' : '/customer';
+  const dashboard = getPortalHome(currentUser?.role);
 
   useEffect(() => setMobileMenuOpen(false), [currentPage, currentUser?.id]);
   useEffect(() => {
@@ -54,7 +50,11 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, onNavigate, current
     onNavigate(page, hash);
   };
   const book = () => { setMobileMenuOpen(false); onOpenBooking(); };
-  const signOut = () => { setMobileMenuOpen(false); onLogout(); };
+  const navigateAccount = (href: string) => {
+    setMobileMenuOpen(false);
+    if (href === '/') navigate('home', 'home');
+    else window.location.assign(href);
+  };
 
   return (
     <header className="sticky top-0 z-50 bg-ac-surface/95 backdrop-blur-md shadow-sm">
@@ -75,37 +75,12 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, onNavigate, current
         </nav>
 
         <div className="flex items-center gap-2">
-          <div className="hidden xl:block">
-            {currentUser ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger render={<Button variant="ghost" aria-label="Open account menu"
-                  className="h-11 gap-2 px-2 text-ac-primary" />}>
-                  <span className="flex size-8 items-center justify-center rounded-full bg-ac-primary-fixed text-xs font-bold" aria-hidden="true">
-                    {currentUser.name.trim().slice(0, 2).toUpperCase()}
-                  </span>
-                  <span className="max-w-24 truncate">{currentUser.name.split(' ')[0]}</span>
-                  <SiteIcon>expand_more</SiteIcon>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-60">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel className="truncate px-3 py-2">{currentUser.name}</DropdownMenuLabel>
-                    <DropdownMenuItem render={<a href={dashboard} />} className="min-h-11 px-3 gap-2">
-                      <SiteIcon>home</SiteIcon>Dashboard
-                    </DropdownMenuItem>
-                    {isCustomer && <DropdownMenuItem onClick={() => navigate('bookings')} className="min-h-11 px-3 gap-2">
-                      <SiteIcon>calendar_month</SiteIcon>My Bookings
-                    </DropdownMenuItem>}
-                  </DropdownMenuGroup>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={signOut} className="min-h-11 px-3" variant="destructive">Sign out</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : <Button variant="ghost" onClick={() => navigate('login')} className="h-11 px-3 text-ac-primary">Login</Button>}
-          </div>
-
           {isCustomer ? <Button onClick={book} className="hidden sm:inline-flex h-11 rounded-full bg-ac-primary px-5 text-ac-on-primary hover:bg-ac-primary/90">
             Book a service
           </Button> : <a href={dashboard} className="hidden sm:inline-flex h-11 items-center rounded-full bg-ac-primary px-5 text-sm font-semibold text-ac-on-primary">Dashboard</a>}
+
+          {currentUser ? <PortalAccountMenu user={{ name: currentUser.name, role: currentUser.role || 'Customer' }} onNavigate={navigateAccount} />
+            : <Button variant="ghost" onClick={() => navigate('login')} className="hidden xl:inline-flex h-11 px-3 text-ac-primary">Login</Button>}
 
           <Button ref={menuButton} variant="ghost" aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
             aria-expanded={mobileMenuOpen} aria-controls="mobile-navigation" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -122,16 +97,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, onNavigate, current
               className="h-11 justify-start px-3 text-ac-on-surface">{label}</Button>)}
           </nav>
           <div className="mt-3 border-t border-ac-outline-variant/40 pt-3">
-            {currentUser ? (
-              <>
-                <p className="mb-2 truncate px-3 text-sm text-ac-on-surface-variant">Signed in as <span className="font-semibold text-ac-primary">{currentUser.name}</span></p>
-                <div className="grid grid-cols-2 gap-1">
-                  <a href={dashboard} onClick={() => setMobileMenuOpen(false)} className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-semibold text-ac-primary hover:bg-ac-primary-fixed/30">Dashboard</a>
-                  {isCustomer && <Button variant="ghost" onClick={() => navigate('bookings')} className="h-11 justify-start px-3 text-ac-primary">My Bookings</Button>}
-                  <Button variant="ghost" onClick={signOut} className="h-11 justify-start px-3 text-ac-error">Sign out</Button>
-                </div>
-              </>
-            ) : <div className="grid grid-cols-2 gap-1">
+            {!currentUser && <div className="grid grid-cols-2 gap-1">
               <Button variant="ghost" onClick={() => navigate('login')} className="h-11 justify-start px-3 text-ac-primary">Login</Button>
               <Button variant="ghost" onClick={() => navigate('register')} className="h-11 justify-start px-3 text-ac-primary">Create account</Button>
             </div>}

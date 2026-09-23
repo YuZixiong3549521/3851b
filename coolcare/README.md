@@ -20,6 +20,12 @@
 
 `scripts/import-accare.mjs` 仅用于可选的旧 SQLite 资料迁移；必须显式提供本机源文件路径，不随 GitHub 分发旧数据库。查看用法：`node scripts/import-accare.mjs --help`。
 
+## Unified portal account navigation
+
+All portals and the homepage share the upper-right account menu: **Home**, the current role's portal, relevant profile links and **Sign out**. Admins use the same public login page as customers and technicians. Protected deep links return to their permitted page after login; opening another role's portal redirects to the signed-in account's portal without changing its permissions.
+
+Sign out revokes the server session before opening `/#/login`, refreshes CSRF before the request, reports failures and synchronizes other open tabs. Admin edits still need to be saved or cancelled before sign-out, and leaving an unsaved form through Home shows the existing discard confirmation. No database schema change is required for this navigation update.
+
 ## Technician completion workflow (2026-09-18)
 
 Run npm run db:up once to apply 15-technician-completion.sql and the service_report write grants. Existing records are retained. The technician list refreshes every 30 seconds while visible and on focus/reconnect, with a manual Refresh jobs button. New assignments show an in-page notice.

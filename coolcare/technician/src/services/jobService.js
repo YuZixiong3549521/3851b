@@ -1,4 +1,5 @@
 import { mockJobs, DEMO_DATE } from '../data/mockJobs.js';
+import { redirectToSessionPortal } from '@/lib/portal-session.mjs';
 export const mockMode = import.meta.env.VITE_USE_MOCK === 'true';
 export function getPortalDate() {
   const d = new Date();
@@ -22,9 +23,8 @@ export async function getPortalData({ signal } = {}) {
     `${(import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')}/technician/jobs`,
     { signal, credentials: 'include' },
   );
-  if (response.status === 401) {
-    window.location.assign('/#/login');
-    throw new Error('Please sign in.');
+  if (response.status === 401 || response.status === 403) {
+    await redirectToSessionPortal('Technician');
   }
   if (!response.ok)
     throw new Error(
@@ -74,6 +74,9 @@ export async function technicianRequest(
   });
   const data = await response.json();
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      await redirectToSessionPortal('Technician');
+    }
     const error = new Error(
       data.error || 'The request could not be completed.',
     );

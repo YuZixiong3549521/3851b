@@ -1,5 +1,7 @@
 'use client';
-import { PortalSwitcher } from '@/components/portal-switcher';
+import { PortalAccountMenu } from '@/components/portal-account-menu';
+import { usePortalSession, type PortalUser } from '@/lib/use-portal-session';
+import { redirectToSessionPortal } from '@/lib/portal-session.mjs';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Snowflake,
@@ -12,11 +14,9 @@ import {
   Send,
   Users,
   UserCog,
-  LogOut,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   SidebarProvider,
   Sidebar,
@@ -43,7 +43,6 @@ import {
   ROOT,
   api,
   setCsrf,
-  errorText,
   type User,
 } from '@/lib/inventory-client';
 import { DispatchCalendarPage,OrdersPage,OrderDetails,StaffPage } from '@/components/admin-operations-views';
@@ -58,12 +57,19 @@ import {
 import { useWebTools } from '@/lib/inventory-webmcp';
 
 export default function InventoryApp() {
+  const session = usePortalSession('Admin');
+  if (!session.ready || !session.user) return <main className="mx-auto max-w-xl p-8">
+    {session.error ? <div role="alert" className="space-y-4"><p>{session.error}</p><Button variant="outline" onClick={session.retry}>Retry session check</Button></div> : <p role="status">Checking your session…</p>}
+  </main>;
+  return <AdminPortal key={session.user.id} sessionUser={session.user} />;
+}
+
+function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
   const [url, setUrl] = useState(ROOT),
     [user, setUser] = useState<User | null>(null),
     [ready, setReady] = useState(false),
     [sessionError, setSessionError] = useState('');
-  const [dirty, setDirtyState] = useState(false),
-    [pending, setPending] = useState<string | null>(null),
+  const [pending, setPending] = useState<string | null>(null),
     [message, setMessage] = useState(''),
     [version, setVersion] = useState(0),
     [threshold, setThreshold] = useState(15);
@@ -71,11 +77,11 @@ export default function InventoryApp() {
     routeRef = useRef(ROOT);
   const setDirty = useCallback((value: boolean) => {
     dirtyRef.current = value;
-    setDirtyState(value);
   }, []);
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
   const notify = useCallback((text: string) => setMessage(text), []);
   const navigate = useCallback((target: string) => {
+    if (!target.startsWith('/admin/')) { window.location.assign(target); return; }
     routeRef.current = target;
     window.history.pushState({}, '', target);
     setUrl(target);
@@ -101,6 +107,7 @@ export default function InventoryApp() {
         csrf: string;
         low_stock_threshold: number;
       }>('/session');
+      if (!session.user) { await redirectToSessionPortal('Admin'); throw new Error('Please sign in again.'); }
       setUser(session.user);
       setCsrf(session.csrf);
       setThreshold(session.low_stock_threshold);
@@ -184,15 +191,10 @@ export default function InventoryApp() {
       : 'Inventory';
   const detailMatch = pathname.match(/\/parts\/(\d+)(\/edit)?$/);
   const orderMatch=pathname.match(/^\/admin\/orders\/(\d+)$/);
-  async function logout() {
-    try {
-      await api('/logout', 'POST', {});
-      setUser(null);
-      await loadSession();
-    } catch (e) {
-      notify(errorText(e));
-    }
-  }
+  const accountNavigate = (target: string) => {
+    if (dirtyRef.current) { setPending(target); return; }
+    navigate(target);
+  };
   return (
     <SidebarProvider>
       <Sidebar>
@@ -240,26 +242,7 @@ export default function InventoryApp() {
           <span>
             Admin Console <span className="muted">/ {active}</span>
           </span>
-          <span className="local-badge">LOCAL EDITION</span><PortalSwitcher current="inventory" />
-          {user && (
-            <>
-              <span className="user-name">{user.full_name}</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={dirty}
-                title={
-                  dirty
-                    ? 'Save or cancel your changes before signing out'
-                    : 'Sign out'
-                }
-                aria-label="Sign out"
-                onClick={logout}
-              >
-                <LogOut />
-              </Button>
-            </>
-          )}
+          <div className="ml-auto shrink-0"><PortalAccountMenu user={sessionUser} onNavigate={accountNavigate} beforeSignOut={() => !dirtyRef.current} /></div>
         </header>
         <div className="page-content">
           {message && (
@@ -279,15 +262,7 @@ export default function InventoryApp() {
           {!ready ? (
             <p className="notice">Connecting to your local inventory…</p>
           ) : !user ? (
-            <Login
-              error={sessionError}
-              retry={loadSession}
-              onSuccess={(u, token) => {
-                setUser(u);
-                setCsrf(token);
-                refresh();
-              }}
-            />
+            <div role="alert" className="space-y-4"><p>{sessionError || 'Unable to load your account. Please retry.'}</p><Button variant="outline" onClick={() => void loadSession()}>Retry session check</Button></div>
           ) : (
             <AppContext.Provider
               value={{
@@ -366,102 +341,5 @@ export default function InventoryApp() {
         </AlertDialogContent>
       </AlertDialog>
     </SidebarProvider>
-  );
-}
-function Login({
-  error,
-  retry,
-  onSuccess,
-}: {
-  error: string;
-  retry: () => void;
-  onSuccess: (u: User, token: string) => void;
-}) {
-  const [email, setEmail] = useState('norshida@coolcare.demo'),
-    [password, setPassword] = useState(''),
-    [failure, setFailure] = useState(''),
-    [busy, setBusy] = useState(false);
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setFailure('');
-    try {
-      const result = await api<{ user: User; csrf: string }>('/login', 'POST', {
-        email,
-        password,
-      });
-      setPassword('');
-      onSuccess(result.user, result.csrf);
-    } catch (e) {
-      setFailure(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <>
-      <div className="page-title">
-        <div>
-          <p className="eyebrow">ADMIN CONSOLE</p>
-          <h1>Run CoolCare operations.</h1>
-          <p className="muted">
-            Review bookings, dispatch technicians and manage inventory from one place.
-          </p>
-        </div>
-      </div>
-      <section className="panel login-panel">
-        <div className="login-heading">
-          <ShieldCheck />
-          <div>
-            <h2>Admin sign in</h2>
-            <p className="muted">Use your CoolCare admin account.</p>
-          </div>
-        </div>
-        {error ? (
-          <div role="alert" className="notice error">
-            {error}
-            <Button onClick={retry} variant="outline">
-              Retry connection
-            </Button>
-          </div>
-        ) : (
-          <form onSubmit={submit}>
-            <label>
-              Email
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="username"
-                maxLength={255}
-              />
-            </label>
-            <label>
-              Password
-              <Input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-                maxLength={128}
-              />
-            </label>
-            {failure && (
-              <p className="notice error" role="alert">
-                {failure}
-              </p>
-            )}
-            <Button type="submit" className="w-full" disabled={busy}>
-              {busy ? 'Signing in…' : 'Sign in'}
-            </Button>
-            <p className="form-hint">
-              This is your webpage account, not the MySQL root password.
-            </p>
-          </form>
-        )}
-      </section>
-    </>
   );
 }

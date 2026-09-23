@@ -3,10 +3,11 @@
 import Link from 'next/link';
 import { useState, useEffect, useId, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import { CalendarDays, ChevronDown, ClipboardCheck, Gauge, History, Home, LogOut, MapPin, MessageCircle, Snowflake, Sparkles, UserRound } from 'lucide-react';
+import { CalendarDays, ClipboardCheck, Gauge, History, MessageCircle, Snowflake, Sparkles } from 'lucide-react';
 import { CustomerAssistant } from '@/components/customer-assistant';
 import { Button } from '@/components/ui/button';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { PortalAccountMenu } from '@/components/portal-account-menu';
+import { usePortalSession } from '@/lib/use-portal-session';
 import { PageLoading } from '@/components/page-state';
 import type { ReactNode } from 'react';
 
@@ -19,72 +20,19 @@ const navItems = [
 
 export function CoolCareShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const [name, setName] = useState('Customer');
-  const [ready, setReady] = useState(false);
-  const [sessionError, setSessionError] = useState('');
-  const [sessionAttempt, setSessionAttempt] = useState(0);
-  const [signingOut, setSigningOut] = useState(false);
+  const { user, ready: sessionReady, error: sessionError, retry } = usePortalSession('Customer');
+  const ready = sessionReady && Boolean(user);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const assistantDialogId = useId();
   const desktopAssistantTrigger = useRef<HTMLButtonElement>(null);
   const mobileAssistantTrigger = useRef<HTMLButtonElement>(null);
-  const sessionUserId = useRef<number | null>(null);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const controller = new AbortController();
-    const loginPath = () => new URLSearchParams(window.location.search).get('assistant') === 'resume'
-      ? '/#/login?returnTo=assistant' : '/#/login';
-    async function refreshSession() {
-      try {
-        const response = await fetch('/api/public/session', { signal: controller.signal, cache: 'no-store' });
-        if ([401, 403].includes(response.status)) { window.location.assign(loginPath()); return; }
-        if (!response.ok) throw new Error('Unable to check your session. Please retry.');
-        const result = await response.json() as { user?: { id: number; name: string; role: string } | null };
-        if (result.user?.role !== 'Customer') { window.location.assign(loginPath()); return; }
-        if (controller.signal.aborted) return;
-        if (sessionUserId.current !== null && sessionUserId.current !== result.user.id) {
-          // Another tab signed in as a different customer. Clear every draft
-          // and cached page before showing or editing the new account's data.
-          setReady(false);
-          window.location.reload();
-          return;
-        }
-        sessionUserId.current = result.user.id;
-        setName(result.user.name || 'Customer');
-        setReady(true);
-        setSessionError('');
-      } catch (reason) {
-        if (!controller.signal.aborted) setSessionError(reason instanceof Error ? reason.message : 'Unable to check your session. Please retry.');
-      }
-    }
-    const refresh = () => { setNow(new Date()); void refreshSession(); };
-    void refreshSession();
-    window.addEventListener('focus', refresh);
-    window.addEventListener('coolcare:profile-updated', refresh);
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
-    return () => {
-      controller.abort();
-      window.removeEventListener('focus', refresh);
-      window.removeEventListener('coolcare:profile-updated', refresh);
-      window.clearInterval(timer);
-    };
-  }, [sessionAttempt]);
-
-  async function signOut() {
-    setSigningOut(true);
-    setSessionError('');
-    try {
-      const sessionResponse = await fetch('/api/session', { cache: 'no-store' });
-      if (!sessionResponse.ok) throw new Error('Unable to sign out. Please retry.');
-      const session = await sessionResponse.json() as { csrf: string };
-      const response = await fetch('/api/public/logout', { method: 'POST', headers: { 'X-CSRF-Token': session.csrf } });
-      if (!response.ok) throw new Error('Unable to sign out. Please retry.');
-      window.location.assign('/#/login');
-    } catch (reason) {
-      setSessionError(reason instanceof Error ? reason.message : 'Unable to sign out. Please retry.');
-      setSigningOut(false);
-    }
-  }
+    const refresh = () => setNow(new Date());
+    window.addEventListener('focus', refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, []);
   const today = new Intl.DateTimeFormat('en-SG', {
     weekday: 'long',
     day: 'numeric',
@@ -109,7 +57,7 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
               </Link>
             );
           })}
-          <Button ref={desktopAssistantTrigger} type="button" variant="ghost" disabled={!ready || signingOut} aria-haspopup="dialog" aria-expanded={assistantOpen} aria-controls={assistantOpen ? assistantDialogId : undefined} onClick={() => setAssistantOpen(true)} className="h-auto min-h-12 w-full justify-start gap-3 rounded-xl px-4 text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground">
+          <Button ref={desktopAssistantTrigger} type="button" variant="ghost" disabled={!ready} aria-haspopup="dialog" aria-expanded={assistantOpen} aria-controls={assistantOpen ? assistantDialogId : undefined} onClick={() => setAssistantOpen(true)} className="h-auto min-h-12 w-full justify-start gap-3 rounded-xl px-4 text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground">
             <MessageCircle className="size-5" aria-hidden="true" />
             CoolCare Assistant
           </Button>
@@ -125,26 +73,9 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
         <header className="customer-shell-navigation sticky top-0 z-20 flex h-[76px] items-center justify-between border-b border-border/80 bg-white/90 px-5 backdrop-blur-xl sm:px-8 lg:px-10">
           <div className="lg:hidden"><Brand compact /></div>
           <p className="hidden text-sm font-medium text-muted-foreground lg:block">{today}</p>
-          <div className="flex items-center gap-3">
-            <div className="hidden text-right sm:block"><p className="text-sm font-semibold">{name}</p><p className="text-xs text-muted-foreground">Customer</p></div>
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" className="h-auto gap-1 rounded-full p-1.5" aria-label="Open account menu" disabled={!ready || signingOut} />}>
-                <span className="grid size-10 place-items-center rounded-full bg-secondary/15 text-sm font-bold text-secondary">{name.trim().split(/\s+/).map(s => s[0]).slice(0, 2).join('').toUpperCase()}</span>
-                <ChevronDown className="size-4 text-muted-foreground" aria-hidden="true" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 p-2">
-                <DropdownMenuGroup><DropdownMenuLabel className="truncate px-2 py-2">{name}</DropdownMenuLabel>
-                  <DropdownMenuItem render={<Link href="/customer/account" />} className="gap-3 px-2 py-3"><UserRound />My profile</DropdownMenuItem>
-                  <DropdownMenuItem render={<Link href="/customer/addresses" />} className="gap-3 px-2 py-3"><MapPin />Saved addresses</DropdownMenuItem>
-                  <DropdownMenuItem render={<Link href="/" />} className="gap-3 px-2 py-3"><Home />Home</DropdownMenuItem>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => void signOut()} disabled={signingOut} className="gap-3 px-2 py-3"><LogOut />{signingOut ? 'Signing out…' : 'Sign out'}</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+          {user && <PortalAccountMenu user={user} disabled={!ready} />}
         </header>
-        {sessionError && <div role="alert" className="customer-shell-navigation mx-5 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-white p-4 text-sm"><span>{sessionError}</span><Button variant="outline" size="sm" onClick={() => setSessionAttempt(value => value + 1)}>Retry session check</Button></div>}
+        {sessionError && <div role="alert" className="customer-shell-navigation mx-5 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-white p-4 text-sm"><span>{sessionError}</span><Button variant="outline" size="sm" onClick={retry}>Retry session check</Button></div>}
         {ready ? children : !sessionError ? <div className="mx-auto max-w-5xl p-5 sm:p-8"><PageLoading /></div> : null}
       </main>
 
@@ -158,7 +89,7 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
             </Link>
           );
         })}
-        <Button ref={mobileAssistantTrigger} type="button" variant="ghost" disabled={!ready || signingOut} aria-haspopup="dialog" aria-expanded={assistantOpen} aria-controls={assistantOpen ? assistantDialogId : undefined} onClick={() => setAssistantOpen(true)} className="h-auto min-h-14 flex-col gap-1 rounded-xl px-0 py-0 text-[11px] font-semibold text-muted-foreground">
+        <Button ref={mobileAssistantTrigger} type="button" variant="ghost" disabled={!ready} aria-haspopup="dialog" aria-expanded={assistantOpen} aria-controls={assistantOpen ? assistantDialogId : undefined} onClick={() => setAssistantOpen(true)} className="h-auto min-h-14 flex-col gap-1 rounded-xl px-0 py-0 text-[11px] font-semibold text-muted-foreground">
           <MessageCircle className="size-5" aria-hidden="true" />
           <span>Assistant</span>
         </Button>

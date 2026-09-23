@@ -1,6 +1,7 @@
 import ServiceReports from './pages/ServiceReports.jsx';
 import Profile from './pages/Profile.jsx';
 import { Button } from '@/components/ui/button';
+import { usePortalSession } from '@/lib/use-portal-session';
 import { useEffect, useRef, useState } from 'react';
 import Sidebar from './components/Sidebar.jsx';
 import Header from './components/Header.jsx';
@@ -17,6 +18,27 @@ const readPage = () =>
     ? location.hash.slice(1)
     : 'dashboard';
 export default function App() {
+  const { user, ready, error, retry } = usePortalSession('Technician');
+  if (!ready || !user) {
+    return (
+      <main className="technician-session-screen">
+        <section className="panel empty" aria-busy={!error}>
+          {error ? (
+            <>
+              <p role="alert">{error}</p>
+              <Button onClick={retry}>Try again</Button>
+            </>
+          ) : (
+            <p role="status">Checking your session…</p>
+          )}
+        </section>
+      </main>
+    );
+  }
+  return <TechnicianPortal key={user.id} user={user} />;
+}
+
+function TechnicianPortal({ user }) {
   const [page, setPage] = useState(readPage);
   const [jobs, setJobs] = useState([]);
   const [technician, setTechnician] = useState(null);
@@ -94,6 +116,7 @@ export default function App() {
           total={jobs.length}
           today={today}
           technician={technician}
+          user={user}
         />
         <main>
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">

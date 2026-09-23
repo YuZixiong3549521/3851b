@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { redirectToSessionPortal } from './portal-session.mjs';
 
 /** Refresh persisted customer data on return to the page and while it stays visible. */
 export function useCustomerResource<T>(load: () => Promise<T>) {
@@ -28,8 +29,7 @@ export function useCustomerResource<T>(load: () => Promise<T>) {
         const status = (reason as { status?: number })?.status;
         const clearData = status === 401 || status === 403 || status === 404;
         setResource(previous => ({ source: load, data: !clearData && previous.source === load ? previous.data : null, error: reason instanceof Error ? reason.message : 'Unable to refresh your information. Please retry.', refreshing: false }));
-        if (status === 401) window.location.assign(new URLSearchParams(window.location.search).get('assistant') === 'resume'
-          ? '/#/login?returnTo=assistant' : '/#/login');
+        if (status === 401 || status === 403) await redirectToSessionPortal('Customer').catch(() => undefined);
       }
     } finally {
       if (currentLoad.current === load && sequence === request.current) {

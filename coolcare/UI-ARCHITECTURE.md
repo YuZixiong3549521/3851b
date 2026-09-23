@@ -24,6 +24,16 @@ Booking intent (service, quantity and symptoms) stays in React memory through th
 
 Account navigation uses the shared dropdown and a compact mobile disclosure. Signed-in customers see Dashboard/My Bookings instead of account creation prompts. The contact section uses `lib/customer-support.ts`; clicking the email opens the user's mail application, without sending automatically. Public FAQs explain the same 14-day, weekday, rolling-address and self-service change rules enforced by the API.
 
+## Shared account menu and portal navigation
+
+The public site, Customer portal, Technician portal and Admin Console use `components/portal-account-menu.tsx` in the upper-right header on desktop and mobile. Home and the signed-in role's portal are always available; customers also have My Bookings, My profile and Saved addresses, while technicians have My profile. The old cross-role selector and separate Admin login form are removed. Navigation never grants another role's access. Admin navigation retains its unsaved-change confirmation and requires saving or cancelling edits before signing out.
+
+`lib/portal-session.mjs` centralizes role destinations, allowed return routes and logout. Every Sign out fetches a fresh CSRF token, ends the common server session with `POST /api/logout`, and replaces the current page with `/#/login` only after success. Duplicate clicks share a single request; errors remain visible with retry available. A notification without personal data signs other open portals out; focus, reconnect, visibility, periodic and restored-page checks also refresh the session through `use-portal-session.ts`.
+
+Protected pages use the public session endpoint for role detection (the older `/api/session.user` is Admin-specific). Guests enter the same public login page and return to their allowed original page after signing in. Signed-in users visiting another role's portal return to their own portal. Return destinations are restricted to existing routes of the authenticated role; external URLs and other roles are rejected. Account changes clear or remount protected page state. Guest service selections, old bookings links and the named Assistant resume link remain supported.
+
+This navigation update passed 56 main unit tests, 4 technician tests, 52 real-MySQL integration tests, TypeScript and both builds. Browser checks covered desktop and 390px menus, Customer/Admin/Technician login and logout, permitted deep-link returns, cross-role redirects, browser Back after logout, Home/profile/portal links, cross-tab logout and new login, unsaved Admin navigation and guest service selection through login. Tests rolled back their fixtures; browser checks did not submit bookings, reports or stock changes.
+
 ## Customer assistant
 
 Every authenticated customer page exposes **CoolCare Assistant** below Booking History in the sidebar, or **Assistant** as the fifth mobile navigation item. `CoolCareShell` mounts one assistant instance after session verification; both navigation buttons open the same dialog without navigating away or resetting the underlying page. The Dashboard banner retains only Book a service. This is a button-guided React assistant, with no external AI provider or API key, reusing the shared dialog, buttons and fields. Closing still saves the draft first and returns focus to the visible navigation trigger.

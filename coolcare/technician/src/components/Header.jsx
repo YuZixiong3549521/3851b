@@ -1,8 +1,9 @@
 import { CalendarDays } from 'lucide-react';
+import { PortalAccountMenu } from '@/components/portal-account-menu';
 import { formatDate } from '../utils/jobs.js';
-export default function Header({ page, total, today, technician }) {
+export default function Header({ page, total, today, technician, user }) {
   return (
-    <header className="header">
+    <header className="header technician-header">
       <div>
         <h1>
           {{ jobs: 'My Jobs', reports: 'Service Reports', profile: 'Profile' }[
@@ -24,14 +25,20 @@ export default function Header({ page, total, today, technician }) {
           )}
         </p>
       </div>
-      <div className="header-date">
-        <CalendarDays size={18} />
-        {formatDate(today, {
-          weekday: 'long',
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric',
-        })}
+      <div className="technician-header-actions">
+        <div className="header-date">
+          <CalendarDays size={18} />
+          {formatDate(today, {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          })}
+        </div>
+        <PortalAccountMenu
+          user={{ ...user, name: technician?.name || user.name }}
+          onNavigate={(href) => window.location.assign(href)}
+        />
       </div>
     </header>
   );
