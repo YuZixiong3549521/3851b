@@ -397,7 +397,7 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
         {
           requestId: randomUUID(),
           expectedStatus: 'Assigned',
-          status: 'In Progress',
+          status: 'Completed',
         },
       ),
       (error) => error.status === 409,

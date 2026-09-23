@@ -29,6 +29,7 @@ export function BookingCard({ booking, history = false, showActions = true }: { 
         {showActions && <div className="flex flex-wrap gap-2">
           <Button nativeButton={false} render={<Link href={detailsUrl} />} variant="outline">View details</Button>
           {booking.canModify && !history && <><Button nativeButton={false} render={<Link href={`${detailsUrl}?action=reschedule`} />} variant="outline">Reschedule</Button><Button nativeButton={false} render={<Link href={`${detailsUrl}?action=cancel`} />} variant="ghost" className="text-destructive">Cancel booking</Button></>}
+          {history && booking.status === 'Completed' && !booking.reportId && <p className="text-sm text-muted-foreground">Service ended. Report pending submission.</p>}
           {history && booking.reportId && <Button nativeButton={false} render={<Link href={`/customer/history/${booking.bookingId}`} />}>View service report</Button>}
         </div>}
       </div>

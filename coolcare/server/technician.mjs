@@ -132,7 +132,7 @@ export const serviceReportSchema = z.object({
  checklist: z.string().trim().min(3).max(5000),
 }).strict();
 export const statusUpdateSchema = z.object({requestId:z.uuid(),expectedStatus:z.enum(['Assigned','On The Way','In Progress']),status:z.enum(['On The Way','In Progress','Completed']),report:serviceReportSchema.optional()}).strict().superRefine((data,ctx)=>{
- if(data.status==='Completed'&&!data.report)ctx.addIssue({code:'custom',path:['report'],message:'A service report is required to complete the job.'});
+
  if(data.status!=='Completed'&&data.report)ctx.addIssue({code:'custom',path:['report'],message:'Submit the report when completing the job.'});
 });
 export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw) {
@@ -153,7 +153,7 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
       if(previous.payload_hash!==hash)throw new AppError('This request ID has already been used for a different update.',409);
       await connection.commit();return {...(typeof previous.result_json==='string'?JSON.parse(previous.result_json):previous.result_json),replayed:true};
     }
-    if(work.current_status!==data.expectedStatus||statusTransition[work.current_status]!==data.status) {
+    if(work.current_status!==data.expectedStatus||!(statusTransition[work.current_status]===data.status || (work.current_status==='Assigned' && data.status==='In Progress'))) {
       throw new AppError('Reload this work order and complete each status step in order.',409);
     }
     if(data.status==='In Progress'){
@@ -161,8 +161,11 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
         VALUES (?,'',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))
         ON DUPLICATE KEY UPDATE started_at=COALESCE(started_at,VALUES(started_at))`,[jobId]);
     }
-    if(data.status==='Completed'&&(work.customer_signature_url||work.technician_signature_url))throw new AppError('Use Service Reports to update a signed report.',409);
-    if(data.status==='Completed'){
+    if(data.status==='Completed'&&data.report&&(work.customer_signature_url||work.technician_signature_url))throw new AppError('Use Service Reports to update a signed report.',409);
+    if(data.status==='Completed'&&!data.report){
+      await connection.execute(`INSERT INTO service_report(job_id,work_performed,completed_at) VALUES (?,'',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR)) ON DUPLICATE KEY UPDATE completed_at=COALESCE(completed_at,VALUES(completed_at))`,[jobId]);
+    }
+    if(data.status==='Completed'&&data.report){
       const r=data.report;
       await connection.execute(`INSERT INTO service_report(job_id,work_performed,problem_found,solution_applied,checklist_result,submitted_time,completed_at)
         VALUES (?,?,?,?,?,CURRENT_TIMESTAMP,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))

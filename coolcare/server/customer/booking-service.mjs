@@ -148,7 +148,7 @@ export async function listBookings(pool, scope = 'all', userId) {
        WHERE w2.booking_id = b.booking_id
        ORDER BY w2.job_id DESC LIMIT 1
      )
-     LEFT JOIN service_report sr ON sr.job_id = w.job_id
+     LEFT JOIN service_report sr ON sr.job_id = w.job_id AND sr.submitted_time IS NOT NULL
      WHERE ${conditions.join(' AND ')}
      ORDER BY b.preferred_service_date DESC, b.booking_id DESC`,
     values,
@@ -212,7 +212,7 @@ export async function getBookingReport(pool, bookingId, userId) {
      FROM booking b
      JOIN service_catalog sc ON sc.service_id = b.service_id
      JOIN work_order w ON w.booking_id = b.booking_id
-     JOIN service_report sr ON sr.job_id = w.job_id
+     JOIN service_report sr ON sr.job_id = w.job_id AND sr.submitted_time IS NOT NULL
      LEFT JOIN work_order_cleaning_assessment ca ON ca.job_id=w.job_id
      JOIN assignment a ON a.assignment_id = w.assignment_id
      JOIN technician t ON t.technician_id = a.technician_id

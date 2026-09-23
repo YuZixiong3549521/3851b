@@ -225,7 +225,7 @@ function ReportEditor({ row, onClose, onSaved }) {
                         ? 'Retry same submission'
                         : data.report?.submittedAt
                           ? 'Save report changes'
-                          : 'Submit report & complete'}
+                          : row.jobStatus === 'Completed' ? 'Submit report' : 'Submit report & complete'}
                   </Button>
                   {!locked && (
                     <Button
