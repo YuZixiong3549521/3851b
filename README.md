@@ -133,3 +133,5 @@ npm start
 `.gitignore` 排除本机凭据、依赖、生成文件、IDE 缓存及旧上传参考目录。原上传文件可从历史提交查阅，不再占据当前分支的项目列表。同步更新使用 `git pull --ff-only origin main`，首次运行按上方安装步骤准备本机环境。
 
 公开部署前需要配置持久化会话、HTTPS、邮件及可选 OAuth 服务；当前服务只面向本机运行。
+
+Technician parts issuing supports up to 30 distinct part rows with separate quantities and descriptions. `POST /api/technician/jobs/:jobId/stock-out-batch` accepts `{ request_id, items }`; all stock changes are committed together or rolled back, with idempotent retries. The existing single-part endpoint remains supported.

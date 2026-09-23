@@ -1,3 +1,4 @@
+import { recordStockBatch } from '../server/inventory.mjs';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -523,3 +524,35 @@ test('start and end service independently of report submission, with customer hi
  const submitted=await getReport(db,a.userId,a.jobId);assert.ok(submitted.report.submittedAt);assert.equal(submitted.report.completedAt,ended.report.completedAt);
  assert.ok((await getBookingReport(db,owner.bookingId,owner.userId)).reportId);
 }));
+
+test('batch parts issue is atomic, preserves descriptions, and retries without duplicate stock deductions', () =>
+  fixture(async (db, c, a) => {
+    const [parts] = await c.execute("SELECT part_id FROM part WHERE status='Active' ORDER BY part_id LIMIT 2");
+    assert.equal(parts.length, 2);
+    for (const p of parts) await c.execute('UPDATE part SET current_stock=20 WHERE part_id=?', [p.part_id]);
+    const input = { request_id: randomUUID(), items: parts.map((p, i) => ({
+      part_id: p.part_id, quantity: i + 1, expected_stock: 20,
+      remarks: `Batch service part ${i + 1}`, acknowledge_excess: true,
+    })) };
+    const failed = structuredClone(input);
+    failed.items[1].expected_stock = 19;
+    await assert.rejects(recordStockBatch(db, failed, a.jobId, a.userId));
+    for (const p of parts) {
+      const [[stock]] = await c.execute('SELECT current_stock FROM part WHERE part_id=?', [p.part_id]);
+      assert.equal(Number(stock.current_stock), 20);
+    }
+    const saved = await recordStockBatch(db, input, a.jobId, a.userId);
+    assert.equal(saved.transactions.length, 2);
+    assert.equal(saved.replayed, false);
+    assert.equal((await recordStockBatch(db, input, a.jobId, a.userId)).replayed, true);
+    for (let i = 0; i < parts.length; i++) {
+      const [[stock]] = await c.execute('SELECT current_stock FROM part WHERE part_id=?', [parts[i].part_id]);
+      assert.equal(Number(stock.current_stock), 19 - i);
+      const [[tx]] = await c.execute('SELECT remarks FROM inventory_transaction WHERE transaction_id=?', [saved.transactions[i].transaction_id]);
+      assert.equal(tx.remarks, input.items[i].remarks);
+    }
+    const changed = structuredClone(input);
+    changed.items.pop();
+    await assert.rejects(recordStockBatch(db, changed, a.jobId, a.userId));
+    await assert.rejects(recordStockBatch(db, { request_id: randomUUID(), items: [input.items[0], input.items[0]] }, a.jobId, a.userId));
+  }));

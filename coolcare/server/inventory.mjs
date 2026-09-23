@@ -148,11 +148,11 @@ export async function savePart(pool, raw, id = null) {
 }
 export async function recordTransaction(pool, raw, adminId, technicianUserId = null) {
   const data = transactionSchema.parse(raw);
-  const { request_id, ...payload } = data;
-  const hash = createHash('sha256')
-    .update(JSON.stringify({ ...payload, admin_user_id: adminId, technician_user_id: technicianUserId }))
-    .digest('hex');
-  return withTransaction(pool, async (conn) => {
+  return withTransaction(pool, conn => recordOnConnection(conn,data,adminId,technicianUserId));
+}
+async function recordOnConnection(conn,data,adminId,technicianUserId,batchHash=null) {
+  const {request_id,...payload}=data;
+  const hash=createHash('sha256').update(JSON.stringify({...payload,admin_user_id:adminId,technician_user_id:technicianUserId,...(batchHash?{batchHash}:{})})).digest('hex');
     // Lock the part first. The FIRST consistent read below starts its snapshot
     // after that lock is acquired, so a completed same-part retry is visible.
     // The operation and revision ledgers remain immutable even when the business record is corrected.
@@ -240,7 +240,29 @@ export async function recordTransaction(pool, raw, adminId, technicianUserId = n
       stock_after: after,
       replayed: false,
     };
-  });
+
+}
+export const stockBatchSchema=z.object({
+ request_id:z.uuid(),
+ items:z.array(z.object({part_id:idSchema,quantity:z.number().int().min(1).max(2147483647),expected_stock:z.number().int().min(0).max(2147483647),remarks:z.string().trim().max(500).default(''),acknowledge_excess:z.boolean().default(false)}).strict()).min(1).max(30)
+}).strict().refine(v=>new Set(v.items.map(i=>i.part_id)).size===v.items.length,'Choose each part once; adjust its quantity instead.');
+export async function recordStockBatch(pool,raw,jobId,technicianUserId){
+ const data=stockBatchSchema.parse(raw);
+ const batchHash=createHash('sha256').update(JSON.stringify({data,jobId,technicianUserId})).digest('hex');
+ return withTransaction(pool,async conn=>{
+   // Acquire every part lock in a consistent order before the first snapshot read.
+   for(const id of data.items.map(i=>i.part_id).sort((a,b)=>a-b)){
+     const [[part]]=await conn.execute('SELECT part_id FROM part WHERE part_id=? FOR UPDATE',[id]);
+     if(!part)throw new AppError('Part not found.',404);
+   }
+   const transactions=[];
+   for(let index=0;index<data.items.length;index++){
+     const hex=createHash('sha256').update('stock-batch:'+data.request_id+':'+index).digest('hex');
+     const request_id=`${hex.slice(0,8)}-${hex.slice(8,12)}-4${hex.slice(13,16)}-8${hex.slice(17,20)}-${hex.slice(20,32)}`;
+     transactions.push(await recordOnConnection(conn,{...data.items[index],request_id,transaction_type:'Stock Out',job_id:jobId},null,technicianUserId,batchHash));
+   }
+   return {transactions,replayed:transactions.every(t=>t.replayed)};
+ });
 }
 
 export async function getStockRecommendation(conn, jobId, part) {

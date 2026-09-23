@@ -361,24 +361,19 @@ function StockOut({
   lock,
   externallyLocked,
 }) {
-  const [partId, setPartId] = useState(''),
-    [quantity, setQuantity] = useState('1'),
-    [remarks, setRemarks] = useState(''),
-    [ack, setAck] = useState(false),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(''),
+  const newRow = () => ({ key: crypto.randomUUID(), partId: '', quantity: '1', remarks: '', ack: false });
+  const [rows, setRows] = useState(() => [newRow()]);
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''),
     [uncertain, setUncertain] = useState(false);
-  const pending = useRef(null),
-    inFlight = useRef(false);
-  const part = options.parts.find((p) => String(p.part_id) === partId);
-  const qty = Number(quantity),
-    excess = part && Number(part.issued) + qty > part.recommended;
-  const valid =
-    part &&
-    Number.isInteger(qty) &&
-    qty > 0 &&
-    qty <= part.current_stock &&
-    (!excess || ack);
+  const pending = useRef(null), inFlight = useRef(false);
+  const updateRow = (key, changes) => setRows(current => current.map(row => row.key === key ? { ...row, ...changes } : row));
+  const entries = rows.map(row => {
+    const part = options.parts.find(p => String(p.part_id) === row.partId);
+    const qty = Number(row.quantity);
+    return { ...row, part, qty, excess: part && Number(part.issued) + qty > part.recommended };
+  });
+  const valid = new Set(rows.map(row => row.partId)).size === rows.length && entries.every(row =>
+    row.part && Number.isInteger(row.qty) && row.qty > 0 && row.qty <= row.part.current_stock && (!row.excess || row.ack));
   async function issue(e) {
     e.preventDefault();
     if (
@@ -389,25 +384,22 @@ function StockOut({
       return;
     pending.current ??= {
       request_id: crypto.randomUUID(),
-      part_id: part.part_id,
-      quantity: qty,
-      expected_stock: part.current_stock,
-      remarks,
-      acknowledge_excess: ack,
+      items: entries.map(row => ({ part_id: row.part.part_id, quantity: row.qty,
+        expected_stock: row.part.current_stock, remarks: row.remarks, acknowledge_excess: row.ack })),
     };
     inFlight.current = true;
     setBusy(true);
     lock(true);
     setError('');
     try {
-      const result = await technicianRequest(`/jobs/${jobId}/stock-out`, {
+      const result = await technicianRequest(`/jobs/${jobId}/stock-out-batch`, {
         body: pending.current,
       });
       pending.current = null;
       setUncertain(false);
       lock(false);
       onSaved(
-        `Stock issued. Transaction TX-${String(result.transaction_id).padStart(4, '0')}; remaining stock: ${result.stock_after}.`,
+        `Stock issued for ${result.transactions.length} part type(s). All quantities and descriptions have been saved.`,
       );
     } catch (e) {
       setError(e.message);
@@ -431,87 +423,42 @@ function StockOut({
           {options.acCount} AC unit(s). Recommendations apply to the total
           already issued plus this request.
         </p>
-        <label htmlFor="stock-part">
-          Part
-          <NativeSelect
-            id="stock-part"
-            aria-label="Part"
-            required
-            value={partId}
-            disabled={busy || uncertain}
-            onChange={(e) => {
-              setPartId(e.target.value);
-              setAck(false);
-            }}
-          >
-            <option value="">Select a part</option>
-            {options.parts.map((p) => (
-              <option key={p.part_id} value={p.part_id}>
-                {p.part_name} · {p.current_stock} {p.stock_unit} available
-              </option>
-            ))}
-          </NativeSelect>
-        </label>
-        {part && (
-          <div className="tech-guidance">
-            <p>
-              Per AC: {part.recommended_units_per_ac} {part.stock_unit}.
-              Recommended total: {part.recommended}. Already issued:{' '}
-              {part.issued}.
-            </p>
-            <p>
-              {part.usage_note || 'Review the actual parts required on site.'}
-            </p>
+        {entries.map((row, index) => (
+          <div key={row.key} className="rounded-xl border border-border p-4 space-y-4 my-4">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="font-semibold">Part {index + 1}</h4>
+              {rows.length > 1 && <Button type="button" variant="outline" disabled={busy || uncertain}
+                aria-label={`Remove Part ${index + 1}`} onClick={() => setRows(current => current.filter(item => item.key !== row.key))}>Remove</Button>}
+            </div>
+            <label htmlFor={`stock-part-${row.key}`}>Part {index + 1}
+              <NativeSelect id={`stock-part-${row.key}`} required value={row.partId} disabled={busy || uncertain}
+                onChange={e => updateRow(row.key, { partId: e.target.value, ack: false })}>
+                <option value="">Select a part</option>
+                {options.parts.map(p => <option key={p.part_id} value={p.part_id}
+                  disabled={rows.some(other => other.key !== row.key && other.partId === String(p.part_id))}>
+                  {p.part_name} · {p.current_stock} {p.stock_unit} available
+                </option>)}
+              </NativeSelect>
+            </label>
+            {row.part && <div className="tech-guidance"><p>Per AC: {row.part.recommended_units_per_ac} {row.part.stock_unit}.
+              Recommended total: {row.part.recommended}. Already issued: {row.part.issued}.</p>
+              <p>{row.part.usage_note || 'Review the actual parts required on site.'}</p></div>}
+            <label htmlFor={`stock-quantity-${row.key}`}>Quantity
+              <Input id={`stock-quantity-${row.key}`} type="number" min="1" max={row.part?.current_stock || 2147483647} step="1" required
+                value={row.quantity} disabled={busy || uncertain} onChange={e => updateRow(row.key, { quantity: e.target.value, ack: false })} />
+            </label>
+            <label htmlFor={`stock-description-${row.key}`}>Description
+              <Textarea id={`stock-description-${row.key}`} maxLength={500} value={row.remarks} disabled={busy || uncertain}
+                onChange={e => updateRow(row.key, { remarks: e.target.value })} placeholder="Describe what these parts will be used for." />
+            </label>
+            {row.excess && <label className="tech-excess"><input type="checkbox" checked={row.ack} disabled={busy || uncertain}
+              onChange={e => updateRow(row.key, { ack: e.target.checked })} /><span>This exceeds the work order recommendation. I have reviewed the extra quantity and acknowledge the additional usage.</span></label>}
+            {row.part && row.qty > row.part.current_stock && <p className="tech-error" role="alert">Not enough stock. Only {row.part.current_stock} {row.part.stock_unit} available.</p>}
           </div>
-        )}
-        <label htmlFor="stock-quantity">
-          Quantity
-          <Input
-            id="stock-quantity"
-            type="number"
-            min="1"
-            max={part?.current_stock || 2147483647}
-            step="1"
-            required
-            value={quantity}
-            disabled={busy || uncertain}
-            onChange={(e) => {
-              setQuantity(e.target.value);
-              setAck(false);
-            }}
-          />
-        </label>
-        <label htmlFor="stock-description">
-          Description
-          <Textarea
-            id="stock-description"
-            maxLength={500}
-            value={remarks}
-            disabled={busy || uncertain}
-            onChange={(e) => setRemarks(e.target.value)}
-            placeholder="Describe what these parts will be used for."
-          />
-        </label>
-        {excess && (
-          <label className="tech-excess">
-            <input
-              type="checkbox"
-              checked={ack}
-              disabled={busy || uncertain}
-              onChange={(e) => setAck(e.target.checked)}
-            />
-            <span>
-              This exceeds the work order recommendation. I have reviewed the
-              extra quantity and acknowledge the additional usage.
-            </span>
-          </label>
-        )}
-        {part && qty > part.current_stock && (
-          <p className="tech-error" role="alert">
-            Not enough stock. Only {part.current_stock} {part.stock_unit}{' '}
-            available.
-          </p>
-        )}
+        ))}
+        <Button type="button" variant="outline" disabled={busy || uncertain || rows.length >= 30}
+          onClick={() => setRows(current => [...current, newRow()])}>+ Add part</Button>
+        <p>Choose each part once and enter its total quantity. Confirm below to issue all parts together.</p>
         {error && (
           <p className="tech-error" role="alert">
             {error}
@@ -529,7 +476,7 @@ function StockOut({
               ? 'Saving…'
               : uncertain
                 ? 'Retry same request'
-                : 'Confirm stock out'}
+                : 'Confirm all parts'}
           </Button>
           <Button
             type="button"

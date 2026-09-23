@@ -3,7 +3,7 @@ import express from 'express';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
 import { sessionUser } from './public-site.mjs';
-import { AppError, idSchema, recordTransaction } from './inventory.mjs';
+import { AppError, idSchema, recordTransaction, recordStockBatch } from './inventory.mjs';
 
 // Local demo identity is chosen on the server, never from browser query parameters.
 export async function getTechnician(pool, email = process.env.DEMO_TECHNICIAN_EMAIL ?? 'chris.lim@coolcare.demo') {
@@ -212,6 +212,7 @@ export function createTechnicianRouter(pool) {
   });
   router.patch('/jobs/:jobId/cleaning-assessment',async(req,res)=>res.json(await saveCleaningAssessment(pool,req.technicianUser.id,idSchema.parse(req.params.jobId),req.body)));
   router.patch('/jobs/:jobId/status',async(req,res)=>res.json(await updateTechnicianJobStatus(pool,req.technicianUser.id,idSchema.parse(req.params.jobId),req.body)));
+  router.post('/jobs/:jobId/stock-out-batch',async(req,res)=>res.status(201).json(await recordStockBatch(pool,req.body,idSchema.parse(req.params.jobId),req.technicianUser.id)));
   router.post('/jobs/:jobId/stock-out',async(req,res)=>{
     const jobId=idSchema.parse(req.params.jobId);
     if(req.body.transaction_type!==undefined&&req.body.transaction_type!=='Stock Out')throw new AppError('Technicians can only issue stock.',403);
