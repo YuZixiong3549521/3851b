@@ -42,6 +42,7 @@ import {
   type AdminBooking,
   type AdminBookingDetail,
   type AdminSchedule,
+  type DispatchOptions,
   type List,
   type StaffMember,
 } from '@/lib/inventory-client';
@@ -72,6 +73,13 @@ const canonicalTimeSlot = (value: string) =>
     '04:30 PM - 06:30 PM': '16:00 - 18:00',
   })[value] ?? value;
 const calendarDate = (value: string) => String(value).slice(0, 10);
+const validCalendarDate = (value: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return (
+    !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+  );
+};
 const shiftDate = (value: string, days: number) => {
   const date = new Date(`${calendarDate(value)}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -136,7 +144,7 @@ export function OrdersPage({
         description={
           mode === 'review'
             ? 'Approve or reject submitted customer requests before dispatch.'
-            : 'Automatically assign confirmed visits to an available technician.'
+            : 'Assign confirmed visits to an available technician automatically or manually.'
         }
         actions={
           <Button variant="outline" onClick={refresh}>
@@ -234,31 +242,52 @@ export function DispatchCalendarPage({
 }: {
   params: URLSearchParams;
 }) {
-  const { go, version, refresh } = useInventory(),
-    weekStart = mondayOf(params.get('week') || singaporeToday()),
-    weekEnd = shiftDate(weekStart, 6),
-    page = Math.max(1, Number(params.get('page') || 1)),
-    schedule = useResource<AdminSchedule>(
-      `/admin/schedule?from=${weekStart}&to=${weekEnd}`,
-      version,
-    ),
-    queue = useResource<List<AdminBooking>>(
-      `/admin/bookings?status=Confirmed&page=${page}&pageSize=20`,
-      version,
-    ),
-    days = Array.from({ length: 7 }, (_, index) => shiftDate(weekStart, index)),
-    rows = schedule.data?.rows ?? [],
-    assignedCount = rows.filter((row) =>
-      ['Assigned', 'On The Way', 'In Progress'].includes(row.status),
-    ).length;
+  const { go, version, refresh } = useInventory();
+  const requestedDate = params.get('date') || '';
+  const selectedDate = validCalendarDate(requestedDate) ? requestedDate : '';
+  const weekStart = mondayOf(
+    selectedDate || params.get('week') || singaporeToday(),
+  );
+  const weekEnd = shiftDate(weekStart, 6);
+  const page = Math.max(1, Number(params.get('page') || 1));
+  const schedule = useResource<AdminSchedule>(
+    `/admin/schedule?from=${weekStart}&to=${weekEnd}`,
+    version,
+  );
+  const queue = useResource<List<AdminBooking>>(
+    `/admin/bookings?status=Confirmed&page=${page}&pageSize=20`,
+    version,
+  );
+  const days = Array.from({ length: 7 }, (_, index) =>
+    shiftDate(weekStart, index),
+  );
+  const rows = schedule.data?.rows ?? [];
+  const assignedCount = rows.filter((row) =>
+    ['Assigned', 'On The Way', 'In Progress'].includes(row.status),
+  ).length;
+  const dispatchUrl = (
+    nextWeek: string,
+    nextDate = selectedDate,
+    nextPage = page,
+  ) => {
+    const query = new URLSearchParams({ week: nextWeek });
+    if (nextDate) query.set('date', nextDate);
+    if (nextPage > 1) query.set('page', String(nextPage));
+    return `/admin/dispatch?${query}`;
+  };
   const moveWeek = (daysToMove: number) =>
-    go(`/admin/dispatch?week=${shiftDate(weekStart, daysToMove)}`);
+    go(
+      dispatchUrl(
+        shiftDate(weekStart, daysToMove),
+        selectedDate ? shiftDate(selectedDate, daysToMove) : '',
+      ),
+    );
   return (
     <>
       <Heading
         eyebrow="ORDERS / DISPATCH"
         title="Weekly dispatch schedule"
-        description={`${displayDate(weekStart)} – ${displayDate(weekEnd)} · Open a confirmed booking to review its time and assign a technician automatically.`}
+        description={`${displayDate(weekStart)} – ${displayDate(weekEnd)} · Open a confirmed booking to review its time and assign a technician automatically or manually.`}
         actions={
           <div className="actions">
             <Button
@@ -271,7 +300,10 @@ export function DispatchCalendarPage({
             </Button>
             <Button
               variant="outline"
-              onClick={() => go(`/admin/dispatch?week=${mondayOf(singaporeToday())}`)}
+              onClick={() => {
+                const today = singaporeToday();
+                go(dispatchUrl(mondayOf(today), today));
+              }}
             >
               Today
             </Button>
@@ -315,10 +347,17 @@ export function DispatchCalendarPage({
               <h2>Team calendar</h2>
               <p className="muted">
                 Submitted requests are visible for planning. Technician names
-                appear after automatic dispatch.
+                appear after dispatch.
               </p>
             </div>
-            <CalendarDays aria-hidden="true" />
+            <EnglishDatePicker
+              value={selectedDate || weekStart}
+              label="Choose schedule date"
+              disableWeekends={false}
+              triggerMode="icon"
+              align="end"
+              onChange={(date) => go(dispatchUrl(mondayOf(date), date))}
+            />
           </div>
           <div className="schedule-calendar-scroll">
             <div className="schedule-calendar-grid">
@@ -328,7 +367,20 @@ export function DispatchCalendarPage({
                 );
                 return (
                   <section className="schedule-day" key={day}>
-                    <header className={day === singaporeToday() ? 'today' : ''}>
+                    <header
+                      className={[
+                        day === singaporeToday() ? 'today' : '',
+                        day === selectedDate ? 'selected' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      aria-current={
+                        day === selectedDate ||
+                        (!selectedDate && day === singaporeToday())
+                          ? 'date'
+                          : undefined
+                      }
+                    >
                       <span>{weekday(day)}</span>
                       <strong>{displayDate(day)}</strong>
                     </header>
@@ -380,8 +432,8 @@ export function DispatchCalendarPage({
               <div>
                 <h2>Confirmed bookings awaiting dispatch</h2>
                 <p className="muted">
-                  Open a booking to adjust its appointment or assign the next
-                  available technician.
+                  Open a booking to adjust its appointment, then choose
+                  automatic or manual dispatch.
                 </p>
               </div>
             </div>
@@ -431,7 +483,7 @@ export function DispatchCalendarPage({
               page={queue.data.page}
               pageSize={queue.data.pageSize}
               onPage={(next) =>
-                go(`/admin/dispatch?week=${weekStart}&page=${next}`)
+                go(dispatchUrl(weekStart, selectedDate, next))
               }
             />
           </section>
@@ -458,6 +510,12 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       preferredDate: string;
       timeSlot: string;
     } | null>(null),
+    [dispatchMode, setDispatchMode] = useState<'automatic' | 'manual'>(
+      'automatic',
+    ),
+    [selectedTechnicianId, setSelectedTechnicianId] = useState<number | null>(
+      null,
+    ),
     [busy, setBusy] = useState(''),
     [error, setError] = useState('');
   const pending = useRef<{ type: string; requestId: string } | null>(null);
@@ -482,6 +540,22 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
     scheduleError = schedule.preferredDate
       ? bookingDateError(schedule.preferredDate)
       : 'Choose a service date.';
+  const dispatchAction =
+    booking?.status === 'Confirmed'
+      ? 'dispatch'
+      : booking?.status === 'Assigned' &&
+          booking.assignments[0]?.workStatus === 'Assigned'
+        ? 'redispatch'
+        : null;
+  const dispatchOptions = useResource<DispatchOptions>(
+    dispatchMode === 'manual' && dispatchAction
+      ? `/admin/bookings/${bookingId}/dispatch-options`
+      : null,
+    version,
+  );
+  const selectedTechnician = dispatchOptions.data?.technicians.find(
+    (technician) => technician.technicianId === selectedTechnicianId,
+  );
   useEffect(() => {
     setDirty(scheduleDirty);
     return () => setDirty(false);
@@ -499,10 +573,22 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       setError('Enter a clear rejection reason for the customer.');
       return;
     }
+    const isDispatch = type === 'dispatch' || type === 'redispatch';
+    if (
+      isDispatch &&
+      dispatchMode === 'manual' &&
+      (!selectedTechnicianId || !selectedTechnician?.eligible)
+    ) {
+      setError('Choose an available technician for manual dispatch.');
+      return;
+    }
+    const requestType = isDispatch
+      ? `${type}:${dispatchMode}:${selectedTechnicianId ?? 'automatic'}`
+      : type;
     setBusy(type);
     setError('');
-    if (pending.current?.type !== type)
-      pending.current = { type, requestId: crypto.randomUUID() };
+    if (pending.current?.type !== requestType)
+      pending.current = { type: requestType, requestId: crypto.randomUUID() };
     try {
       const result = await api<{ technician?: { fullName: string } }>(
         `/admin/bookings/${bookingId}/${type}`,
@@ -510,10 +596,19 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
         {
           requestId: pending.current.requestId,
           ...(type === 'reject' ? { reason: reason.trim() } : {}),
+          ...(isDispatch
+            ? {
+                mode: dispatchMode,
+                ...(dispatchMode === 'manual'
+                  ? { technicianId: selectedTechnicianId }
+                  : {}),
+              }
+            : {}),
         },
       );
       pending.current = null;
       setReason('');
+      setSelectedTechnicianId(null);
       notify(
         type === 'dispatch' || type === 'redispatch'
           ? `Assigned to ${result.technician?.fullName}. Customer email queued.`
@@ -522,6 +617,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       refresh();
     } catch (cause) {
       setError(errorText(cause));
+      if (isDispatch && dispatchMode === 'manual') dispatchOptions.reload();
       if (cause instanceof ApiError && cause.status < 500)
         pending.current = null;
     } finally {
@@ -748,41 +844,148 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </Button>
                 </div>
               )}
-              {booking.status === 'Confirmed' && (
-                <div className="mt-6 rounded-xl border border-primary/20 bg-primary/5 p-4">
+              {dispatchAction && (
+                <div className="dispatch-control mt-6 rounded-xl border border-primary/20 bg-primary/5 p-4">
                   <h3 className="font-semibold">
-                    Ready for automatic dispatch
+                    {dispatchAction === 'redispatch'
+                      ? 'Reassign technician'
+                      : 'Dispatch technician'}
                   </h3>
                   <p className="mt-1 text-sm muted">
-                    CoolCare will choose an available technician using daily
-                    workload and rotation order. The customer email is queued
-                    only after the assignment succeeds.
+                    Choose automatic workload rotation or manually select an
+                    eligible technician. The customer email is queued only
+                    after the assignment succeeds.
                   </p>
+                  <fieldset
+                    className="dispatch-mode-switch mt-4"
+                  >
+                    <legend className="sr-only">Dispatch method</legend>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={
+                        dispatchMode === 'automatic' ? 'default' : 'outline'
+                      }
+                      aria-pressed={dispatchMode === 'automatic'}
+                      disabled={Boolean(busy)}
+                      onClick={() => {
+                        setDispatchMode('automatic');
+                        setError('');
+                      }}
+                    >
+                      Automatic
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={
+                        dispatchMode === 'manual' ? 'default' : 'outline'
+                      }
+                      aria-pressed={dispatchMode === 'manual'}
+                      disabled={Boolean(busy)}
+                      onClick={() => {
+                        setDispatchMode('manual');
+                        setError('');
+                      }}
+                    >
+                      Manual
+                    </Button>
+                  </fieldset>
+                  {dispatchMode === 'automatic' ? (
+                    <p className="mt-4 text-sm muted">
+                      CoolCare selects an available technician using this
+                      appointment’s time, daily workload and rotation order.
+                    </p>
+                  ) : (
+                    <div className="mt-4">
+                      <LoadState {...dispatchOptions} />
+                      {dispatchOptions.data &&
+                        (dispatchOptions.data.technicians.length ? (
+                          <div
+                            className="manual-dispatch-list"
+                            role="radiogroup"
+                            aria-label="Choose technician"
+                          >
+                            {dispatchOptions.data.technicians.map(
+                              (technician) => (
+                                <label
+                                  className="manual-dispatch-option"
+                                  data-disabled={!technician.eligible}
+                                  key={technician.technicianId}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`dispatch-technician-${bookingId}`}
+                                    value={technician.technicianId}
+                                    checked={
+                                      selectedTechnicianId ===
+                                      technician.technicianId
+                                    }
+                                    disabled={
+                                      !technician.eligible || Boolean(busy)
+                                    }
+                                    onChange={() => {
+                                      setSelectedTechnicianId(
+                                        technician.technicianId,
+                                      );
+                                      setError('');
+                                    }}
+                                  />
+                                  <span>
+                                    <strong>{technician.fullName}</strong>
+                                    <small>
+                                      {technician.email} ·{' '}
+                                      {technician.availability} ·{' '}
+                                      {technician.dailyJobs} active job(s) that
+                                      day
+                                    </small>
+                                    {!technician.eligible && (
+                                      <small className="manual-dispatch-reason">
+                                        {technician.reason}
+                                      </small>
+                                    )}
+                                  </span>
+                                </label>
+                              ),
+                            )}
+                          </div>
+                        ) : (
+                          <p className="notice error">
+                            No technician accounts are available.
+                          </p>
+                        ))}
+                    </div>
+                  )}
                   <Button
                     className="mt-4"
-                    disabled={Boolean(busy) || scheduleDirty}
-                    onClick={() => action('dispatch')}
+                    disabled={
+                      Boolean(busy) ||
+                      scheduleDirty ||
+                      (dispatchMode === 'manual' &&
+                        (!selectedTechnician?.eligible ||
+                          dispatchOptions.loading))
+                    }
+                    onClick={() => action(dispatchAction)}
                   >
-                    <Send />
-                    {busy === 'dispatch' ? 'Assigning…' : 'Assign technician'}
+                    {dispatchAction === 'redispatch' ? (
+                      <RefreshCw />
+                    ) : (
+                      <Send />
+                    )}
+                    {busy === dispatchAction
+                      ? dispatchAction === 'redispatch'
+                        ? 'Reassigning…'
+                        : 'Assigning…'
+                      : dispatchMode === 'manual'
+                        ? dispatchAction === 'redispatch'
+                          ? 'Reassign selected technician'
+                          : 'Assign selected technician'
+                        : dispatchAction === 'redispatch'
+                          ? 'Automatically redispatch'
+                          : 'Automatically assign technician'}
                   </Button>
                 </div>
               )}
-              {booking.status === 'Assigned' &&
-                booking.assignments[0]?.workStatus === 'Assigned' && (
-                  <div className="mt-6">
-                    <Button
-                      variant="outline"
-                      disabled={Boolean(busy)}
-                      onClick={() => action('redispatch')}
-                    >
-                      <RefreshCw />
-                      {busy === 'redispatch'
-                        ? 'Reassigning…'
-                        : 'Automatically redispatch'}
-                    </Button>
-                  </div>
-                )}
               {error && (
                 <p className="notice error" role="alert">
                   {error}

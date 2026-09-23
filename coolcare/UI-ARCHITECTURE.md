@@ -59,7 +59,7 @@ The Technician drawer exposes one status action at a time: Assigned, On The Way,
 
 ## Data boundary (existing portals)
 
-React calls `/api/...`; Express validates the request and session, checks authorization and accesses MySQL. React never receives database credentials. Postman calls the same API. Migration `13-staff-dispatch.sql` adds invitations, Owner access, normalized slot times, Rejected status, dispatch idempotency and the generic email outbox while retaining existing accounts, bookings, assignments and work orders. Migration `14-admin-schedule.sql` adds Admin-reschedule idempotency to that operation log; the weekly calendar reads the existing booking and assignment records without duplicating schedule data.
+React calls `/api/...`; Express validates the request and session, checks authorization and accesses MySQL. React never receives database credentials. Postman calls the same API. Migration `13-staff-dispatch.sql` adds invitations, Owner access, normalized slot times, Rejected status, dispatch idempotency and the generic email outbox while retaining existing accounts, bookings, assignments and work orders. Migration `14-admin-schedule.sql` adds Admin-reschedule idempotency to that operation log. Automatic and manual dispatch share the same locked transaction; the manual option list is advisory and every selected technician is revalidated at submission. The weekly calendar reads existing booking and assignment records without duplicating schedule data, and its date picker stores the chosen week/date in the URL while the dispatch queue remains global.
 
 ## Validation
 

@@ -52,6 +52,24 @@ export type AdminSchedule = {
   to: string;
   rows: AdminBooking[];
 };
+export type DispatchTechnicianOption = {
+  technicianId: number;
+  fullName: string;
+  email: string;
+  accountStatus: string;
+  availability: string;
+  dailyJobs: number;
+  current: boolean;
+  eligible: boolean;
+  reason: string | null;
+};
+export type DispatchOptions = {
+  bookingId: number;
+  status: string;
+  preferredDate: string;
+  timeSlot: string;
+  technicians: DispatchTechnicianOption[];
+};
 export type StaffMember = {
   userId: number; technicianId?: number; fullName: string; email: string; phone: string | null; status: 'Active' | 'Inactive' | 'Suspended';
   createdAt: string; accessLevel?: 'Owner' | 'Admin'; availability?: 'Available' | 'Busy' | 'Unavailable' | 'On Leave';

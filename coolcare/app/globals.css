@@ -118,6 +118,57 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 14px;
   }
+  .dispatch-mode-switch {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .manual-dispatch-list {
+    display: grid;
+    gap: 9px;
+    max-height: 360px;
+    overflow-y: auto;
+  }
+  .manual-dispatch-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fff;
+    cursor: pointer;
+  }
+  .manual-dispatch-option:has(input:checked) {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 18%, transparent);
+  }
+  .manual-dispatch-option[data-disabled='true'] {
+    background: #f5f6f7;
+    color: var(--muted-foreground);
+    cursor: not-allowed;
+  }
+  .manual-dispatch-option input {
+    margin-top: 3px;
+    accent-color: var(--primary);
+  }
+  .manual-dispatch-option span,
+  .manual-dispatch-option small {
+    display: block;
+  }
+  .manual-dispatch-option span {
+    min-width: 0;
+  }
+  .manual-dispatch-option small {
+    margin-top: 3px;
+    color: var(--muted-foreground);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .manual-dispatch-option .manual-dispatch-reason {
+    color: #a33a36;
+    font-weight: 650;
+  }
   .schedule-summary {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -169,6 +220,11 @@
   .schedule-day > header.today {
     color: var(--primary);
     background: color-mix(in srgb, var(--primary) 9%, white);
+  }
+  .schedule-day > header.selected {
+    color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 14%, white);
+    box-shadow: inset 0 0 0 2px var(--primary);
   }
   .schedule-day > header span {
     color: var(--muted-foreground);

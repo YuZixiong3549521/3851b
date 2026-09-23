@@ -12,6 +12,7 @@ import {
   approveBooking,
   getAdminBooking,
   dispatchBooking,
+  listDispatchOptions,
   listAdminSchedule,
   rejectBooking,
   rescheduleAdminBooking,
@@ -498,6 +499,233 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       }),
       (error) => error.status === 409 && /Redispatch/.test(error.message),
     );
+  }));
+
+void test('manual dispatch lists every technician, enforces eligibility, supports safe redispatch and preserves email idempotency', async () =>
+  rollbackFixture(async (db, connection) => {
+    const { owner } = await actors(connection);
+    const [[customer]] =
+      await connection.execute(`SELECT u.user_id AS id,u.email,u.phone,c.customer_id AS customerId FROM user_account u
+      JOIN customer c ON c.user_id=u.user_id WHERE u.email='alice.tan@coolcare.demo'`);
+    const [[service]] = await connection.execute(
+      "SELECT service_id AS serviceId FROM simple_service_catalog WHERE code='cleaning'",
+    );
+    const [technicians] =
+      await connection.execute(`SELECT t.technician_id AS technicianId,t.user_id AS userId,u.email,u.full_name AS fullName FROM technician t
+      JOIN user_account u ON u.user_id=t.user_id ORDER BY t.technician_id`);
+    assert.ok(technicians.length >= 2);
+    const automaticFirst = technicians[0],
+      manuallySelected = technicians[1];
+    await lockTechnicianRoster(connection);
+    await connection.execute(
+      "UPDATE user_account u JOIN technician t ON t.user_id=u.user_id SET u.status='Active'",
+    );
+    await connection.execute(
+      "UPDATE technician SET availability_status='Available',last_assigned_at=CASE technician_id WHEN ? THEN '2025-01-01 00:00:00' ELSE '2026-01-01 00:00:00' END",
+      [automaticFirst.technicianId],
+    );
+    const date = nextWeekday(addCalendarDays(minimumBookingDate(), 800));
+    const create = (label) =>
+      createPublicBooking(db, customer, {
+        serviceId: service.serviceId,
+        serviceAddress: `${label} ${randomUUID()}, Singapore`,
+        numberOfUnits: 1,
+        preferredDate: date,
+        timeWindow: '09:00 - 11:00',
+        requestId: randomUUID(),
+      });
+
+    const first = await create('Manual dispatch QA');
+    await approveBooking(db, owner, first.bookingId, {
+      requestId: randomUUID(),
+    });
+    const initialOptions = await listDispatchOptions(db, first.bookingId);
+    assert.equal(initialOptions.technicians.length, technicians.length);
+    assert.ok(initialOptions.technicians.every((option) => option.eligible));
+
+    const initialRequest = randomUUID();
+    const assigned = await dispatchBooking(db, owner, first.bookingId, {
+      requestId: initialRequest,
+      mode: 'manual',
+      technicianId: manuallySelected.technicianId,
+    });
+    assert.equal(
+      assigned.technician.technicianId,
+      manuallySelected.technicianId,
+    );
+    assert.equal(
+      (
+        await dispatchBooking(db, owner, first.bookingId, {
+          requestId: initialRequest,
+          mode: 'manual',
+          technicianId: manuallySelected.technicianId,
+        })
+      ).replayed,
+      true,
+    );
+    await assert.rejects(
+      dispatchBooking(db, owner, first.bookingId, {
+        requestId: initialRequest,
+        mode: 'manual',
+        technicianId: automaticFirst.technicianId,
+      }),
+      (error) => error.status === 409 && /request ID/i.test(error.message),
+    );
+
+    const second = await create('Manual conflict QA');
+    await approveBooking(db, owner, second.bookingId, {
+      requestId: randomUUID(),
+    });
+    await assert.rejects(
+      dispatchBooking(db, owner, second.bookingId, {
+        requestId: randomUUID(),
+        mode: 'manual',
+        technicianId: manuallySelected.technicianId,
+      }),
+      (error) => error.status === 409 && /overlapping/i.test(error.message),
+    );
+    await connection.execute(
+      "UPDATE user_account SET status='Suspended' WHERE user_id=?",
+      [automaticFirst.userId],
+    );
+    await assert.rejects(
+      dispatchBooking(db, owner, second.bookingId, {
+        requestId: randomUUID(),
+        mode: 'manual',
+        technicianId: automaticFirst.technicianId,
+      }),
+      (error) => error.status === 409 && /active account/i.test(error.message),
+    );
+    await connection.execute(
+      "UPDATE user_account SET status='Active' WHERE user_id=?",
+      [automaticFirst.userId],
+    );
+    await connection.execute(
+      "UPDATE technician SET availability_status='On Leave' WHERE technician_id=?",
+      [automaticFirst.technicianId],
+    );
+    await assert.rejects(
+      dispatchBooking(db, owner, second.bookingId, {
+        requestId: randomUUID(),
+        mode: 'manual',
+        technicianId: automaticFirst.technicianId,
+      }),
+      (error) => error.status === 409 && /on leave/i.test(error.message),
+    );
+    await assert.rejects(
+      dispatchBooking(db, owner, second.bookingId, {
+        requestId: randomUUID(),
+        mode: 'manual',
+        technicianId: 4294967295,
+      }),
+      (error) => error.status === 409 && /not found/i.test(error.message),
+    );
+    const blockedOptions = await listDispatchOptions(db, second.bookingId);
+    assert.match(
+      blockedOptions.technicians.find(
+        (option) => option.technicianId === manuallySelected.technicianId,
+      ).reason,
+      /overlapping/i,
+    );
+    assert.match(
+      blockedOptions.technicians.find(
+        (option) => option.technicianId === automaticFirst.technicianId,
+      ).reason,
+      /leave/i,
+    );
+
+    await connection.execute(
+      "UPDATE technician SET availability_status='Available' WHERE technician_id=?",
+      [automaticFirst.technicianId],
+    );
+    const redispatchOptions = await listDispatchOptions(db, first.bookingId),
+      current = redispatchOptions.technicians.find(
+        (option) => option.technicianId === manuallySelected.technicianId,
+      ),
+      replacement = redispatchOptions.technicians.find(
+        (option) => option.technicianId === automaticFirst.technicianId,
+      );
+    assert.equal(current.current, true);
+    assert.equal(current.eligible, false);
+    assert.match(current.reason, /currently assigned/i);
+    assert.equal(replacement.eligible, true);
+    await assert.rejects(
+      dispatchBooking(
+        db,
+        owner,
+        first.bookingId,
+        {
+          requestId: randomUUID(),
+          mode: 'manual',
+          technicianId: manuallySelected.technicianId,
+        },
+        { redispatch: true },
+      ),
+      (error) => error.status === 409 && /different technician/i.test(error.message),
+    );
+    const redispatchRequest = randomUUID();
+    const reassigned = await dispatchBooking(
+      db,
+      owner,
+      first.bookingId,
+      {
+        requestId: redispatchRequest,
+        mode: 'manual',
+        technicianId: automaticFirst.technicianId,
+      },
+      { redispatch: true },
+    );
+    assert.equal(
+      reassigned.technician.technicianId,
+      automaticFirst.technicianId,
+    );
+    assert.equal(
+      (
+        await dispatchBooking(
+          db,
+          owner,
+          first.bookingId,
+          {
+            requestId: redispatchRequest,
+            mode: 'manual',
+            technicianId: automaticFirst.technicianId,
+          },
+          { redispatch: true },
+        )
+      ).replayed,
+      true,
+    );
+    const [assignmentRows] = await connection.execute(
+      `SELECT a.assignment_status AS assignmentStatus,w.current_status AS workStatus
+      FROM assignment a JOIN work_order w ON w.assignment_id=a.assignment_id
+      WHERE a.booking_id=? ORDER BY a.assignment_id`,
+      [first.bookingId],
+    );
+    assert.deepEqual(assignmentRows, [
+      { assignmentStatus: 'Reassigned', workStatus: 'Cancelled' },
+      { assignmentStatus: 'Assigned', workStatus: 'Assigned' },
+    ]);
+    const [[customerMail]] = await connection.execute(
+      `SELECT COUNT(*) AS count FROM booking_email_outbox
+      WHERE booking_id=? AND recipient=? AND event_type='booking.assigned'`,
+      [first.bookingId, customer.email],
+    );
+    assert.equal(Number(customerMail.count), 2);
+    const [[technicianMail]] = await connection.execute(
+      `SELECT COUNT(*) AS count FROM booking_email_outbox
+      WHERE booking_id=? AND recipient IN (?,?)`,
+      [
+        first.bookingId,
+        manuallySelected.email,
+        automaticFirst.email,
+      ],
+    );
+    assert.equal(Number(technicianMail.count), 0);
+    const [[failedDispatchMail]] = await connection.execute(
+      'SELECT COUNT(*) AS count FROM booking_email_outbox WHERE booking_id=?',
+      [second.bookingId],
+    );
+    assert.equal(Number(failedDispatchMail.count), 0);
   }));
 
 test('concurrent submissions serialize the last team-capacity place and released bookings reopen it', async () => {

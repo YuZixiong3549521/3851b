@@ -24,10 +24,12 @@ export type EnglishDatePickerProps = {
   placeholder?: string;
   onMonthChange?: (date: Date) => void;
   className?: string;
+  triggerMode?: 'field' | 'icon';
+  align?: 'start' | 'center' | 'end';
   'aria-invalid'?: boolean;
 };
 
-export function EnglishDatePicker({ id, value, onChange, min, max, disabled, blockedDates = [], disableWeekends = true, label = 'Preferred date', placeholder = 'Choose a date', onMonthChange, className, 'aria-invalid': invalid }: EnglishDatePickerProps) {
+export function EnglishDatePicker({ id, value, onChange, min, max, disabled, blockedDates = [], disableWeekends = true, label = 'Preferred date', placeholder = 'Choose a date', onMonthChange, className, triggerMode = 'field', align = 'start', 'aria-invalid': invalid }: EnglishDatePickerProps) {
   const generatedId = useId();
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState<Date>();
@@ -41,11 +43,11 @@ export function EnglishDatePicker({ id, value, onChange, min, max, disabled, blo
     setOpen(next);
     if (next) changeMonth(selected && (!firstDate || selected >= firstDate) && (!lastDate || selected <= lastDate) ? selected : firstDate ?? new Date());
   }}>
-    <PopoverTrigger render={<Button id={id ?? generatedId} type="button" variant="outline" disabled={disabled} aria-invalid={invalid} aria-label={`${label}${selected ? ': ' + englishCalendarDate(value) : ''}`} className={cn('h-12 w-full justify-start gap-3 rounded-xl bg-background text-left font-normal', className)} />}>
+    <PopoverTrigger render={<Button id={id ?? generatedId} type="button" variant="outline" disabled={disabled} aria-invalid={invalid} aria-label={`${label}${selected ? ': ' + englishCalendarDate(value) : ''}`} className={cn(triggerMode === 'icon' ? 'size-11 justify-center rounded-xl bg-background p-0' : 'h-12 w-full justify-start gap-3 rounded-xl bg-background text-left font-normal', className)} />}>
       <CalendarDays className="size-4 shrink-0 text-primary" aria-hidden="true" />
-      <span className={!selected ? 'text-muted-foreground' : undefined}>{selected ? englishCalendarDate(value) : placeholder}</span>
+      <span className={triggerMode === 'icon' ? 'sr-only' : !selected ? 'text-muted-foreground' : undefined}>{selected ? englishCalendarDate(value) : placeholder}</span>
     </PopoverTrigger>
-    <PopoverContent align="start" className="w-auto max-w-[calc(100vw-2rem)] gap-0 rounded-2xl p-2" lang="en-GB">
+    <PopoverContent align={align} className="w-auto max-w-[calc(100vw-2rem)] gap-0 rounded-2xl p-2" lang="en-GB">
       <PopoverTitle className="px-2 pt-2 text-sm">{label}</PopoverTitle>
       <PopoverDescription className="px-2 pt-1 text-xs">{disableWeekends ? 'Monday to Friday' : 'Choose a date'}{min ? ' · From ' + englishCalendarDate(min) : ''}</PopoverDescription>
       <Calendar mode="single" locale={enGB} weekStartsOn={1} today={parseCalendarDate(singaporeToday())} autoFocus month={month ?? selected ?? firstDate} onMonthChange={changeMonth} selected={selected} startMonth={firstDate} endMonth={lastDate} disabled={dateIsDisabled} required onSelect={date => {
