@@ -16,13 +16,14 @@ export type BookingAvailabilityState = {
   refresh: () => void;
 };
 
-export function useBookingAvailability({ serviceAddress, addressId, selectedDate, excludeBookingId, enabled = true }: {
-  serviceAddress?: string; addressId?: number; selectedDate?: string; excludeBookingId?: number; enabled?: boolean;
+export function useBookingAvailability({ serviceAddress, addressId, selectedDate, excludeBookingId, serviceIds, packageId, enabled = true }: {
+  serviceAddress?: string; addressId?: number; selectedDate?: string; excludeBookingId?: number; serviceIds?: number[]; packageId?: number; enabled?: boolean;
 }): BookingAvailabilityState {
   const [month, setMonth] = useState(() => (selectedDate || earliestBookingDate()).slice(0, 7));
   const [revision, setRevision] = useState(0);
   const [result, setResult] = useState<Pick<BookingAvailabilityState, 'blockedDates' | 'existingBookings' | 'checking' | 'error' | 'selectedDateBlocked'>>({ blockedDates: [], existingBookings: [], checking: false, error: '', selectedDateBlocked: false });
   const address = serviceAddress?.trim() || undefined;
+  const selectionKey = (serviceIds ?? []).join(',');
   const onMonthChange = useCallback((date: Date) => setMonth(calendarDateValue(date).slice(0, 7)), []);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
 
@@ -37,7 +38,7 @@ export function useBookingAvailability({ serviceAddress, addressId, selectedDate
       const fromDate = new Date(start.getFullYear(), start.getMonth(), -6, 12);
       const toDate = new Date(start.getFullYear(), start.getMonth() + 1, 7, 12);
       const from = calendarDateValue(fromDate), to = calendarDateValue(toDate);
-      const input = { serviceAddress: address, addressId, excludeBookingId };
+      const input = { serviceAddress: address, addressId, excludeBookingId, serviceIds: selectionKey ? selectionKey.split(',').map(Number) : undefined, packageId };
       try {
         const [visible, selected] = await Promise.all([
           coolcareApi.getBookingAvailability({ ...input, from, to }),
@@ -51,6 +52,6 @@ export function useBookingAvailability({ serviceAddress, addressId, selectedDate
       }
     }, 250);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [address, addressId, month, selectedDate, excludeBookingId, enabled, revision]);
+  }, [address, addressId, month, selectedDate, excludeBookingId, selectionKey, packageId, enabled, revision]);
   return { ...result, onMonthChange, refresh };
 }

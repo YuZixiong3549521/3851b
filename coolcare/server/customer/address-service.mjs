@@ -14,21 +14,31 @@ const addressView=row=>({...row,isDefault:Boolean(row.isDefault)});
 
 // Caller holds the customer row lock. Natural-address deduplication makes retries
 // safe across forms and concurrent requests without editing an existing address.
-export async function findOrCreateServiceAddress(connection,customerId,addressLine,{addressId,label,postalCode}={}) {
+export async function findOrCreateServiceAddress(connection,customerId,addressLine,{addressId,label,postalCode,verifyPostalCode=false}={}) {
   const [rows]=await connection.execute(`SELECT address_id AS addressId,address_label AS label,address_line AS addressLine,
     postal_code AS postalCode,is_default AS isDefault FROM service_address WHERE customer_id=? AND is_archived=FALSE ORDER BY address_id`,[customerId]);
   if(addressId!==undefined) {
     const selected=rows.find(row=>row.addressId===addressId);
     if(!selected)throw new HttpError(400,'The selected service address is not available.');
     if(normalizeAddress(selected.addressLine)!==normalizeAddress(addressLine))throw new HttpError(400,'The selected address does not match the service address.');
+    if(verifyPostalCode)await applyPostalCode(connection,selected,postalCode);
     return addressView(selected);
   }
   const existing=rows.find(row=>normalizeAddress(row.addressLine)===normalizeAddress(addressLine));
-  if(existing)return addressView(existing);
+  if(existing){if(verifyPostalCode)await applyPostalCode(connection,existing,postalCode);return addressView(existing);}
   const address={label:label||'Service address',addressLine,postalCode:postalCode||null,isDefault:rows.length===0};
   const [inserted]=await connection.execute('INSERT INTO service_address(customer_id,address_label,address_line,postal_code,is_default) VALUES (?,?,?,?,?)',
     [customerId,address.label,address.addressLine,address.postalCode,address.isDefault]);
   return {addressId:inserted.insertId,...address};
+}
+
+async function applyPostalCode(connection,address,postalCode) {
+  if(!postalCode)return;
+  if(address.postalCode&&address.postalCode!==postalCode)throw new HttpError(409,'The postal code differs from this saved address. Edit the address in Saved addresses before booking.');
+  if(!address.postalCode) {
+    await connection.execute('UPDATE service_address SET postal_code=? WHERE address_id=?',[postalCode,address.addressId]);
+    address.postalCode=postalCode;
+  }
 }
 
 // Equipment records are created only when the customer actually books a quantity.

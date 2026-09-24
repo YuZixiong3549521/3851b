@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import mysql from 'mysql2/promise';
 import { createPublicBooking, changePublicBooking } from '../server/public-site.mjs';
-import { createBooking, listBookings } from '../server/customer/booking-service.mjs';
+import { createBooking, listBookings,getBookingDetail } from '../server/customer/booking-service.mjs';
 import { getBookingOptions, lockCustomer } from '../server/customer/booking-options.mjs';
 import { addCalendarMonths } from '../server/customer/annual-bookings.mjs';
 import {addCalendarDays,singaporeToday,minimumBookingDate,nextWeekday,isWeekday} from '../server/customer/booking-schedule.mjs';
@@ -30,7 +30,7 @@ async function rollbackFixture(work,{privileged=false}={}) {
   } finally {await connection.rollback();if(privileged)await connection.end();else connection.release();}
 }
 
-for(const route of ['public','customer'])test(`${route} enforces Singapore day-14 and weekdays for create/reschedule while expired-date retries return the receipt`,async t=>{
+for(const route of ['public','customer'])test(`${route} enforces Singapore day-14 creation and 72-hour weekday rescheduling while expired-date retries return the receipt`,async t=>{
   t.mock.timers.enable({apis:['Date'],now:new Date('2026-09-14T04:00:00Z')});
   try {await rollbackFixture(async(db,c,user)=>{
     const [address]=await c.execute("INSERT INTO service_address(customer_id,address_line) VALUES (?,'Schedule Boundary Address')",[user.customerId]);
@@ -44,7 +44,10 @@ for(const route of ['public','customer'])test(`${route} enforces Singapore day-1
     for(const weekend of ['2026-10-03','2026-10-04'])await assert.rejects(create({...input,preferredDate:weekend}),error=>error.status===400&&error.message.includes('closed'));
     const booking=await create(input);
     const id=booking.bookingId;
-    await assert.rejects(changePublicBooking(db,user,id,'reschedule',{preferredDate:'2026-09-27',timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===400&&error.message.includes('14 calendar days'));
+    // This test intentionally freezes JavaScript in a past calendar; isolate
+    // the appointment rule from the independently running MySQL expiry clock.
+    await c.execute('UPDATE booking SET expires_at=NULL WHERE booking_id=?',[id]);
+    await assert.rejects(changePublicBooking(db,user,id,'reschedule',{preferredDate:'2026-09-16',timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===400&&error.message.includes('72 hours'));
     for(const weekend of ['2026-10-03','2026-10-04'])await assert.rejects(changePublicBooking(db,user,id,'reschedule',{preferredDate:weekend,timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===400&&error.message.includes('closed'));
     await changePublicBooking(db,user,id,'reschedule',{preferredDate:'2026-09-29',timeWindow:'09:00 AM - 11:00 AM'});
     t.mock.timers.setTime(new Date('2026-09-29T16:00:00Z').getTime());
@@ -57,7 +60,7 @@ for(const route of ['public','customer'])test(`${route} enforces Singapore day-1
 
 test('both booking routes enforce normalized address limits, cancellation and rescheduling with real MySQL',async()=>rollbackFixture(async(db,c,user)=>{
   const first=await createPublicBooking(db,user,body());
-  const secondInput=body({preferredDate:date(4),serviceAddress:'  42 RULES TEST AVENUE, #02-10  '});
+  const secondInput=body({serviceType:'Repair',preferredDate:date(4),serviceAddress:'  42 RULES TEST AVENUE, #02-10  '});
   const second=await createPublicBooking(db,user,secondInput);
   assert.equal((await createPublicBooking(db,user,secondInput)).id,second.id,'retries succeed even when at the limit');
   await assert.rejects(createPublicBooking(db,user,body({preferredDate:date(2)})),error=>error.status===409);
@@ -99,10 +102,14 @@ test('only three current choices are exposed, prices are authoritative and equip
   assert.equal(list[0].services.length,1);assert.equal(list[0].serviceName,'Cleaning');
   const repair=await createPublicBooking(db,user,body({serviceType:'Repair',numberOfUnits:5,preferredDate:date(8)}));
   assert.equal(repair.totalAmount,options.services[1].basePrice);
-  await assert.rejects(createPublicBooking(db,user,body({serviceIds:options.services.map(service=>service.serviceId),preferredDate:date(20)})),error=>error.status===400);
+  const combined=await createPublicBooking(db,user,body({serviceIds:options.services.map(service=>service.serviceId),preferredDate:date(21)}));
+  assert.equal(combined.totalAmount,150);
+  const [[combinedSnapshot]]=await c.execute('SELECT SUM(line_total) AS total,COUNT(*) AS n FROM booking_service WHERE booking_id=?',[combined.id]);
+  assert.equal(combinedSnapshot.n,2);assert.equal(Number(combinedSnapshot.total),150);
+  const [[duration]]=await c.execute('SELECT estimated_duration_minutes,slot_end FROM booking WHERE booking_id=?',[combined.id]);assert.equal(duration.estimated_duration_minutes,150);assert.equal(duration.slot_end,'11:30:00');
   const [[address]]=await c.execute('SELECT address_id FROM booking WHERE booking_id=?',[result.id]);
   const [ownedUnits]=await c.execute('SELECT unit_id FROM booking_aircon_unit WHERE booking_id=?',[result.id]);
-  await assert.rejects(createBooking(db,{serviceIds:options.services.map(service=>service.serviceId),addressId:address.address_id,unitIds:ownedUnits.map(u=>u.unit_id),preferredDate:date(30),timeSlot:'09:00 - 11:00'},user.id),error=>error.status===400);
+  assert.ok((await createBooking(db,{serviceIds:options.services.map(service=>service.serviceId),addressId:address.address_id,unitIds:ownedUnits.map(u=>u.unit_id),preferredDate:date(30),timeSlot:'09:00 - 11:00'},user.id)).bookingId);
   const [differentAddress]=await c.execute("INSERT INTO service_address(customer_id,address_line) VALUES (?,'Different unit address')",[user.customerId]);
   const [differentUnit]=await c.execute('INSERT INTO aircon_unit(customer_id,address_id) VALUES (?,?)',[user.customerId,differentAddress.insertId]);
   await assert.rejects(createBooking(db,{serviceIds:[selected.serviceId],addressId:address.address_id,unitIds:[differentUnit.insertId],preferredDate:date(30),timeSlot:'09:00 - 11:00'},user.id),error=>error.status===400);
@@ -150,6 +157,64 @@ test('booking submission does not queue customer email before dispatch',async()=
   assert.equal(Number(mail.n),0);
 }));
 
+test('Cleaning quota resets on Monday; Repair is independent and combined booking retains each price, remarks and duration',async()=>rollbackFixture(async(db,c,user)=>{
+  const options=await getBookingOptions(db,user.customerId);
+  const friday=await createPublicBooking(db,user,body({preferredDate:date(4),postalCode:'560123',specialNotes:'Prefer the same technician when available.'}));
+  await assert.rejects(createPublicBooking(db,user,body({preferredDate:date(1)})),error=>error.status===409&&/calendar week/.test(error.message));
+  await createPublicBooking(db,user,body({serviceType:'Repair',preferredDate:date(1)}));
+  await createPublicBooking(db,user,body({serviceType:'Repair',preferredDate:date(2)}));
+  const monday=await createPublicBooking(db,user,body({serviceIds:options.services.map(service=>service.serviceId),preferredDate:date(7),numberOfUnits:3}));
+  assert.equal(monday.totalAmount,200);
+  const detail=await getBookingDetail(db,friday.id,user.id);
+  assert.equal(detail.specialNotes,'Prefer the same technician when available.');assert.equal(detail.postalCode,'560123');
+  assert.equal(detail.estimatedDurationMinutes,90);assert.equal(detail.slotEnd,'10:30:00');
+  const combined=await getBookingDetail(db,monday.id,user.id);
+  assert.equal(combined.estimatedDurationMinutes,195);assert.equal(combined.slotEnd,'12:15:00');
+  assert.equal(combined.services.reduce((total,service)=>total+Number(service.lineTotal),0),200);
+  await assert.rejects(createPublicBooking(db,user,body({numberOfUnits:4,timeWindow:'04:00 PM - 06:00 PM',preferredDate:date(14)})),error=>error.status===409&&/6:00 PM/.test(error.message));
+}));
+
+test('annual property tiers are required and preserved as price snapshots',async()=>rollbackFixture(async(db,c,user)=>{
+  const options=await getBookingOptions(db,user.customerId),bundle=options.bundles[0];
+  await assert.rejects(createPublicBooking(db,user,body({packageId:bundle.packageId})),/property type/);
+  for(const tier of bundle.propertyPrices) {
+    const input=body({packageId:bundle.packageId,propertyType:tier.propertyType,numberOfUnits:tier.includedUnits+1,serviceAddress:`Property Pricing Test ${tier.propertyType}`});
+    const created=await createPublicBooking(db,user,input);
+    assert.equal(created.annualBundle.totalAmount,tier.price+tier.additionalUnitPrice);
+    assert.equal(created.annualBundle.propertyType,tier.propertyType);
+    assert.equal(created.annualBundle.propertyLabel,tier.label);
+    assert.equal(Number(created.annualBundle.baseAnnualPrice),tier.price);
+    assert.equal(created.annualBundle.visits.reduce((sum,visit)=>sum+visit.totalAmount,0),tier.price+tier.additionalUnitPrice);
+    // Release capacity without changing the immutable price snapshot.
+    await c.execute("UPDATE booking b JOIN annual_booking_visit v ON v.booking_id=b.booking_id SET b.booking_status='Cancelled' WHERE v.series_id=?",[created.annualBundle.seriesId]);
+    assert.equal((await createPublicBooking(db,user,input)).annualBundle.totalAmount,tier.price+tier.additionalUnitPrice);
+  }
+}));
+
+test('customer can reschedule assigned annual visits before the 72-hour deadline and old work cannot start',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:new Date('2027-01-04T01:00:00Z')});
+  try {await rollbackFixture(async(db,c,user)=>{
+    const bundle=(await getBookingOptions(db,user.customerId)).bundles[0];
+    const created=await createPublicBooking(db,user,body({packageId:bundle.packageId,propertyType:'hdb-4',preferredDate:'2027-01-18'}));
+    const visit=created.annualBundle.visits[1];
+    const [[actor]]=await c.execute('SELECT t.technician_id,a.user_id AS admin_id FROM technician t CROSS JOIN admin_profile a LIMIT 1');
+    const [assignment]=await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Assigned')",[visit.bookingId,actor.technician_id,actor.admin_id]);
+    const [job]=await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status) VALUES (?,?,?,'09:00:00','Assigned')",[visit.bookingId,assignment.insertId,`${visit.preferredDate} 09:00:00`]);
+    await c.execute("UPDATE booking SET booking_status='Assigned' WHERE booking_id=?",[visit.bookingId]);
+    assert.equal((await getBookingDetail(db,visit.bookingId,user.id)).canModify,true);
+    const newDate=nextWeekday(addCalendarDays(visit.preferredDate,7));
+    await changePublicBooking(db,user,visit.bookingId,'reschedule',{preferredDate:newDate,timeWindow:'11:00 - 13:00'});
+    const detail=await getBookingDetail(db,visit.bookingId,user.id);
+    assert.equal(detail.status,'Submitted');assert.equal(detail.technicianName,null);assert.equal(detail.preferredDate,newDate);
+    assert.match(detail.statusTimeline.at(-1).remarks,/09:00 - 10:30 to .*11:00 - 12:30 \(Singapore time\)/);
+    assert.equal((await c.execute('SELECT assignment_status FROM assignment WHERE assignment_id=?',[assignment.insertId]))[0][0].assignment_status,'Cancelled');
+    assert.equal((await c.execute('SELECT current_status FROM work_order WHERE job_id=?',[job.insertId]))[0][0].current_status,'Cancelled');
+    t.mock.timers.setTime(new Date(`${newDate}T11:00:00+08:00`).getTime()-72*3600000+1);
+    await assert.rejects(changePublicBooking(db,user,visit.bookingId,'cancel',{status:'Cancelled'}),/72 hours/);
+    assert.equal((await getBookingDetail(db,visit.bookingId,user.id)).canModify,false);
+  });} finally {t.mock.timers.reset();}
+});
+
 for(const route of ['public','customer'])test(`${route} annual bundle creates four real quarterly visits without pre-dispatch email, supports retry and scoped changes`,async()=>rollbackFixture(async(db,c,user)=>{
   const options=await getBookingOptions(db,user.customerId);
   const bundle=options.bundles[0];
@@ -157,14 +222,14 @@ for(const route of ['public','customer'])test(`${route} annual bundle creates fo
   const [address]=await c.execute("INSERT INTO service_address(customer_id,address_line) VALUES (?,'Annual Test Address')",[user.customerId]);
   const [unit1]=await c.execute('INSERT INTO aircon_unit(customer_id,address_id) VALUES (?,?)',[user.customerId,address.insertId]);
   const [unit2]=await c.execute('INSERT INTO aircon_unit(customer_id,address_id) VALUES (?,?)',[user.customerId,address.insertId]);
-  const input=route==='public'?body({packageId:bundle.packageId,serviceIds:bundle.serviceIds,preferredDate:firstDate,serviceAddress:'Annual Test Address'}):{
-    packageId:bundle.packageId,serviceIds:bundle.serviceIds,addressId:address.insertId,unitIds:[unit1.insertId,unit2.insertId],preferredDate:firstDate,timeSlot:'09:00 - 11:00',requestId:randomUUID(),
+  const input=route==='public'?body({propertyType:'hdb-4',packageId:bundle.packageId,serviceIds:bundle.serviceIds,preferredDate:firstDate,serviceAddress:'Annual Test Address'}):{
+    propertyType:'hdb-4',packageId:bundle.packageId,serviceIds:bundle.serviceIds,addressId:address.insertId,unitIds:[unit1.insertId,unit2.insertId],preferredDate:firstDate,timeSlot:'09:00 - 11:00',requestId:randomUUID(),
   };
   const create=()=>route==='public'?createPublicBooking(db,user,input):createBooking(db,input,user.id);
   const booking=await create();
   const series=booking.annualBundle;
   assert.equal(series.name,'Annual Cleaning Bundle');assert.equal(series.visits.length,4);
-  const expectedTotal=bundle.price+bundle.additionalUnitPrice;
+  const expectedTotal=bundle.propertyPrices.find(row=>row.propertyType==='hdb-4').price;
   assert.equal(series.totalAmount,expectedTotal);
   assert.equal(series.visits.reduce((sum,visit)=>sum+visit.totalAmount,0),expectedTotal);
   assert.equal(booking.totalAmount,series.visits[0].totalAmount,'first visit never repeats the whole-year charge');
@@ -198,14 +263,13 @@ test('annual later-visit quota failure rolls back the complete series and succes
   const firstDate=date(0);
   const thirdDate=nextWeekday(addCalendarMonths(firstDate,6));
   await createPublicBooking(db,user,body({preferredDate:thirdDate}));
-  await createPublicBooking(db,user,body({preferredDate:thirdDate}));
-  const annual=body({packageId:bundle.packageId,serviceIds:bundle.serviceIds,preferredDate:firstDate});
+  const annual=body({propertyType:'hdb-4',packageId:bundle.packageId,serviceIds:bundle.serviceIds,preferredDate:firstDate});
   await assert.rejects(createPublicBooking(db,user,annual),error=>error.status===409);
-  let [[counts]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(counts.n,2);
+  let [[counts]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(counts.n,1);
   await c.execute("UPDATE booking SET booking_status='Cancelled' WHERE customer_id=?",[user.customerId]);
   const created=await createPublicBooking(db,user,{...annual,serviceAddress:'Atomic Annual Address'});
   assert.equal(created.annualBundle.visits.length,4);
-  [[counts]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(counts.n,6);
+  [[counts]]=await c.execute('SELECT COUNT(*) AS n FROM booking WHERE customer_id=?',[user.customerId]);assert.equal(counts.n,5);
   const [[series]]=await c.execute('SELECT COUNT(*) AS n FROM annual_booking_series WHERE customer_id=?',[user.customerId]);assert.equal(series.n,1);
   const [[emails]]=await c.execute('SELECT COUNT(*) AS n FROM booking_email_outbox e JOIN booking b ON b.booking_id=e.booking_id WHERE b.customer_id=?',[user.customerId]);assert.equal(emails.n,0);
 }));

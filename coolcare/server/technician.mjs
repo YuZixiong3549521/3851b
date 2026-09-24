@@ -1,4 +1,5 @@
 import {registerTechnicianPages} from './technician-pages.mjs';
+import {getServiceProgress,updateServiceProgress} from './service-progress.mjs';
 import express from 'express';
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
@@ -19,16 +20,18 @@ export async function getTechnician(pool, email = process.env.DEMO_TECHNICIAN_EM
 export async function getTechnicianJobs(pool, technicianId, jobId) {
   const [rows] = await pool.execute(`SELECT w.job_id AS jobId, w.booking_id AS bookingId,
     u.full_name AS customer, DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,
-    COALESCE(DATE_FORMAT(w.appointment_time,'%H:%i'),'') AS time,
+    COALESCE(DATE_FORMAT(w.appointment_time,'%H:%i'),'') AS time,b.slot_end AS endTime,
     COALESCE((SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ') FROM booking_service bs WHERE bs.booking_id=b.booking_id),sc.service_name) AS serviceType, sa.address_line AS address,
     b.address_id AS addressId,b.customer_id AS customerId,b.subscription_id AS subscriptionId,
-    COALESCE((SELECT SUM(cat.estimated_duration_minutes) FROM booking_service bs JOIN service_catalog cat ON cat.service_id=bs.service_id WHERE bs.booking_id=b.booking_id),sc.estimated_duration_minutes) AS estimatedDurationMinutes,
+    COALESCE(b.estimated_duration_minutes,(SELECT SUM(cat.estimated_duration_minutes) FROM booking_service bs JOIN service_catalog cat ON cat.service_id=bs.service_id WHERE bs.booking_id=b.booking_id),sc.estimated_duration_minutes) AS estimatedDurationMinutes,
+    (EXISTS(SELECT 1 FROM simple_service_catalog ss WHERE ss.service_id=b.service_id AND ss.code='repair') OR EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog ss ON ss.service_id=bs.service_id WHERE bs.booking_id=b.booking_id AND ss.code='repair')) AS repairEligible,
     (SELECT COUNT(*) FROM booking_aircon_unit bau WHERE bau.booking_id=b.booking_id) AS acCount,
     DATE_FORMAT(w.updated_at,'%Y-%m-%d %H:%i:%s') AS lastModified,
     (EXISTS(SELECT 1 FROM simple_service_catalog ss WHERE ss.service_id=b.service_id AND ss.code='cleaning')
       OR EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog ss ON ss.service_id=bs.service_id WHERE bs.booking_id=b.booking_id AND ss.code='cleaning')) AS cleaningEligible,
     av.series_id AS annualSeriesId,av.visit_number AS annualVisitNumber,
     av.window_start AS annualWindowStart,av.window_end AS annualWindowEnd,
+    COALESCE(sp.follow_up_status,'None') AS followUpStatus,DATE_FORMAT(sp.follow_up_date,'%Y-%m-%d') AS followUpDate,sp.follow_up_start AS followUpStart,
     w.priority_level AS priority, w.current_status AS status,
     COALESCE(w.reported_problem,b.problem_description,'') AS reportedProblem
     FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
@@ -36,10 +39,11 @@ export async function getTechnicianJobs(pool, technicianId, jobId) {
     JOIN user_account u ON u.user_id=c.user_id JOIN service_catalog sc ON sc.service_id=b.service_id
     JOIN service_address sa ON sa.address_id=b.address_id
     LEFT JOIN annual_booking_visit av ON av.booking_id=b.booking_id
+    LEFT JOIN service_progress sp ON sp.job_id=w.job_id
     WHERE a.technician_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
     ${jobId === undefined ? '' : 'AND w.job_id=?'}
     ORDER BY w.appointment_date,w.appointment_time,w.job_id`,jobId === undefined ? [technicianId] : [technicianId,jobId]);
-  return rows.map(row=>({...row,cleaningEligible:Boolean(row.cleaningEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
+  return rows.map(row=>({...row,cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
     status:row.status==='On The Way'?'On the Way':row.status,
     initials:row.customer.split(/\s+/).map(s=>s[0]).slice(0,2).join('')}));
 }
@@ -120,8 +124,10 @@ export async function getTechnicianJobDetails(pool, technicianId, jobId) {
   const jobIds=[...new Set([jobId,...addressHistory.map(r=>r.jobId),...packageHistory.map(r=>r.jobId),...annualHistory.map(r=>r.jobId)])];
   const [inventory]=await pool.query(`SELECT t.transaction_id AS transactionId,t.job_id AS jobId,p.part_name AS partName,p.stock_unit AS stockUnit,t.transaction_type AS type,t.quantity,t.remarks,t.created_at AS occurredAt,t.modified_at AS lastModified
     FROM inventory_transaction t JOIN part p ON p.part_id=t.part_id WHERE t.job_id IN (?) AND t.transaction_type IN ('Stock Out','Return') ORDER BY t.created_at DESC,t.transaction_id DESC`,[jobIds]);
-  const attach=r=>({...r,inventory:inventory.filter(t=>t.jobId===r.jobId)});
-  return {job:{...job,report:report?attach(report):null,inventory:inventory.filter(t=>t.jobId===jobId),cleaningAssessment:cleaningAssessment??null},addressHistory:addressHistory.map(attach),packageHistory:packageHistory.map(attach),packages,annualHistory:annualHistory.map(attach),cleaningAssessmentHistory};
+  const progressByJob=new Map(await Promise.all(jobIds.map(async id=>[id,await getServiceProgress(pool,id)])));
+  const attach=r=>({...r,inventory:inventory.filter(t=>t.jobId===r.jobId),serviceProgress:progressByJob.get(r.jobId)});
+  const serviceProgress=progressByJob.get(jobId);
+  return {job:{...job,serviceProgress,report:report?{...attach(report),serviceProgress}:null,inventory:inventory.filter(t=>t.jobId===jobId),cleaningAssessment:cleaningAssessment??null},addressHistory:addressHistory.map(attach),packageHistory:packageHistory.map(attach),packages,annualHistory:annualHistory.map(attach),cleaningAssessmentHistory};
 }
 
 const statusTransition={Assigned:'On The Way','On The Way':'In Progress','In Progress':'Completed'};
@@ -141,6 +147,8 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
   const connection=await pool.getConnection();
   try {
     await connection.beginTransaction();
+    const [[bookingLock]]=await connection.execute('SELECT booking_id FROM work_order WHERE job_id=?',[jobId]);
+    if(bookingLock)await connection.execute('SELECT booking_id FROM booking WHERE booking_id=? FOR UPDATE',[bookingLock.booking_id]);
     const [[work]]=await connection.execute(`SELECT w.*,a.technician_id,a.assignment_status,b.booking_status,r.customer_signature_url,r.technician_signature_url
       FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
       JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id
@@ -148,7 +156,7 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
       LEFT JOIN service_report r ON r.job_id=w.job_id
       WHERE w.job_id=? AND t.user_id=? AND u.status='Active' FOR UPDATE`,[jobId,technicianUserId]);
     if(!work||['Declined','Reassigned','Cancelled'].includes(work.assignment_status))throw new AppError('Job not found for this technician.',404);
-    const [[previous]]=await connection.execute('SELECT payload_hash,result_json FROM technician_work_operation WHERE request_id=?',[data.requestId]);
+    const [[previous]]=await connection.execute('SELECT payload_hash,result_json FROM technician_work_operation WHERE request_id=? FOR SHARE',[data.requestId]);
     if(previous){
       if(previous.payload_hash!==hash)throw new AppError('This request ID has already been used for a different update.',409);
       await connection.commit();return {...(typeof previous.result_json==='string'?JSON.parse(previous.result_json):previous.result_json),replayed:true};
@@ -212,6 +220,7 @@ export function createTechnicianRouter(pool) {
   });
   router.patch('/jobs/:jobId/cleaning-assessment',async(req,res)=>res.json(await saveCleaningAssessment(pool,req.technicianUser.id,idSchema.parse(req.params.jobId),req.body)));
   router.patch('/jobs/:jobId/status',async(req,res)=>res.json(await updateTechnicianJobStatus(pool,req.technicianUser.id,idSchema.parse(req.params.jobId),req.body)));
+  router.patch('/jobs/:jobId/service-progress',async(req,res)=>res.json(await updateServiceProgress(pool,req.technicianUser.id,idSchema.parse(req.params.jobId),req.body)));
   router.post('/jobs/:jobId/stock-out-batch',async(req,res)=>res.status(201).json(await recordStockBatch(pool,req.body,idSchema.parse(req.params.jobId),req.technicianUser.id)));
   router.post('/jobs/:jobId/stock-out',async(req,res)=>{
     const jobId=idSchema.parse(req.params.jobId);

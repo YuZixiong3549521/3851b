@@ -36,6 +36,7 @@ test('only successful dispatch queues customer mail, which retries with the same
    await dispatchBooking(db,owner,created.id,{requestId:dispatchRequest});
    const [[row]]=await c.execute("SELECT * FROM booking_email_outbox WHERE booking_id=? AND event_type='booking.assigned'",[created.id]);
    assert.equal(row.recipient,user.email);assert.equal(row.status,'Pending');
+   assert.match(row.body_text,/Service time: 09:00 - 10:30 \(Singapore time\)/);assert.match(row.body_text,/Estimated duration: 90 minutes/);
    const [[mailCount]]=await c.execute('SELECT COUNT(*) AS count FROM booking_email_outbox WHERE booking_id=?',[created.id]);
    assert.equal(Number(mailCount.count),1);
    // Scope the worker's claim to this transaction's new message, without touching pre-existing mail.

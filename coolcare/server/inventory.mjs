@@ -148,30 +148,32 @@ export async function savePart(pool, raw, id = null) {
 }
 export async function recordTransaction(pool, raw, adminId, technicianUserId = null) {
   const data = transactionSchema.parse(raw);
-  return withTransaction(pool, conn => recordOnConnection(conn,data,adminId,technicianUserId));
+  return withTransaction(pool, async conn => {await lockStockWork(conn,data.job_id,technicianUserId,data.transaction_type);return recordOnConnection(conn,data,adminId,technicianUserId);});
+}
+async function lockStockWork(conn,jobId,technicianUserId,transactionType='Stock Out'){
+ if(technicianUserId!==null&&(transactionType!=='Stock Out'||jobId===null))throw new AppError('Technicians can only issue parts to their own work orders.',403);
+ if(jobId===null)return;
+ // Booking changes and stock issue serialize on the same booking, before work/part locks.
+ const [[booking]]=await conn.execute('SELECT b.booking_id FROM booking b WHERE b.booking_id=(SELECT booking_id FROM work_order WHERE job_id=?) FOR UPDATE',[jobId]);
+ if(!booking)throw new AppError('Work order not found.',404);
+ const [[work]]=await conn.execute(`SELECT w.job_id,w.current_status,tech.user_id,a.assignment_status,u.status AS user_status FROM work_order w
+  JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician tech ON tech.technician_id=a.technician_id
+  JOIN user_account u ON u.user_id=tech.user_id WHERE w.job_id=? FOR UPDATE`,[jobId]);
+ if(technicianUserId!==null&&(!work||work.user_id!==technicianUserId||work.user_status!=='Active'||work.current_status==='Cancelled'||['Declined','Reassigned','Cancelled'].includes(work.assignment_status)))throw new AppError('Work order not found for this technician.',404);
 }
 async function recordOnConnection(conn,data,adminId,technicianUserId,batchHash=null) {
   const {request_id,...payload}=data;
   const hash=createHash('sha256').update(JSON.stringify({...payload,admin_user_id:adminId,technician_user_id:technicianUserId,...(batchHash?{batchHash}:{})})).digest('hex');
-    // Lock the part first. The FIRST consistent read below starts its snapshot
-    // after that lock is acquired, so a completed same-part retry is visible.
+    // The caller has locked the booking/work assignment. Lock parts in stable order;
+    // ledger and recommendation reads are current reads so a waiting retry sees committed writes.
     // The operation and revision ledgers remain immutable even when the business record is corrected.
     const [[part]] = await conn.execute(
       'SELECT * FROM part WHERE part_id = ? FOR UPDATE',
       [data.part_id],
     );
     if (!part) throw new AppError('Part not found.', 404);
-    if (technicianUserId !== null) {
-      if (data.transaction_type !== 'Stock Out' || data.job_id === null)
-        throw new AppError('Technicians can only issue parts to their own work orders.', 403);
-      const [[owned]] = await conn.execute(`SELECT w.job_id,w.current_status FROM work_order w
-        JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
-        JOIN technician tech ON tech.technician_id=a.technician_id
-        WHERE w.job_id=? AND tech.user_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')`, [data.job_id,technicianUserId]);
-      if (!owned) throw new AppError('Work order not found for this technician.',404);
-    }
     const [[previous]] = await conn.execute(
-      'SELECT * FROM inventory_web_operation WHERE request_id = ?',
+      'SELECT * FROM inventory_web_operation WHERE request_id = ? FOR SHARE',
       [request_id],
     );
     if (previous) {
@@ -250,6 +252,7 @@ export async function recordStockBatch(pool,raw,jobId,technicianUserId){
  const data=stockBatchSchema.parse(raw);
  const batchHash=createHash('sha256').update(JSON.stringify({data,jobId,technicianUserId})).digest('hex');
  return withTransaction(pool,async conn=>{
+   await lockStockWork(conn,jobId,technicianUserId);
    // Acquire every part lock in a consistent order before the first snapshot read.
    for(const id of data.items.map(i=>i.part_id).sort((a,b)=>a-b)){
      const [[part]]=await conn.execute('SELECT part_id FROM part WHERE part_id=? FOR UPDATE',[id]);
@@ -266,9 +269,9 @@ export async function recordStockBatch(pool,raw,jobId,technicianUserId){
 }
 
 export async function getStockRecommendation(conn, jobId, part) {
-  const [[counts]] = await conn.execute(`SELECT
-    (SELECT COUNT(*) FROM booking_aircon_unit bau JOIN work_order w ON w.booking_id=bau.booking_id WHERE w.job_id=?) AS acCount,
-    (SELECT COALESCE(SUM(CASE WHEN transaction_type='Stock Out' THEN quantity WHEN transaction_type='Return' THEN -quantity ELSE 0 END),0) FROM inventory_transaction WHERE job_id=? AND part_id=?) AS issued`, [jobId,jobId,part.part_id]);
+  const [[counts]]=await conn.execute('SELECT COUNT(*) AS acCount FROM booking_aircon_unit bau JOIN work_order w ON w.booking_id=bau.booking_id WHERE w.job_id=? FOR SHARE',[jobId]);
+  const [[usage]]=await conn.execute("SELECT COALESCE(SUM(CASE WHEN transaction_type='Stock Out' THEN quantity WHEN transaction_type='Return' THEN -quantity ELSE 0 END),0) AS issued FROM inventory_transaction WHERE job_id=? AND part_id=? FOR UPDATE",[jobId,part.part_id]);
+  counts.issued=usage.issued;
   return {acCount:Number(counts.acCount),issued:Math.max(0,Number(counts.issued)),recommended:Math.ceil(Number(counts.acCount)*Number(part.recommended_units_per_ac))};
 }
 

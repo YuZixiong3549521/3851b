@@ -38,11 +38,11 @@ npm start
 
 主页登录后按账号角色进入对应区域；客户可通过页头 Dashboard 进入原客户中心。公开注册始终只创建 Customer。Admin 和 Technician 使用 48 小时有效的一次性邀请链接激活账号；Owner 可邀请 Admin，Owner 或 Admin 可邀请 Technician。旧 SQLite 导入账号保留原有 bcrypt 密码，不覆盖同邮箱现有账号。
 
-主页将服务和报价合并展示，空调数量选择实时使用 `/api/public/offers` 的目录价格计算清洗、维修检查、年度套餐总价及每次费用；目录加载失败时提示重试，不显示虚构价格。游客选定的服务、数量及故障说明在本次页面的登录/注册流程中保留，登录后继续预约。普通客户登录进入 Dashboard，所有 My Bookings 入口进入同一客户订单页。主页提前展示至少 14 天、工作日、同地址滚动 7 天最多两次及等待确认的预约规则。
+主页将服务和报价合并展示，空调数量选择实时使用 `/api/public/offers` 的目录价格计算清洗、维修检查、年度套餐总价及每次费用；目录加载失败时提示重试，不显示虚构价格。游客选定的服务、数量及故障说明在本次页面的登录/注册流程中保留，登录后继续预约。普通客户登录进入 Dashboard，所有 My Bookings 入口进入同一客户订单页。主页提前展示新预约至少 14 天、工作日、同地址每周最多一次清洗及等待确认的预约规则。
 
 客户登录后，在任意 Customer 页面点击侧边栏 **CoolCare Assistant**（手机端底部导航 **Assistant**）打开英文按钮式预约助手。通过 Service、Address、Schedule、Review 四步预约，支持服务选择帮助、问题快捷按钮和摘要快速编辑。草稿按客户账号自动保存到 MySQL，刷新或重新登录后可以恢复。确认前服务端检查最新价格及年度套餐全部四次日期；价格变化会要求重新确认。成功后显示真实订单编号、邮件状态，并可直接打开本次订单。预约历史仍在客户预约页面查看，助手不提供历史查询，也无需外部 AI API key。运行 `npm run db:up` 会应用新增的 `12-customer-assistant.sql`，保留现有数据。
 
-客户中心提供独立的 `/customer/bookings/:id` 订单详情，可查看状态进度、自助改期或取消尚未分配的预约。**Contact support** 打开写给 `c3549521@uon.edu.au` 的邮件草稿并带上订单编号，不会自动发送。年度套餐按购买批次归组，Dashboard 优先显示最近预约，页面在返回时刷新订单状态。
+客户中心提供独立的 `/customer/bookings/:id` 订单详情，可查看状态进度、在原预约开始至少 72 小时前自助改期或取消尚未开始服务的预约。**Contact support** 打开写给 `c3549521@uon.edu.au` 的邮件草稿并带上订单编号，不会自动发送。年度套餐按购买批次归组，Dashboard 优先显示最近预约，页面在返回时刷新订单状态。
 
 头像菜单可进入个人资料和地址管理，支持修改姓名、电话、新增地址、设置默认地址和归档旧地址。修改已被订单使用的地址会保存替代地址，保留历史订单原地址。客户页面、助手和主页预约/改期使用固定英文日历；中文操作系统也显示英文月份、星期及日期，不依赖系统原生日期控件。手机端预约操作栏固定显示。
 
@@ -55,7 +55,7 @@ npm start
 - 登录使用服务端 HttpOnly 会话、bcrypt 校验、CSRF 和登录频率限制，不保存浏览器模拟账号或密码。
 - 客户与技师身份来自登录会话，每个账号只能读取自己的预约或工单。Admin Console 按 Admin/Owner 权限校验；只有 Owner 能邀请或停用 Admin、转交所有权。
 - 主页和原客户页面共用 booking、service_address、aircon_unit 等业务表，预约状态与资料可交叉读取。
-- 主页支持预约提交、查询、取消和改期。只有尚未分配的 Submitted 预约可自助修改；已确认或已安排的预约需联系服务团队。
+- 主页支持预约提交、查询、取消和改期。Submitted、Confirmed 和 Assigned 预约可在原预约至少 72 小时前自助修改；新日期也须至少 72 小时之后。改期会释放旧派单并重新等待确认，已经开始服务或领用配件的订单需联系服务团队。
 - 预约写入、设备关联、备注、状态历史采用事务；重复请求 ID 防止重复预约。
 - Submitted、Confirmed、Assigned、On The Way 和 In Progress 预约占用团队时段容量；提交和改期在数据库锁内重新检查，年度套餐四次访问原子占位。
 - `database/05-public-site.sql` 增加注册附加资料、预约补充资料、旧数据映射表。`npm run db:up` 自动执行非破坏性迁移与权限更新。
@@ -80,13 +80,13 @@ Admin Console 已提供订单审核、自动派单、员工邀请和库存管理
 
 客户预约只需选择服务、填写地址和空调数量、选择时间并确认，不再逐台勾选已登记的空调。地址步骤的 **Add new address** 会将地址保存到当前客户账号，供本次和后续预约使用；没有已登记设备的新客户也可预约。Dashboard 的 UPCOMING 卡片及数量按新加坡当前时间筛选尚未开始的有效预约，并显示最近一单。
 
-新预约和自助改期须按新加坡日期至少提前 **14 个自然日**，只接受 **周一至周五**，周六日不营业。My Bookings 显示 Submitted、Confirmed、Assigned 及进行中的订单；Completed、Rejected 和 Cancelled 在 Booking History 查看，拒绝原因对客户可见。
+新预约须按新加坡日期至少提前 **14 个自然日**。改期或取消须在原预约至少 **72 小时**前提出，新时间也须至少提前 72 小时；只接受 **周一至周五**，周六日不营业。My Bookings 显示 Submitted、Confirmed、Assigned 及进行中的订单；Completed、Rejected 和 Cancelled 在 Booking History 查看，拒绝原因对客户可见。
 
-同一客户对同一地址，在任意连续 7 天的服务日期内最多预约两次，取消的订单不计入。客户必须注册并登录，只需选择 **Cleaning、Repair 或 Annual Cleaning Bundle**。Membership 已退出新预约流程，原有订单、订阅和报告保留。
+同一客户对同一地址，在每个周一至周日的日历周内最多预约一次清洗（包括套餐和清洗加维修）；取消、拒绝和过期订单不计入。Repair-only 订单不受清洗次数限制。客户必须注册并登录，可同时选择 **Cleaning 和 Repair**，或选择 **Annual Cleaning Bundle**。Membership 已退出新预约流程，原有订单、订阅和报告保留。
 
-唯一年度 Bundle 一次提交保存四条关联预约，日期为首次预约及其后第 3、6、9 个月，后续日期遇周末顺延到周一，确认前显示实际日期；预约仍需服务团队确认。全年价格按四次分摊，每次服务后结算，不会在创建预约时声称完成支付。普通或化学清洗由技师检查后记录，额外工作另行确认报价。当前价格、参考来源和交付边界见 [SERVICE-PRICING.md](coolcare/SERVICE-PRICING.md)。
+唯一年度 Bundle 一次提交保存四条关联预约，日期为首次预约及其后第 3、6、9 个月，后续日期遇周末顺延到周一，确认前显示实际日期；预约仍需服务团队确认。全年价格按四次分摊，每次服务后结算，不会在创建预约时声称完成支付。普通或化学清洗由技师检查后记录；维修额外费用由技师报价并记录说明，无需客户另行确认。当前价格、参考来源和交付边界见 [SERVICE-PRICING.md](coolcare/SERVICE-PRICING.md)。
 
-订单固定经过 `Submitted → Confirmed → Assigned → On The Way → In Progress → Completed`。Admin 必须先在 Orders 批准，再在 Dispatch 单独触发自动派单；系统按目标日期负载、最久未派单时间和 technician ID，从无重叠工单的 Active/Available Technician 中选择。拒绝订单必须填写客户可见原因并进入 Rejected；取消、拒绝和完成都会释放团队容量。
+订单固定经过 `Submitted → Confirmed → Assigned → On The Way → In Progress → Completed`。Admin 必须先在 Orders 批准，再在 Dispatch 单独触发自动派单；系统先排除不可用或时间冲突的技师，再优先匹配相同邮编／邮区，随后按当天负载、最久未派单时间和 technician ID 选择。位置使用当天前一单地址或技师 base postal code；邮区只是区域接近度，不表示实际公里数或行车时间。拒绝订单必须填写客户可见原因并进入 Rejected；管理员可修订原因，保留版本和审计。取消、拒绝、过期和完成都会释放团队容量。新建 Submitted 请求默认 48 小时未确认后自动过期（`BOOKING_CONFIRMATION_HOURS` 可配置为 1–720 小时）；迁移前已有订单不补设期限，已确认/已派单订单不会被自动过期。
 
 Owner/Admin 可邀请 Technician 并管理其可用状态；Owner 还可管理 Admin，并把唯一 Owner 身份原子转交给另一名 Active Admin。管理员可修改入库/出库数量、时间及描述，修改保留审计记录并同步库存。技师可在自己的工单内出库；配件按每台空调用量标准提示超量，并可查看相关地址及年度 Bundle 维护报告。清洗方法评估记录同样有权限、并发版本和修改审计。
 
@@ -108,6 +108,12 @@ npm run build
 本轮浏览器检查覆盖桌面及 390px 手机布局：最近预约、年度分组与详情切换、资料保存后重新读取、新增/默认/编辑/归档地址、保留订单原地址、重复预约日期禁用、英文日历与键盘选日、真实改期/取消及历史分流、助手创建四次年度预约、报告时长、缺失照片提示及真实文件放大。日期格式测试使用中文语言环境和多个系统时区，日期控件固定显示英文。测试账号、地址、订单和照片均独立于已有数据，验证后清理。
 
 PDF 功能调用浏览器打印窗口并提供专用打印样式；本轮未验收操作系统打印/PDF 对话框。客服邮件链接只预填收件人和订单编号，未发送外部邮件。本轮属于客户流程验收，不代表生产环境部署验收。
+
+## 技师服务更新与再次上门
+
+My Jobs 和 Service Reports 提供统一的 **Service updates and outcome**：技师可记录延长服务时间、缺件原因、再次上门预约、再次上门开始/完成及维修额外费用。延长时间按 15 分钟递增，每次最多 120 分钟，须在 18:00 前结束；服务端同时检查团队容量和该技师的其他预约，冲突时要求改期或记录再次上门。再次上门保留在原工单、原报告中，不创建断开的第二份报告；初次服务完成时间不被覆盖。
+
+维修额外费用由负责技师直接填写金额和说明，不需要客户或管理员另行批准；费用独立于原预约最低费用，保存不代表收到付款。所有服务更新保留不可覆盖的事件记录和重复提交保护，客户和管理员可以在订单/报告中查看。技师 Profile 可维护六位新加坡 base postal code，供按位置派单使用。迁移 `21-service-progress.sql` 保留已有数据；使用正常 `npm run db:up` 应用。
 
 ## GitHub
 
@@ -135,3 +141,11 @@ npm start
 公开部署前需要配置持久化会话、HTTPS、邮件及可选 OAuth 服务；当前服务只面向本机运行。
 
 Technician parts issuing supports up to 30 distinct part rows with separate quantities and descriptions. `POST /api/technician/jobs/:jobId/stock-out-batch` accepts `{ request_id, items }`; all stock changes are committed together or rolled back, with idempotent retries. The existing single-part endpoint remains supported.
+
+### September 24 booking and dispatch updates
+
+Cleaning is SGD 50 per unit per visit, with a planned 45 minutes per unit; Repair keeps a SGD 50 minimum diagnostic visit fee and a planned 60 minutes. Combined visits add the two service durations. Actual reserved time drives capacity and dispatch overlap checks, and new visits must finish by 6:00 PM. Annual prices use the selected Singapore property type and included AC allowance from the database; existing booking prices remain unchanged.
+
+The customer form separates service issues from **Other remarks** (for example, a preferred technician). A preference does not override availability. Rejected and expired requests have a **Book again** action. Customer booking/report views show technician extensions, return-visit records and additional repair quotations. Admin Orders highlights unconfirmed requests in red, shows expiry deadlines, and lets staff correct rejection reasons without erasing the audit.
+
+Run the normal `npm run db:up` to apply migrations 19–22. They preserve existing bookings and add pricing tiers, deadlines, postal dispatch fields, service-progress events and customer notices. Git shares these schema/code changes; it does not transfer another developer’s local orders.

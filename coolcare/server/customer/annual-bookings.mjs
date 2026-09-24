@@ -39,12 +39,15 @@ export async function attachAnnualBundles(executor,bookings,idKey='bookingId') {
   const ids=bookings.map(b=>b[idKey]);
   const [links]=await executor.execute(`SELECT v.booking_id AS bookingId,v.series_id AS seriesId,v.visit_number AS visitNumber,
     v.window_start AS windowStart,v.window_end AS windowEnd,s.package_name AS name,s.total_amount AS totalAmount,
-    s.first_service_date AS firstServiceDate FROM annual_booking_visit v JOIN annual_booking_series s ON s.series_id=v.series_id
+    s.first_service_date AS firstServiceDate,s.property_type AS propertyType,s.property_label AS propertyLabel,
+    s.included_units AS includedUnits,s.base_annual_price AS baseAnnualPrice,s.additional_unit_price AS additionalUnitPrice
+    FROM annual_booking_visit v JOIN annual_booking_series s ON s.series_id=v.series_id
     WHERE v.booking_id IN (${ids.map(()=>'?').join(',')})`,ids);
   if(!links.length)return bookings.map(b=>({...b,annualBundle:null}));
   const seriesIds=[...new Set(links.map(v=>v.seriesId))];
   const [visits]=await executor.execute(`SELECT v.series_id AS seriesId,b.booking_id AS bookingId,v.visit_number AS visitNumber,
-    b.preferred_service_date AS preferredDate,b.preferred_time_slot AS timeSlot,b.total_amount AS totalAmount,
+    b.preferred_service_date AS preferredDate,COALESCE(CONCAT(TIME_FORMAT(b.slot_start,'%H:%i'),' - ',TIME_FORMAT(b.slot_end,'%H:%i')),b.preferred_time_slot) AS timeSlot,
+    b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.total_amount AS totalAmount,
     b.booking_status AS status,v.window_start AS windowStart,v.window_end AS windowEnd
     FROM annual_booking_visit v JOIN booking b ON b.booking_id=v.booking_id
     WHERE v.series_id IN (${seriesIds.map(()=>'?').join(',')}) ORDER BY v.visit_number`,seriesIds);

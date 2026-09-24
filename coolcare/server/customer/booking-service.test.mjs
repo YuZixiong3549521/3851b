@@ -30,13 +30,14 @@ test('booking input rejects an empty aircon selection', () => {
   assert.equal(result.success, false);
 });
 
-test('rolling seven-day quota includes cross-week boundaries independently of lead-time validation', () => {
+test('one Cleaning visit per Monday-to-Sunday week is enforced across month and year boundaries', () => {
   assert.equal(exceedsWeeklyLimit([], '2026-09-18'),false);
-  assert.equal(exceedsWeeklyLimit(['2026-09-18'], '2026-09-18'),false);
+  assert.equal(exceedsWeeklyLimit(['2026-09-18'], '2026-09-18'),true);
   assert.equal(exceedsWeeklyLimit(['2026-09-18','2026-09-18'], '2026-09-18'),true);
   assert.equal(exceedsWeeklyLimit(['2026-09-12','2026-09-14'], '2026-09-18'),true);
-  assert.equal(exceedsWeeklyLimit(['2026-09-12','2026-09-14'], '2026-09-19'),false);
+  assert.equal(exceedsWeeklyLimit(['2026-09-12','2026-09-14'], '2026-09-19'),true);
   assert.equal(exceedsWeeklyLimit(['2026-09-15','2026-09-21'], '2026-09-18'),true);
+  assert.equal(exceedsWeeklyLimit(['2026-09-18'],'2026-09-21'),false);
   assert.equal(exceedsWeeklyLimit(['2026-09-12','2026-09-24'], '2026-09-18'),false);
   assert.equal(exceedsWeeklyLimit(['2026-12-29','2027-01-01'], '2027-01-03'),true);
 });

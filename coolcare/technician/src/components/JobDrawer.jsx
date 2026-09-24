@@ -1,4 +1,5 @@
 import {SignatureImage} from '@/components/signature-image';
+import ServiceProgress from './ServiceProgress.jsx';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +29,7 @@ function InventoryUsed({ items = [] }) {
     <p>No inventory usage recorded.</p>
   );
 }
-function Report({ report }) {
+function Report({ report,includeProgress=false }) {
   return (
     <div className="tech-report">
       <p>
@@ -67,6 +68,7 @@ function Report({ report }) {
       <h4>Technician signature</h4><SignatureImage url={report.technicianSignatureUrl} label="Technician signature"/>
       <h4>Parts used</h4>
       <InventoryUsed items={report.inventory} />
+      {includeProgress&&<ServiceProgress jobId={report.jobId} status="Historical" repairEligible={Boolean(report.serviceProgress?.repairQuoteNote)} progress={report.serviceProgress} onSaved={()=>{}}/>}
     </div>
   );
 }
@@ -82,7 +84,7 @@ function History({ items, empty }) {
           <MapPin size={15} />
           {report.address}
         </p>
-        <Report report={report} />
+        <Report report={report} includeProgress/>
       </details>
     ))
   ) : (
@@ -563,6 +565,7 @@ export default function JobDrawer({
           <p className="cell-icon">
             <Clock3 size={18} />
             {formatTime(job.time)}
+            {job.endTime&&` – ${formatTime(job.endTime)}`}
           </p>
           <p className="cell-icon">
             <Wrench size={18} />
@@ -607,6 +610,7 @@ export default function JobDrawer({
           )}
           {detail && (
             <>
+              <ServiceProgress jobId={job.jobId} status={canonicalStatus(job.status)} repairEligible={job.repairEligible} progress={job.serviceProgress} disabled={locked} onLockedChange={setLocked} onSaved={()=>{setVersion(v=>v+1);onStatusChanged();}}/>
               <CleaningAssessment
                 key={`assessment-${job.jobId}-${version}`}
                 job={job}

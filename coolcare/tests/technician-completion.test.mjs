@@ -13,6 +13,7 @@ test('ending service allows a pending report; submitted reports still require va
 function database({owner=true,failReport=false,previous=null,status='In Progress'}={}){
  const calls=[];const conn={beginTransaction:async()=>calls.push('begin'),commit:async()=>calls.push('commit'),rollback:async()=>calls.push('rollback'),release:()=>calls.push('release'),execute:async(sql,args)=>{
  calls.push(sql);
+ if(sql.startsWith('SELECT booking_id'))return [[{booking_id:2}]];
  if(sql.startsWith('SELECT w.*'))return [owner?[{job_id:1,booking_id:2,assignment_id:3,current_status:status,booking_status:status,assignment_status:'Accepted'}]:[]];
  if(sql.startsWith('SELECT payload_hash'))return [previous?[previous]:[]];
  if(failReport&&sql.includes('INSERT INTO service_report'))throw new Error('report persistence failed');

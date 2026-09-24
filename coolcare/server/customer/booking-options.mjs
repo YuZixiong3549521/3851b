@@ -1,11 +1,15 @@
 import { HttpError } from './errors.mjs';
 import { attachAnnualBundles } from './annual-bookings.mjs';
+import {addCalendarDays} from './booking-schedule.mjs';
 
-const numeric = row => ({ ...row, basePrice: Number(row.basePrice), additionalUnitPrice: Number(row.additionalUnitPrice) });
+const numeric = row => ({ ...row, basePrice: Number(row.basePrice), additionalUnitPrice: Number(row.additionalUnitPrice),
+  durationPerUnit:row.code==='cleaning',durationMinutesPerUnit:row.code==='cleaning'?Number(row.durationMinutes):0,
+  minimumDurationMinutes:row.code==='cleaning'?0:Number(row.durationMinutes||60) });
 
 export async function getBookingOptions(executor, customerId) {
   const [rows] = await executor.query(`SELECT s.service_id AS serviceId,s.service_name AS name,s.description,
-    s.base_price AS basePrice,p.additional_unit_price AS additionalUnitPrice,c.code,c.pricing_note AS pricingNote
+    s.base_price AS basePrice,p.additional_unit_price AS additionalUnitPrice,c.code,c.pricing_note AS pricingNote,
+    s.estimated_duration_minutes AS durationMinutes,c.code='cleaning' AS durationPerUnit
     FROM service_catalog s JOIN web_service_pricing p ON p.service_id=s.service_id
     JOIN simple_service_catalog c ON c.service_id=s.service_id
     WHERE s.service_status='Active' AND p.customer_visible=TRUE ORDER BY s.service_id`);
@@ -17,10 +21,13 @@ export async function getBookingOptions(executor, customerId) {
     JOIN simple_package_catalog c ON c.package_id=p.package_id
     WHERE p.package_status='Active' ORDER BY p.package_id`);
   const [links] = await executor.query('SELECT package_id AS packageId,service_id AS serviceId FROM package_service ORDER BY service_id');
+  const [propertyPrices]=await executor.query(`SELECT package_id AS packageId,property_type AS propertyType,label,
+    included_units AS includedUnits,annual_price AS price,additional_unit_price AS additionalUnitPrice
+    FROM annual_property_pricing WHERE is_active=TRUE ORDER BY display_order,property_type`);
   const packageServices = id => services.filter(service => links.some(link => link.packageId === id && link.serviceId === service.serviceId));
   return {
     currency:'SGD',services,
-    bundles: packages.filter(p => p.kind === 'Bundle').map(p => ({ ...p, price: Number(p.price), additionalUnitPrice: Number(p.additionalUnitPrice), serviceIds: packageServices(p.packageId).map(s => s.serviceId) })),
+    bundles: packages.filter(p => p.kind === 'Bundle').map(p => ({ ...p, price: Number(p.price), additionalUnitPrice: Number(p.additionalUnitPrice), serviceIds: packageServices(p.packageId).map(s => s.serviceId),propertyPrices:propertyPrices.filter(row=>row.packageId===p.packageId).map(row=>({...row,price:Number(row.price),additionalUnitPrice:Number(row.additionalUnitPrice)})) })),
     memberships:[],subscriptions:[],
   };
 }
@@ -39,31 +46,44 @@ export function normalizeAddress(value) {
 }
 
 export function exceedsWeeklyLimit(existingDates, proposedDate) {
-  const day = value => Math.floor(new Date(`${String(value).slice(0,10)}T00:00:00Z`).getTime() / 86400000);
-  const proposed = day(proposedDate);
-  const days = existingDates.map(day).filter(d => Math.abs(d - proposed) <= 6).concat(proposed).sort((a,b) => a-b);
-  for (let index = 0; index + 2 < days.length; index++) {
-    if (days[index + 2] - days[index] <= 6 && days[index] <= proposed && days[index + 2] >= proposed) return true;
-  }
-  return false;
+  const week=calendarWeekStart(proposedDate);
+  return existingDates.some(date=>calendarWeekStart(date)===week);
 }
 
-export async function assertAddressBookingLimit(connection, customerId, addressLine, preferredDate, excludeBookingId = 0) {
+export function calendarWeekStart(value) {
+  const date=String(value).slice(0,10);
+  const day=new Date(`${date}T00:00:00Z`).getUTCDay();
+  return addCalendarDays(date,-((day+6)%7));
+}
+
+// The booking snapshot is authoritative for old and combined orders. A legacy
+// catalog-only Cleaning row still participates when no snapshot was imported.
+export const cleaningBookingPredicate=`(EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog cc ON cc.service_id=bs.service_id AND cc.code='cleaning' WHERE bs.booking_id=b.booking_id)
+  OR EXISTS(SELECT 1 FROM simple_service_catalog cc WHERE cc.service_id=b.service_id AND cc.code='cleaning'))`;
+
+export async function bookingIncludesCleaning(connection,bookingId) {
+  const [[row]]=await connection.execute(`SELECT ${cleaningBookingPredicate} AS cleaning FROM booking b WHERE b.booking_id=?`,[bookingId]);
+  return Boolean(row?.cleaning);
+}
+
+export async function assertAddressBookingLimit(connection, customerId, addressLine, preferredDate, excludeBookingId = 0, {includesCleaning=true}={}) {
+  if(!includesCleaning)return;
+  const weekStart=calendarWeekStart(preferredDate);
   const [bookings] = await connection.execute(`SELECT b.preferred_service_date AS serviceDate,sa.address_line AS addressLine
     FROM booking b JOIN service_address sa ON sa.address_id=b.address_id
-    WHERE b.customer_id=? AND b.booking_status NOT IN ('Cancelled','Rejected') AND b.booking_id <> ?
-    AND b.preferred_service_date BETWEEN DATE_SUB(?,INTERVAL 6 DAY) AND DATE_ADD(?,INTERVAL 6 DAY)`,
-  [customerId,excludeBookingId,preferredDate,preferredDate]);
+    WHERE b.customer_id=? AND b.booking_status NOT IN ('Cancelled','Rejected','Expired') AND b.booking_id <> ?
+    AND ${cleaningBookingPredicate} AND b.preferred_service_date BETWEEN ? AND ?`,
+  [customerId,excludeBookingId,weekStart,addCalendarDays(weekStart,6)]);
   const address = normalizeAddress(addressLine);
   if (exceedsWeeklyLimit(bookings.filter(b => normalizeAddress(b.addressLine) === address).map(b => b.serviceDate), preferredDate)) {
-    throw new HttpError(409, 'This address already has two bookings within a seven-day period. Choose another date or manage your existing bookings.');
+    throw new HttpError(409, 'This address already has a Cleaning visit in this calendar week (Monday to Sunday). Choose another week or manage your existing booking.');
   }
 }
 
 export async function resolveBookingSelection(connection, customerId, input, numberOfUnits, {legacy=false}={}) {
   if (input.subscriptionId) throw new HttpError(400, 'Membership bookings are no longer available. Choose Cleaning, Repair or the Annual Cleaning Bundle.');
   let selectedIds = input.serviceIds?.length ? input.serviceIds : input.serviceId ? [input.serviceId] : [];
-  if (selectedIds.length > 1) throw new HttpError(400, 'Choose one option: Cleaning, Repair or the Annual Cleaning Bundle.');
+  if (new Set(selectedIds).size!==selectedIds.length)throw new HttpError(400,'A service was selected more than once.');
   let selectedPackage;
   if (input.packageId) {
     const [[row]] = await connection.execute(`SELECT p.package_id AS packageId,p.package_name AS name,p.package_price AS price,
@@ -74,6 +94,14 @@ export async function resolveBookingSelection(connection, customerId, input, num
     if (!row || row.kind !== 'Bundle') throw new HttpError(400, 'This package is no longer available. Choose the Annual Cleaning Bundle.');
     if (!input.requestId) throw new HttpError(400, 'A request ID is required to safely create the four annual visits.');
     selectedPackage = row;
+    if(!input.propertyType)throw new HttpError(400,'Choose a property type for your annual bundle.');
+    if(input.propertyType) {
+      const [[tier]]=await connection.execute(`SELECT property_type AS propertyType,label AS propertyLabel,
+        included_units AS includedUnits,annual_price AS price,additional_unit_price AS additionalUnitPrice
+        FROM annual_property_pricing WHERE package_id=? AND property_type=? AND is_active=TRUE`,[row.packageId,input.propertyType]);
+      if(!tier)throw new HttpError(400,'Choose an available property type for your annual bundle.');
+      selectedPackage={...row,...tier};
+    }
     const [links] = await connection.execute(`SELECT ps.service_id AS serviceId FROM package_service ps
       JOIN service_catalog s ON s.service_id=ps.service_id JOIN web_service_pricing p ON p.service_id=s.service_id
       JOIN simple_service_catalog c ON c.service_id=s.service_id AND c.code='cleaning'
@@ -89,7 +117,8 @@ export async function resolveBookingSelection(connection, customerId, input, num
   }
   if (!selectedIds.length) throw new HttpError(400, 'Choose at least one service.');
   const [rows] = await connection.execute(`SELECT s.service_id AS serviceId,s.service_name AS name,s.base_price AS basePrice,
-    COALESCE(p.additional_unit_price,s.base_price) AS additionalUnitPrice FROM service_catalog s
+    COALESCE(p.additional_unit_price,s.base_price) AS additionalUnitPrice,s.estimated_duration_minutes AS durationMinutes,
+    ${legacy?'NULL':'c.code'} AS code FROM service_catalog s
     LEFT JOIN web_service_pricing p ON p.service_id=s.service_id
     ${legacy?'':'JOIN simple_service_catalog c ON c.service_id=s.service_id'}
     WHERE s.service_id IN (${selectedIds.map(() => '?').join(',')}) ${legacy?'':"AND s.service_status='Active' AND p.customer_visible=TRUE"} ORDER BY s.service_id`, selectedIds);
@@ -104,7 +133,8 @@ export async function resolveBookingSelection(connection, customerId, input, num
     service.lineTotal = index === services.length - 1 ? Number((totalAmount - allocated).toFixed(2)) : Number((fullTotal ? service.lineTotal / fullTotal * totalAmount : 0).toFixed(2));
     allocated += service.lineTotal;
   });
-  return { services, totalAmount, package: selectedPackage, annual:Boolean(selectedPackage), serviceName: services.map(s => s.name).join(' + ') };
+  const estimatedDurationMinutes=services.reduce((sum,service)=>sum+Number(service.durationMinutes||60)*(service.code==='cleaning'?numberOfUnits:1),0);
+  return { services, totalAmount, estimatedDurationMinutes,durationMinutes:estimatedDurationMinutes,includesCleaning:services.some(service=>service.code==='cleaning'),package: selectedPackage, annual:Boolean(selectedPackage), serviceName: services.map(s => s.name).join(' + ') };
 }
 
 export async function saveBookingSelection(connection, bookingId, selection) {
@@ -134,9 +164,11 @@ export async function attachBookingSelections(executor, bookings, idKey='booking
     FROM booking_service WHERE booking_id IN (${placeholders}) ORDER BY service_id`, ids);
   const [packages] = await executor.execute(`SELECT booking_id AS bookingId,package_id AS packageId,package_name AS name,subscription_id AS subscriptionId,
     visit_reserved AS visitReserved FROM booking_package WHERE booking_id IN (${placeholders})`, ids);
-  return attachAnnualBundles(executor,bookings.map(booking => {
+  const attached=await attachAnnualBundles(executor,bookings.map(booking => {
     const selected = services.filter(s => s.bookingId === booking[idKey]);
     const summary = selected.map(s => s.name).join(' + ');
     return { ...booking, ...(summary ? {serviceName: summary, service_type: summary} : {}), services: selected, package: packages.find(p => p.bookingId === booking[idKey]) ?? null };
   }),idKey);
+  return attached.map(booking=>({...booking,serviceIds:booking.services.map(service=>service.serviceId),
+    packageId:booking.package?.packageId??undefined,propertyType:booking.annualBundle?.propertyType??undefined}));
 }

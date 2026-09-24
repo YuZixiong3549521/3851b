@@ -1,6 +1,6 @@
 'use client';
-import {ServicePhotoGallery} from '@/components/service-photo-gallery';
-import {SignatureImage} from '@/components/signature-image';
+import { ServicePhotoGallery } from '@/components/service-photo-gallery';
+import { SignatureImage } from '@/components/signature-image';
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -12,6 +12,8 @@ import {
   Send,
   ShieldCheck,
   XCircle,
+  AlertCircle,
+  MapPin,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +29,7 @@ import {
 } from '@/components/ui/table';
 import { BookingStatus } from '@/components/booking-status';
 import { EnglishDatePicker } from '@/components/english-date-picker';
+import { formatServiceWindow, formatTimeSlot } from '@/lib/format';
 import {
   bookingDateError,
   earliestBookingDate,
@@ -48,6 +51,24 @@ import {
 } from '@/lib/inventory-client';
 import { LoadState, NoResults, Pager } from '@/components/inventory-ui';
 
+const displayServiceTime = (booking: {
+  timeSlot: string;
+  slotStart?: string | null;
+  slotEnd?: string | null;
+  estimatedDurationMinutes?: number | null;
+}) =>
+  booking.slotStart && booking.slotEnd
+    ? formatTimeSlot(
+        booking.slotStart.slice(0, 5) + ' - ' + booking.slotEnd.slice(0, 5),
+      )
+    : formatServiceWindow(
+        booking.timeSlot,
+        booking.estimatedDurationMinutes ?? undefined,
+      );
+const fitsWorkingHours = (slot: string, duration?: number | null) =>
+  !duration ||
+  Number(slot.slice(0, 2)) * 60 + Number(slot.slice(3, 5)) + duration <=
+    18 * 60;
 const displayDate = (value: string) =>
   new Intl.DateTimeFormat('en-SG', {
     day: 'numeric',
@@ -57,6 +78,17 @@ const displayDate = (value: string) =>
   }).format(new Date(`${String(value).slice(0, 10)}T00:00:00Z`));
 const displayMoment = (value: string | null | undefined) =>
   value ? String(value).replace('T', ' ').slice(0, 16) : 'Not recorded';
+const displayExpiry = (value: string) =>
+  new Intl.DateTimeFormat('en-SG', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Singapore',
+  }).format(
+    new Date(value.includes('T') ? value : value.replace(' ', 'T') + 'Z'),
+  ) + ' SGT';
 const timeSlots = [
   { value: '09:00 - 11:00', label: '09:00 AM - 11:00 AM' },
   { value: '11:00 - 13:00', label: '11:00 AM - 01:00 PM' },
@@ -128,7 +160,14 @@ export function OrdersPage({
   params: URLSearchParams;
 }) {
   const { go, version, refresh } = useInventory(),
-    status = mode === 'review' ? 'Submitted' : 'Confirmed';
+    status =
+      mode === 'review'
+        ? ['Submitted', 'Rejected', 'Expired'].includes(
+            params.get('status') || '',
+          )
+          ? params.get('status')!
+          : 'Submitted'
+        : 'Confirmed';
   const page = Math.max(1, Number(params.get('page') || 1)),
     query = new URLSearchParams({ status, page: String(page), pageSize: '20' });
   const resource = useResource<List<AdminBooking>>(
@@ -153,6 +192,30 @@ export function OrdersPage({
           </Button>
         }
       />
+      {mode === 'review' && (
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <label className="text-sm font-semibold">
+            Order status
+            <NativeSelect
+              className="mt-1"
+              value={status}
+              onChange={(event) =>
+                go('/admin/orders?status=' + event.target.value)
+              }
+            >
+              <option value="Submitted">Awaiting confirmation</option>
+              <option value="Rejected">Rejected</option>
+              <option value="Expired">Expired</option>
+            </NativeSelect>
+          </label>
+          {status === 'Submitted' && (
+            <p className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm font-medium text-red-800">
+              <AlertCircle className="size-4" />
+              Unconfirmed requests need review before their deadline.
+            </p>
+          )}
+        </div>
+      )}
       <LoadState {...resource} />
       {data &&
         (data.rows.length ? (
@@ -170,7 +233,12 @@ export function OrdersPage({
               </TableHeader>
               <TableBody>
                 {data.rows.map((row) => (
-                  <TableRow key={row.bookingId}>
+                  <TableRow
+                    key={row.bookingId}
+                    className={
+                      row.status === 'Submitted' ? 'bg-red-50/50' : undefined
+                    }
+                  >
                     <TableCell data-label="Booking">
                       <strong>
                         BK-{String(row.bookingId).padStart(4, '0')}
@@ -191,10 +259,19 @@ export function OrdersPage({
                     </TableCell>
                     <TableCell data-label="Schedule">
                       {displayDate(row.preferredDate)}
-                      <small className="block muted">{row.timeSlot}</small>
+                      <small className="block muted">
+                        {displayServiceTime(row)}
+                      </small>
                     </TableCell>
                     <TableCell data-label="Status">
                       <BookingStatus status={row.status} />
+                      {row.status === 'Submitted' && (
+                        <small className="mt-1 block font-medium text-red-700">
+                          {row.expiresAt
+                            ? `Confirm by ${displayExpiry(row.expiresAt)}`
+                            : 'Awaiting confirmation · No expiry for this existing request'}
+                        </small>
+                      )}
                     </TableCell>
                     <TableCell data-label="Action" className="text-right">
                       <Button
@@ -214,7 +291,7 @@ export function OrdersPage({
               pageSize={data.pageSize}
               onPage={(next) =>
                 go(
-                  `/${mode === 'review' ? 'admin/orders' : 'admin/dispatch'}?page=${next}`,
+                  `/${mode === 'review' ? 'admin/orders' : 'admin/dispatch'}?page=${next}&status=${status}`,
                 )
               }
             />
@@ -237,11 +314,7 @@ export function OrdersPage({
   );
 }
 
-export function DispatchCalendarPage({
-  params,
-}: {
-  params: URLSearchParams;
-}) {
+export function DispatchCalendarPage({ params }: { params: URLSearchParams }) {
   const { go, version, refresh } = useInventory();
   const requestedDate = params.get('date') || '';
   const selectedDate = validCalendarDate(requestedDate) ? requestedDate : '';
@@ -398,7 +471,7 @@ export function DispatchCalendarPage({
                             aria-label={`Open booking ${booking.bookingId} for ${booking.customerName}`}
                           >
                             <span className="schedule-booking-time">
-                              {booking.timeSlot}
+                              {displayServiceTime(booking)}
                             </span>
                             <strong>
                               BK-{String(booking.bookingId).padStart(4, '0')}
@@ -464,7 +537,9 @@ export function DispatchCalendarPage({
                     </TableCell>
                     <TableCell data-label="Schedule">
                       {displayDate(row.preferredDate)}
-                      <small className="block muted">{row.timeSlot}</small>
+                      <small className="block muted">
+                        {displayServiceTime(row)}
+                      </small>
                     </TableCell>
                     <TableCell data-label="Action" className="text-right">
                       <Button
@@ -482,9 +557,7 @@ export function DispatchCalendarPage({
               total={queue.data.total}
               page={queue.data.page}
               pageSize={queue.data.pageSize}
-              onPage={(next) =>
-                go(dispatchUrl(weekStart, selectedDate, next))
-              }
+              onPage={(next) => go(dispatchUrl(weekStart, selectedDate, next))}
             />
           </section>
         ) : (
@@ -505,6 +578,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
     ),
     booking = resource.data?.booking;
   const [reason, setReason] = useState(''),
+    [reasonDraft, setReasonDraft] = useState<string | null>(null),
     [scheduleDraft, setScheduleDraft] = useState<{
       bookingId: number;
       preferredDate: string;
@@ -534,8 +608,8 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
     ),
     scheduleDirty = Boolean(
       booking &&
-        (schedule.preferredDate !== calendarDate(booking.preferredDate) ||
-          schedule.timeSlot !== canonicalTimeSlot(booking.timeSlot)),
+      (schedule.preferredDate !== calendarDate(booking.preferredDate) ||
+        schedule.timeSlot !== canonicalTimeSlot(booking.timeSlot)),
     ),
     scheduleError = schedule.preferredDate
       ? bookingDateError(schedule.preferredDate)
@@ -548,18 +622,19 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
         ? 'redispatch'
         : null;
   const dispatchOptions = useResource<DispatchOptions>(
-    dispatchMode === 'manual' && dispatchAction
-      ? `/admin/bookings/${bookingId}/dispatch-options`
-      : null,
+    dispatchAction ? `/admin/bookings/${bookingId}/dispatch-options` : null,
     version,
   );
   const selectedTechnician = dispatchOptions.data?.technicians.find(
     (technician) => technician.technicianId === selectedTechnicianId,
   );
   useEffect(() => {
-    setDirty(scheduleDirty);
+    setDirty(
+      scheduleDirty ||
+        (reasonDraft !== null && reasonDraft !== booking?.rejectionReason),
+    );
     return () => setDirty(false);
-  }, [scheduleDirty, setDirty]);
+  }, [scheduleDirty, reasonDraft, booking?.rejectionReason, setDirty]);
   async function action(
     type: 'approve' | 'reject' | 'dispatch' | 'redispatch',
   ) {
@@ -624,6 +699,40 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       setBusy('');
     }
   }
+  async function saveRejectionReason() {
+    const newReason = (reasonDraft ?? booking?.rejectionReason ?? '').trim();
+    if (!booking || newReason.length < 3 || busy) return;
+    const requestType =
+      'rejection-reason:' +
+      bookingId +
+      ':' +
+      booking.rejectionVersion +
+      ':' +
+      newReason;
+    if (pending.current?.type !== requestType)
+      pending.current = { type: requestType, requestId: crypto.randomUUID() };
+    setBusy('reason');
+    setError('');
+    try {
+      await api('/admin/bookings/' + bookingId + '/rejection-reason', 'PATCH', {
+        requestId: pending.current.requestId,
+        version: booking.rejectionVersion,
+        reason: newReason,
+      });
+      pending.current = null;
+      setReasonDraft(null);
+      notify(
+        'Rejection reason updated. The customer can see the revised explanation.',
+      );
+      refresh();
+    } catch (cause) {
+      setError(errorText(cause));
+      if (cause instanceof ApiError && cause.status < 500)
+        pending.current = null;
+    } finally {
+      setBusy('');
+    }
+  }
   async function saveSchedule() {
     if (!canEditSchedule || !scheduleDirty) return;
     if (scheduleError) {
@@ -674,12 +783,27 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
           <Heading
             eyebrow={`BOOKING / BK-${String(booking.bookingId).padStart(4, '0')}`}
             title={`${booking.customerName} · ${booking.serviceName}`}
-            description={`${displayDate(booking.preferredDate)} · ${booking.timeSlot}`}
+            description={`${displayDate(booking.preferredDate)} · ${displayServiceTime(booking)}`}
             actions={<BookingStatus status={booking.status} />}
           />
           <div className="admin-detail-grid">
             <section className="panel">
               <h2>Request details</h2>
+              {booking.status === 'Submitted' && (
+                <p className="mt-3 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-800">
+                  <AlertCircle className="size-4 shrink-0" />
+                  {booking.expiresAt
+                    ? 'Confirmation deadline: ' +
+                      displayExpiry(booking.expiresAt)
+                    : 'Awaiting confirmation. This existing request has no expiry deadline.'}
+                </p>
+              )}
+              {booking.status === 'Expired' && (
+                <p className="notice mt-3">
+                  The confirmation deadline passed. This request no longer
+                  reserves capacity. The customer can make a new booking.
+                </p>
+              )}
               <dl className="data-list">
                 <div>
                   <dt>Customer</dt>
@@ -709,10 +833,25 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   <dd>{money(booking.totalAmount)}</dd>
                 </div>
                 <div>
-                  <dt>Notes</dt>
+                  <dt>Reported issue</dt>
                   <dd>
                     {booking.problemDescription ||
                       'No additional notes provided.'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Other remarks</dt>
+                  <dd>
+                    {booking.otherRemarks ||
+                      'No preferences or access notes provided.'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Estimated service duration</dt>
+                  <dd>
+                    {booking.estimatedDurationMinutes
+                      ? booking.estimatedDurationMinutes + ' minutes'
+                      : 'Not recorded'}
                   </dd>
                 </div>
               </dl>
@@ -721,7 +860,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   <h3 className="font-semibold">Appointment schedule</h3>
                   <p className="mt-1 text-sm muted">
                     {canEditSchedule
-                      ? 'Adjust the date or arrival window before dispatch. The customer is emailed only after a technician is assigned.'
+                      ? 'Adjust the date or service time before dispatch. The customer is emailed only after a technician is assigned.'
                       : 'The appointment is locked after dispatch.'}
                   </p>
                 </div>
@@ -746,7 +885,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                     />
                   </div>
                   <label className="block text-sm font-semibold">
-                    Arrival window
+                    Service time
                     <NativeSelect
                       className="mt-2 h-12 w-full"
                       value={schedule.timeSlot}
@@ -761,8 +900,29 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                       }}
                     >
                       {timeSlots.map((slot) => (
-                        <option key={slot.value} value={slot.value}>
-                          {slot.label}
+                        <option
+                          key={slot.value}
+                          value={slot.value}
+                          disabled={
+                            !fitsWorkingHours(
+                              slot.value,
+                              booking.estimatedDurationMinutes,
+                            )
+                          }
+                        >
+                          {!canEditSchedule &&
+                          slot.value === canonicalTimeSlot(booking.timeSlot)
+                            ? displayServiceTime(booking)
+                            : formatServiceWindow(
+                                slot.value,
+                                booking.estimatedDurationMinutes ?? undefined,
+                              )}
+                          {fitsWorkingHours(
+                            slot.value,
+                            booking.estimatedDurationMinutes,
+                          )
+                            ? ''
+                            : ' · Ends after 6:00 PM'}
                         </option>
                       ))}
                     </NativeSelect>
@@ -773,7 +933,9 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                     <Button
                       variant="outline"
                       disabled={
-                        Boolean(busy) || !scheduleDirty || Boolean(scheduleError)
+                        Boolean(busy) ||
+                        !scheduleDirty ||
+                        Boolean(scheduleError)
                       }
                       onClick={saveSchedule}
                     >
@@ -833,15 +995,49 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   <Button
                     variant="destructive"
                     disabled={
-                      Boolean(busy) ||
-                      scheduleDirty ||
-                      reason.trim().length < 3
+                      Boolean(busy) || scheduleDirty || reason.trim().length < 3
                     }
                     onClick={() => action('reject')}
                   >
                     <XCircle />
                     {busy === 'reject' ? 'Rejecting…' : 'Reject booking'}
                   </Button>
+                </div>
+              )}
+              {booking.status === 'Rejected' && (
+                <div className="mt-6 space-y-3">
+                  <label className="block text-sm font-semibold">
+                    Rejection reason
+                    <Textarea
+                      className="mt-2 min-h-24"
+                      value={reasonDraft ?? booking.rejectionReason ?? ''}
+                      maxLength={500}
+                      onChange={(event) => setReasonDraft(event.target.value)}
+                    />
+                  </label>
+                  <p className="text-sm muted">
+                    The customer sees this reason. Every correction remains in
+                    the status timeline.
+                  </p>
+                  <Button
+                    disabled={
+                      Boolean(busy) ||
+                      (reasonDraft ?? '').trim().length < 3 ||
+                      reasonDraft === booking.rejectionReason
+                    }
+                    onClick={saveRejectionReason}
+                  >
+                    {busy === 'reason' ? 'Saving…' : 'Save rejection reason'}
+                  </Button>
+                  {reasonDraft !== null && (
+                    <Button
+                      variant="ghost"
+                      disabled={Boolean(busy)}
+                      onClick={() => setReasonDraft(null)}
+                    >
+                      Discard changes
+                    </Button>
+                  )}
                 </div>
               )}
               {dispatchAction && (
@@ -852,13 +1048,11 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                       : 'Dispatch technician'}
                   </h3>
                   <p className="mt-1 text-sm muted">
-                    Choose automatic workload rotation or manually select an
-                    eligible technician. The customer email is queued only
-                    after the assignment succeeds.
+                    Choose postal-area assignment or manually select an eligible
+                    technician. The customer email is queued only after the
+                    assignment succeeds.
                   </p>
-                  <fieldset
-                    className="dispatch-mode-switch mt-4"
-                  >
+                  <fieldset className="dispatch-mode-switch mt-4">
                     <legend className="sr-only">Dispatch method</legend>
                     <Button
                       type="button"
@@ -892,10 +1086,34 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                     </Button>
                   </fieldset>
                   {dispatchMode === 'automatic' ? (
-                    <p className="mt-4 text-sm muted">
-                      CoolCare selects an available technician using this
-                      appointment’s time, daily workload and rotation order.
-                    </p>
+                    <div className="mt-3 rounded-lg border bg-white p-3 text-sm">
+                      <p className="font-medium">
+                        Available technicians are ranked by postal area, then
+                        workload.
+                      </p>
+                      <p className="muted">
+                        Uses the previous visit that day, or the technician's
+                        base postal code. Postal-sector matching is an area
+                        estimate, not travel distance or live GPS.
+                      </p>
+                      <LoadState {...dispatchOptions} />
+                      {dispatchOptions.data?.technicians
+                        .filter((tech) => tech.eligible)
+                        .slice(0, 3)
+                        .map((tech) => (
+                          <p key={tech.technicianId} className="mt-2">
+                            <strong>{tech.fullName}</strong> ·{' '}
+                            {tech.proximity?.label ?? 'Location unavailable'} ·{' '}
+                            {tech.dailyJobs} active job(s)
+                            <small className="block muted">
+                              {tech.proximity?.origin}
+                              {tech.proximity?.originPostalCode
+                                ? ' · ' + tech.proximity.originPostalCode
+                                : ''}
+                            </small>
+                          </p>
+                        ))}
+                    </div>
                   ) : (
                     <div className="mt-4">
                       <LoadState {...dispatchOptions} />
@@ -939,6 +1157,16 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                                       {technician.dailyJobs} active job(s) that
                                       day
                                     </small>
+                                    <small className="flex items-center gap-1">
+                                      <MapPin className="size-3" />
+                                      {technician.proximity?.label ??
+                                        'Location unavailable'}{' '}
+                                      · {technician.proximity?.origin}
+                                      {technician.proximity?.originPostalCode
+                                        ? ' ' +
+                                          technician.proximity.originPostalCode
+                                        : ''}
+                                    </small>
                                     {!technician.eligible && (
                                       <small className="manual-dispatch-reason">
                                         {technician.reason}
@@ -967,11 +1195,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                     }
                     onClick={() => action(dispatchAction)}
                   >
-                    {dispatchAction === 'redispatch' ? (
-                      <RefreshCw />
-                    ) : (
-                      <Send />
-                    )}
+                    {dispatchAction === 'redispatch' ? <RefreshCw /> : <Send />}
                     {busy === dispatchAction
                       ? dispatchAction === 'redispatch'
                         ? 'Reassigning…'
@@ -1009,7 +1233,54 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </li>
                 ))}
               </ol>
-              {booking.reports?.map(report=><section key={report.reportId} className="mt-7 space-y-2"><h2>Service report</h2><h3>Service process photos</h3><ServicePhotoGallery photos={report.photos||[]}/><p><strong>Work performed:</strong> {report.workPerformed}</p><p><strong>Problem found:</strong> {report.problemFound||'Not recorded'}</p><p><strong>Solution:</strong> {report.solutionApplied||'Not recorded'}</p><p><strong>Checks completed:</strong> {report.checklist||'Not recorded'}</p><div className="grid gap-4 sm:grid-cols-2"><section><h3>Customer signature</h3><SignatureImage url={report.customerSignatureUrl} label="Customer signature"/></section><section><h3>Technician signature</h3><SignatureImage url={report.technicianSignatureUrl} label="Technician signature"/></section></div><p>Started: {report.startedAt ? displayMoment(report.startedAt) : 'Not recorded'} · Completed: {report.completedAt ? displayMoment(report.completedAt) : 'Not recorded'}</p></section>)}
+              {booking.reports?.map((report) => (
+                <section key={report.reportId} className="mt-7 space-y-2">
+                  <h2>Service report</h2>
+                  <h3>Service process photos</h3>
+                  <ServicePhotoGallery photos={report.photos || []} />
+                  <p>
+                    <strong>Work performed:</strong> {report.workPerformed}
+                  </p>
+                  <p>
+                    <strong>Problem found:</strong>{' '}
+                    {report.problemFound || 'Not recorded'}
+                  </p>
+                  <p>
+                    <strong>Solution:</strong>{' '}
+                    {report.solutionApplied || 'Not recorded'}
+                  </p>
+                  <p>
+                    <strong>Checks completed:</strong>{' '}
+                    {report.checklist || 'Not recorded'}
+                  </p>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <section>
+                      <h3>Customer signature</h3>
+                      <SignatureImage
+                        url={report.customerSignatureUrl}
+                        label="Customer signature"
+                      />
+                    </section>
+                    <section>
+                      <h3>Technician signature</h3>
+                      <SignatureImage
+                        url={report.technicianSignatureUrl}
+                        label="Technician signature"
+                      />
+                    </section>
+                  </div>
+                  <p>
+                    Started:{' '}
+                    {report.startedAt
+                      ? displayMoment(report.startedAt)
+                      : 'Not recorded'}{' '}
+                    · Completed:{' '}
+                    {report.completedAt
+                      ? displayMoment(report.completedAt)
+                      : 'Not recorded'}
+                  </p>
+                </section>
+              ))}
               {booking.assignments.length > 0 && (
                 <>
                   <h2 className="mt-7">Assignments</h2>
@@ -1022,6 +1293,56 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                           WO-{String(item.jobId).padStart(4, '0')} ·{' '}
                           {item.status}
                         </small>
+                        {item.progress && (
+                          <div className="mt-3 space-y-2 rounded-lg border p-3 text-sm">
+                            {item.progress.extensionMinutes > 0 && (
+                              <p>
+                                <strong>Service extended:</strong>{' '}
+                                {item.progress.extensionMinutes} minutes ·
+                                Expected end{' '}
+                                {item.progress.expectedEndTime ||
+                                  'Not recorded'}
+                              </p>
+                            )}
+                            {item.progress.followUpStatus !== 'None' && (
+                              <p>
+                                <strong>Return visit:</strong>{' '}
+                                {item.progress.followUpStatus}
+                                {item.progress.followUpDate
+                                  ? ' · ' +
+                                    displayDate(item.progress.followUpDate)
+                                  : ''}
+                                {item.progress.followUpStart
+                                  ? ' · ' +
+                                    item.progress.followUpStart +
+                                    ' – ' +
+                                    item.progress.followUpEnd
+                                  : ''}
+                              </p>
+                            )}
+                            {item.progress.additionalRepairFee > 0 && (
+                              <p>
+                                <strong>Additional repair fee:</strong>{' '}
+                                {money(item.progress.additionalRepairFee)}
+                                <small className="block muted">
+                                  {item.progress.repairQuoteNote}
+                                </small>
+                              </p>
+                            )}
+                            {item.progress.events?.map((event) => (
+                              <p key={event.id}>
+                                <strong>{event.kind}:</strong> {event.reason} ·{' '}
+                                {event.notes}
+                                {event.partNotes
+                                  ? ' · Parts: ' + event.partNotes
+                                  : ''}
+                                <small className="block muted">
+                                  {displayMoment(event.createdAt)}
+                                </small>
+                              </p>
+                            ))}
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -1044,6 +1365,7 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
   const [form, setForm] = useState({ fullName: '', email: '', phone: '' }),
     [busy, setBusy] = useState(false),
     [rowBusy, setRowBusy] = useState(''),
+    [postalDrafts, setPostalDrafts] = useState<Record<number, string>>({}),
     [error, setError] = useState('');
   async function invite(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1066,7 +1388,11 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
   }
   async function updateMember(
     member: StaffMember,
-    patch: { availability?: string; accountStatus?: string },
+    patch: {
+      availability?: string;
+      accountStatus?: string;
+      basePostalCode?: string;
+    },
   ) {
     const key = `update-${member.userId}`;
     setRowBusy(key);
@@ -1079,6 +1405,11 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
         'PATCH',
         patch,
       );
+      setPostalDrafts((current) => {
+        const next = { ...current };
+        delete next[member.userId];
+        return next;
+      });
       notify(`${member.fullName} updated.`);
       refresh();
     } catch (cause) {
@@ -1239,6 +1570,52 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
                               {member.futureWorkOrders ?? 0} future work
                               order(s)
                             </small>
+                          )}
+                          {role === 'Technician' && (
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <label className="text-xs muted">
+                                Base postal code
+                                <Input
+                                  className="mt-1 w-32"
+                                  inputMode="numeric"
+                                  maxLength={6}
+                                  placeholder="e.g. 238839"
+                                  value={
+                                    postalDrafts[member.userId] ??
+                                    member.basePostalCode ??
+                                    ''
+                                  }
+                                  disabled={
+                                    disabled || member.status === 'Inactive'
+                                  }
+                                  onChange={(event) =>
+                                    setPostalDrafts({
+                                      ...postalDrafts,
+                                      [member.userId]: event.target.value,
+                                    })
+                                  }
+                                />
+                              </label>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={
+                                  disabled ||
+                                  postalDrafts[member.userId] === undefined ||
+                                  (postalDrafts[member.userId] !== '' &&
+                                    !/^\d{6}$/.test(
+                                      postalDrafts[member.userId],
+                                    ))
+                                }
+                                onClick={() =>
+                                  void updateMember(member, {
+                                    basePostalCode: postalDrafts[member.userId],
+                                  })
+                                }
+                              >
+                                Save location
+                              </Button>
+                            </div>
                           )}
                         </TableCell>
                         <TableCell data-label="Account">

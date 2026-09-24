@@ -1,6 +1,7 @@
 import mysql from 'mysql2/promise';
 import { createApp } from './app.mjs';
 import { startBookingEmailWorker } from './booking-email.mjs';
+import { expireSubmittedBookings } from './order-expiry.mjs';
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT || 3306),
@@ -22,11 +23,22 @@ const app = createApp({
 });
 const port = Number(process.env.API_PORT || 3001);
 const stopMailWorker = startBookingEmailWorker(pool);
+let expiryRunning = null;
+function expireRequests() {
+  if (!expiryRunning) expiryRunning = expireSubmittedBookings(pool)
+    .catch(error => console.error('Booking expiry check failed:', error.message))
+    .finally(() => { expiryRunning = null; });
+}
+const expiryTimer = setInterval(expireRequests, 60000);
+expiryTimer.unref();
+expireRequests();
 const server = app.listen(port, '127.0.0.1', () =>
   console.log(`CoolCare local API: http://127.0.0.1:${port}`),
 );
 async function stop() {
   server.close();
+  clearInterval(expiryTimer);
+  await expiryRunning;
   await stopMailWorker();
   await pool.end();
   process.exit(0);

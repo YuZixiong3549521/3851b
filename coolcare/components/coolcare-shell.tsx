@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import {BookingNotifications} from '@/components/booking-notifications';
 import { useState, useEffect, useId, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { CalendarDays, ClipboardCheck, Gauge, History, MessageCircle, Snowflake, Sparkles } from 'lucide-react';
@@ -94,6 +95,7 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
           <span>Assistant</span>
         </Button>
       </nav>
+      {ready && <BookingNotifications key={user?.id} enabled={!assistantOpen} />}
       {ready && <CustomerAssistant open={assistantOpen} onOpenChange={setAssistantOpen} dialogId={assistantDialogId} returnFocus={() => desktopAssistantTrigger.current?.getClientRects().length ? desktopAssistantTrigger.current : mobileAssistantTrigger.current} onBookingCreated={() => window.dispatchEvent(new Event('coolcare:bookings-updated'))} />}
     </div>
   );

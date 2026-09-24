@@ -1,4 +1,5 @@
-import { recordStockBatch } from '../server/inventory.mjs';
+import { recordStockBatch,recordTransaction } from '../server/inventory.mjs';
+import {getServiceProgress,updateServiceProgress} from '../server/service-progress.mjs';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -141,15 +142,17 @@ test('profile edits persist, email cannot be edited, availability uses dispatch 
       fullName: p.fullName,
       phone: '91234567',
       primaryRegion: 'North District',
-      availability: 'On Leave',
+      basePostalCode:'018956',
+      availability: 'Busy',
     };
     const saved = await saveProfile(db, a.userId, input);
     assert.equal(saved.primaryRegion, 'North District');
-    assert.equal(saved.availability, 'On Leave');
+    assert.equal(saved.basePostalCode,'018956');
+    assert.equal(saved.availability, 'Busy');
     assert.equal(saved.email, p.email);
     assert.equal(
       (await saveProfile(db, a.userId, input)).availability,
-      'On Leave',
+      'Busy',
     );
     await assert.rejects(
       saveProfile(db, a.userId, { ...input, fullName: 'Stale edit' }),
@@ -556,3 +559,110 @@ test('batch parts issue is atomic, preserves descriptions, and retries without d
     await assert.rejects(recordStockBatch(db, changed, a.jobId, a.userId));
     await assert.rejects(recordStockBatch(db, { request_id: randomUUID(), items: [input.items[0], input.items[0]] }, a.jobId, a.userId));
   }));
+
+test('service extensions reserve actual time, reject conflicts and retain a single audit entry on retry',()=>fixture(async(db,c,a)=>{
+ const [[work]]=await c.execute('SELECT w.booking_id,a.technician_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id WHERE w.job_id=?',[a.jobId]);
+ const date='2035-02-05';
+ await c.execute("UPDATE work_order SET current_status='In Progress',appointment_date=?,appointment_time='09:00:00' WHERE job_id=?",[date+' 09:00:00',a.jobId]);
+ await c.execute("UPDATE booking SET booking_status='In Progress',preferred_service_date=?,slot_start='09:00:00',slot_end='10:00:00' WHERE booking_id=?",[date,work.booking_id]);
+ const initial=await getServiceProgress(db,a.jobId);
+ const input={requestId:randomUUID(),expectedVersion:initial.version,action:'extend',minutes:30,reason:'More cleaning required',notes:'Two units need additional drain cleaning.'};
+ await assert.rejects(updateServiceProgress(db,4294967295,a.jobId,input),e=>e.status===404);
+ const saved=await updateServiceProgress(db,a.userId,a.jobId,input);
+ assert.equal((await updateServiceProgress(db,a.userId,a.jobId,input)).replayed,true);
+ const after=await getServiceProgress(db,a.jobId);
+ assert.equal(after.extensionMinutes,initial.extensionMinutes+30);assert.equal(after.expectedEndTime,'10:30:00');assert.equal(after.events.length,initial.events.length+1);
+ assert.ok(after.events[0].reportId);assert.equal(saved.reportId,after.events[0].reportId);
+ await assert.rejects(updateServiceProgress(db,a.userId,a.jobId,{...input,notes:'Different work details'}),e=>e.status===409);
+ await assert.rejects(updateServiceProgress(db,a.userId,a.jobId,{...input,requestId:randomUUID()}),e=>e.status===409);
+ const [[other]]=await c.execute('SELECT job_id,booking_id,assignment_id FROM work_order WHERE job_id<>? LIMIT 1',[a.jobId]);
+ assert.ok(other);
+ await c.execute("UPDATE assignment SET technician_id=?,assignment_status='Accepted' WHERE assignment_id=?",[work.technician_id,other.assignment_id]);
+ await c.execute("UPDATE work_order SET current_status='Assigned',appointment_date=?,appointment_time='10:30:00' WHERE job_id=?",[date+' 10:30:00',other.job_id]);
+ await c.execute("UPDATE booking SET booking_status='Assigned',preferred_service_date=?,slot_start='10:30:00',slot_end='12:00:00' WHERE booking_id=?",[date,other.booking_id]);
+ await assert.rejects(updateServiceProgress(db,a.userId,a.jobId,{...input,requestId:randomUUID(),expectedVersion:after.version}),e=>e.status===409);
+ assert.equal((await getServiceProgress(db,a.jobId)).expectedEndTime,'10:30:00');
+ await c.execute("UPDATE booking SET slot_end='18:00:00' WHERE booking_id=?",[work.booking_id]);
+ await assert.rejects(updateServiceProgress(db,a.userId,a.jobId,{...input,requestId:randomUUID(),expectedVersion:after.version}),e=>e.status===409);
+ assert.equal((await getServiceProgress(db,a.jobId)).events.length,after.events.length);
+}));
+
+test('return visits stay in one report with part notes, scheduling, start and completion history',()=>fixture(async(db,c,a)=>{
+ await c.execute("UPDATE work_order SET current_status='Completed' WHERE job_id=?",[a.jobId]);
+ const before=await getReport(db,a.userId,a.jobId);
+ let p=await getServiceProgress(db,a.jobId);
+ const update=async(extra)=>{const result=await updateServiceProgress(db,a.userId,a.jobId,{requestId:randomUUID(),expectedVersion:p.version,notes:'Return visit work details recorded.',...extra});p=await getServiceProgress(db,a.jobId);return result;};
+ const required=await update({action:'require-return',reason:'Part unavailable',partNotes:'Replacement fan motor, quantity 1; awaiting stock.'});
+ await assert.rejects(update({action:'complete-return',partNotes:'Motor installed'}),e=>e.status===409);
+ await assert.rejects(update({action:'schedule-return',date:'2035-02-04',start:'09:00',durationMinutes:60}),e=>e.status===400);
+ await update({action:'schedule-return',date:'2035-02-06',start:'09:00',durationMinutes:60});
+ assert.equal(p.followUpStatus,'Scheduled');assert.equal(p.followUpEnd,'10:00:00');
+ const {activeReservationCount}=await import('../server/scheduling.mjs');
+ assert.ok(await activeReservationCount(db,{date:'2035-02-06',start:'09:00:00',end:'10:00:00'})>=1);
+ await update({action:'start-return'});await update({action:'extend',minutes:15,reason:'Additional checks'});assert.equal(p.followUpEnd,'10:15:00');await update({action:'complete-return',partNotes:'Installed fan motor, quantity 1; retested cooling.'});
+ assert.equal(p.followUpStatus,'Completed');assert.equal(new Set(p.events.slice(0,5).map(e=>e.reportId)).size,1);assert.equal(p.events[0].reportId,required.reportId);
+ const after=await getReport(db,a.userId,a.jobId);assert.equal(after.report.completedAt,before.report?.completedAt??null);assert.equal(after.status,'Completed');
+}));
+
+test('technician repair quotes are audited without customer approval, and require own repair job and CSRF',()=>fixture(async(db,c,a)=>{
+ const [[work]]=await c.execute('SELECT booking_id FROM work_order WHERE job_id=?',[a.jobId]);
+ const [[repair]]=await c.execute("SELECT service_id FROM simple_service_catalog WHERE code='repair'");
+ await c.execute("UPDATE work_order SET current_status='In Progress' WHERE job_id=?",[a.jobId]);
+ await c.execute('UPDATE booking SET service_id=? WHERE booking_id=?',[repair.service_id,work.booking_id]);
+ let progress=await getServiceProgress(db,a.jobId);
+ const input={requestId:randomUUID(),expectedVersion:progress.version,action:'repair-quote',amount:85.5,notes:'Replacement capacitor and repair labour.'};
+ await updateServiceProgress(db,a.userId,a.jobId,input);assert.equal((await updateServiceProgress(db,a.userId,a.jobId,input)).replayed,true);
+ progress=await getServiceProgress(db,a.jobId);assert.equal(progress.additionalRepairFee,85.5);assert.equal(progress.repairQuoteNote,input.notes);
+ await assert.rejects(updateServiceProgress(db,4294967295,a.jobId,{...input,requestId:randomUUID(),expectedVersion:progress.version}),e=>e.status===404);
+ const {createApp}=await import('../server/app.mjs'),server=createApp({pool:db,secret:process.env.SESSION_SECRET}).listen(0,'127.0.0.1');
+ await new Promise(resolve=>server.once('listening',resolve));
+ let cookie='',csrf='';
+ const request=async(path,method='GET',body,token=csrf)=>{const r=await fetch(`http://127.0.0.1:${server.address().port}${path}`,{method,headers:{Cookie:cookie,'X-CSRF-Token':token,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];return r;};
+ try{
+  const path=`/api/technician/jobs/${a.jobId}/service-progress`;
+  csrf=(await(await request('/api/session')).json()).csrf;
+  assert.equal((await request(path,'PATCH',input)).status,401);
+  const [[account]]=await c.execute('SELECT email FROM user_account WHERE user_id=?',[a.userId]);
+  await c.execute('UPDATE user_account SET password_hash=? WHERE user_id=?',[await bcrypt.hash('ProgressFixture2026!',4),a.userId]);
+  const login=await request('/api/public/login','POST',{email:account.email,password:'ProgressFixture2026!'});assert.equal(login.status,200);csrf=(await login.json()).csrf;
+  const changed={...input,requestId:randomUUID(),expectedVersion:progress.version,amount:95,notes:'Updated capacitor and labour quotation.'};
+  assert.equal((await request(path,'PATCH',changed,'')).status,403);
+  const response=await request(path,'PATCH',changed);assert.equal(response.status,200);assert.equal((await getServiceProgress(db,a.jobId)).additionalRepairFee,95);
+  assert.equal((await request('/api/technician/jobs/4294967295/service-progress','PATCH',changed)).status,404);
+ }finally{await new Promise(resolve=>server.close(resolve));}
+}));
+
+test('stock issue checks the locked current assignment and cancelled work before any deduction',()=>fixture(async(db,c,a)=>{
+ const [[part]]=await c.execute("SELECT part_id FROM part WHERE status='Active' LIMIT 1");await c.execute('UPDATE part SET current_stock=20 WHERE part_id=?',[part.part_id]);
+ const item={part_id:part.part_id,quantity:1,expected_stock:20,acknowledge_excess:true};
+ await c.execute("UPDATE work_order SET current_status='Cancelled' WHERE job_id=?",[a.jobId]);
+ await assert.rejects(recordStockBatch(db,{request_id:randomUUID(),items:[item]},a.jobId,a.userId),e=>e.status===404);
+ await assert.rejects(recordTransaction(db,{...item,request_id:randomUUID(),transaction_type:'Stock Out',job_id:a.jobId},null,a.userId),e=>e.status===404);
+ const [[stock]]=await c.execute('SELECT current_stock FROM part WHERE part_id=?',[part.part_id]);assert.equal(stock.current_stock,20);
+}));
+
+test('profile leave changes reject active work, reserved return visits and insufficient capacity, but permit safe leave',()=>fixture(async(db,c,a)=>{
+ const [[tech]]=await c.execute('SELECT technician_id FROM technician WHERE user_id=?',[a.userId]);
+ const [[work]]=await c.execute('SELECT booking_id,assignment_id FROM work_order WHERE job_id=?',[a.jobId]);
+ const [[other]]=await c.execute("SELECT t.technician_id FROM technician t JOIN user_account u ON u.user_id=t.user_id WHERE u.status='Active' AND t.technician_id<>? LIMIT 1",[tech.technician_id]);assert.ok(other);
+ // All setup remains within this fixture's outer rollback transaction.
+ await c.execute("UPDATE work_order w JOIN assignment a ON a.assignment_id=w.assignment_id SET w.current_status='Completed' WHERE a.technician_id=?",[tech.technician_id]);
+ await c.execute("UPDATE assignment SET assignment_status='Accepted' WHERE assignment_id=?",[work.assignment_id]);
+ await c.execute("UPDATE technician SET availability_status='Unavailable'");
+ await c.execute("UPDATE technician SET availability_status='Available' WHERE technician_id IN (?,?)",[tech.technician_id,other.technician_id]);
+ await c.execute("UPDATE booking SET booking_status='Cancelled' WHERE booking_status IN ('Submitted','Confirmed','Assigned','On The Way','In Progress')");
+ await c.execute("UPDATE service_progress SET follow_up_status='Completed' WHERE follow_up_status IN ('Scheduled','In Progress')");
+ const profile=await getProfile(db,a.userId),input={expectedVersion:profile.version,fullName:profile.fullName,phone:'91234567',primaryRegion:profile.primaryRegion,basePostalCode:profile.basePostalCode,availability:'On Leave'};
+ await c.execute("UPDATE work_order SET current_status='In Progress',appointment_date='2000-01-01 09:00:00' WHERE job_id=?",[a.jobId]);
+ await assert.rejects(saveProfile(db,a.userId,input),e=>e.status===409&&/work orders/.test(e.message));
+ assert.equal((await getProfile(db,a.userId)).availability,'Available');
+ await c.execute("UPDATE work_order SET current_status='Completed' WHERE job_id=?",[a.jobId]);
+ await c.execute("INSERT INTO service_progress(job_id,follow_up_status,follow_up_date,follow_up_start,follow_up_end) VALUES (?,'Scheduled','2035-02-06','09:00:00','10:00:00') ON DUPLICATE KEY UPDATE follow_up_status='Scheduled',follow_up_date='2035-02-06',follow_up_start='09:00:00',follow_up_end='10:00:00'",[a.jobId]);
+ await assert.rejects(saveProfile(db,a.userId,input),e=>e.status===409&&/work orders/.test(e.message));
+ await c.execute("UPDATE service_progress SET follow_up_status='Completed' WHERE job_id=?",[a.jobId]);
+ const insert=async(start,end)=>{const [result]=await c.execute("INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,preferred_time_slot,slot_start,slot_end,booking_status) SELECT customer_id,address_id,service_id,'2035-02-06','09:00 - 11:00',?,?,'Submitted' FROM booking WHERE booking_id=?",[start,end,work.booking_id]);return result.insertId;};
+ await insert('09:00:00','10:00:00');const second=await insert('09:15:00','09:45:00');
+ await assert.rejects(saveProfile(db,a.userId,input),e=>e.status===409&&/reserved customer time slots/.test(e.message));
+ await c.execute("UPDATE booking SET slot_start='10:00:00',slot_end='11:00:00' WHERE booking_id=?",[second]);
+ assert.equal((await saveProfile(db,a.userId,input)).availability,'On Leave');
+}));

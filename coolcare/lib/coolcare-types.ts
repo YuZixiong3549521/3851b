@@ -24,6 +24,8 @@ export type CreateAddressInput = {
 
 export type UpdateProfileInput = { fullName: string; phone: string | null; expectedUserId?: number };
 export type BookingAvailabilityInput = {
+  serviceIds?: number[];
+  packageId?: number;
   serviceAddress?: string;
   addressId?: number;
   from: string;
@@ -73,9 +75,14 @@ export type BookingServiceOption = {
   additionalUnitPrice: number;
   code: 'cleaning' | 'repair';
   pricingNote: string;
+  durationMinutesPerUnit?: number;
+  minimumDurationMinutes?: number;
 };
 
+export type PropertyPrice = { propertyType: string; label: string; includedUnits: number; price: number; additionalUnitPrice: number };
+
 export type ServiceBundle = {
+  propertyPrices?: PropertyPrice[];
   packageId: number;
   name: string;
   description: string | null;
@@ -95,6 +102,18 @@ export type BookingOptions = {
 };
 
 export type Booking = {
+  slotStart?: string | null;
+  slotEnd?: string | null;
+  serviceIds?: number[];
+  packageId?: number | null;
+  estimatedDurationMinutes?: number;
+  specialNotes?: string | null;
+  propertyType?: string | null;
+  propertyLabel?: string | null;
+  changeDeadline?: string | null;
+  expiresAt?: string | null;
+  rejectionVersion?: number;
+  serviceProgress?: ServiceProgress | null;
   bookingId: number;
   addressId: number;
   numberOfUnits: number;
@@ -134,6 +153,8 @@ export type AnnualVisit = {
 };
 
 export type AnnualBundle = {
+  propertyType?: string | null;
+  propertyLabel?: string | null;
   seriesId: number;
   name: string;
   totalAmount: number;
@@ -153,6 +174,7 @@ export type CreatedBooking = {
 };
 
 export type ServiceReport = {
+  serviceProgress?: ServiceProgress | null;
   bookingId: number;
   bookingReference: string;
   serviceDate: string;
@@ -180,6 +202,9 @@ export type ServiceReport = {
 };
 
 export type BookingInput = {
+  propertyType?: string;
+  postalCode?: string;
+  specialNotes?: string;
   expectedUserId?: number;
   serviceId?: number;
   serviceIds?: number[];
@@ -192,4 +217,17 @@ export type BookingInput = {
   preferredDate: string;
   timeSlot: '09:00 - 11:00' | '11:00 - 13:00' | '14:00 - 16:00' | '16:00 - 18:00';
   problemDescription?: string;
+};
+
+export type ServiceProgress = {
+  version: number;
+  extensionMinutes: number;
+  expectedEndTime: string | null;
+  followUpStatus: string | null;
+  additionalRepairFee: number;
+  repairQuoteNote: string | null;
+  followUpDate: string | null;
+  followUpStart: string | null;
+  followUpEnd: string | null;
+  events: Array<{ id: number; kind: string; minutes?: number | null; reason?: string | null; notes?: string | null; partNotes?: string | null; followUpDate?: string | null; followUpStart?: string | null; followUpEnd?: string | null; createdAt: string; createdBy: string; amount?: number | null }>;
 };

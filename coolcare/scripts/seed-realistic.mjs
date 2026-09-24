@@ -19,6 +19,8 @@ if(!isCalendarDate(asOf)||asOf<'2001-01-01'||asOf>'2098-12-31')throw new Error('
 if(!['127.0.0.1','localhost','::1'].includes(process.env.DB_HOST)||process.env.DB_NAME!=='coolcare_service_app')throw new Error('This sample-data tool only supports the local CoolCare database.');
 if(!process.env.MYSQL_ROOT_PASSWORD)throw new Error('The local MYSQL_ROOT_PASSWORD from setup is required.');
 const clearTables=[
+ 'booking_admin_operation','technician_work_operation','service_report_revision','report_signature','service_photo_upload',
+ 'service_progress_event','service_progress','customer_booking_notice',
  'assistant_booking_draft','work_order_cleaning_assessment_revision','work_order_cleaning_assessment',
  'inventory_transaction_revision','inventory_web_operation','inventory_transaction',
  'photo','technician_performance_score','service_report','work_order','assignment',

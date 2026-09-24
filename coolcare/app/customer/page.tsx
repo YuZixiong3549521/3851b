@@ -9,7 +9,7 @@ import { PageError, PageLoading } from '@/components/page-state';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { coolcareApi } from '@/lib/coolcare-api';
-import { formatDate, formatTimeSlot } from '@/lib/format';
+import { formatDate, formatTimeSlot, formatServiceWindow } from '@/lib/format';
 import { upcomingBookings, isActiveBooking } from '@/lib/customer-bookings';
 import { useBookingClock } from '@/lib/use-booking-clock';
 import { useCustomerResource } from '@/lib/use-customer-resource';
@@ -41,7 +41,7 @@ export default function Home() {
         <Card className="border-primary/20 shadow-sm">
           <CardHeader className="flex-row items-start justify-between gap-4 space-y-0"><div><p className="text-sm font-semibold text-primary">UPCOMING</p><CardTitle className="mt-2 text-xl">{upcoming?.annualBundle ? `${upcoming.annualBundle.name} · Visit ${upcoming.annualBundle.visitNumber} of 4` : upcoming?.serviceName ?? 'No upcoming booking'}</CardTitle></div>{upcoming && <BookingStatus status={upcoming.status} />}</CardHeader>
           <CardContent>{upcoming ? <>
-            <div className="grid gap-4 rounded-2xl bg-muted/65 p-4 sm:grid-cols-3"><Detail icon={CalendarDays} label="Date" value={formatDate(upcoming.preferredDate)} /><Detail icon={Clock3} label="Preferred time" value={formatTimeSlot(upcoming.timeSlot)} /><Detail icon={MapPin} label="Address" value={`${upcoming.addressLine}${upcoming.postalCode ? ` · ${upcoming.postalCode}` : ''}`} /></div>
+            <div className="grid gap-4 rounded-2xl bg-muted/65 p-4 sm:grid-cols-3"><Detail icon={CalendarDays} label="Date" value={formatDate(upcoming.preferredDate)} /><Detail icon={Clock3} label="Preferred time" value={upcoming.slotStart && upcoming.slotEnd ? formatTimeSlot(upcoming.slotStart.slice(0,5)+' - '+upcoming.slotEnd.slice(0,5)) : formatServiceWindow(upcoming.timeSlot,upcoming.estimatedDurationMinutes)} /><Detail icon={MapPin} label="Address" value={`${upcoming.addressLine}${upcoming.postalCode ? ` · ${upcoming.postalCode}` : ''}`} /></div>
             <p className="mt-4 text-sm text-muted-foreground">{bookingStatusDescription(upcoming.status)}</p>
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="font-mono text-sm font-semibold">{upcoming.bookingReference}</p><Button nativeButton={false} render={<Link href={`/customer/bookings/${upcoming.bookingId}`} />} variant="outline">View booking</Button></div>
           </> : <div className="space-y-3"><p className="text-sm text-muted-foreground">Choose cleaning, repair or four quarterly visits for your home.</p><Button nativeButton={false} render={<Link href="/customer/book" />}>Book your next visit</Button></div>}</CardContent>

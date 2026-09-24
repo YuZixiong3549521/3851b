@@ -1,4 +1,5 @@
 import {registerTechnicianPhotos} from './service-photo-upload.mjs';
+import {getServiceProgress} from './service-progress.mjs';
 import {
   storeSignature,
   validateReportSignatures,
@@ -9,6 +10,7 @@ import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { AppError, idSchema } from './inventory.mjs';
 import { lockTechnicianRoster } from './scheduling.mjs';
+import {assertTechnicianCanBecomeUnavailable} from './admin-operations.mjs';
 const hash = (value) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const signature = z
@@ -35,6 +37,7 @@ export const reportFormSchema = z
   .strict();
 const reportSelect = `SELECT r.report_id AS reportId,r.work_performed AS workPerformed,r.problem_found AS problemFound,r.solution_applied AS solutionApplied,r.checklist_result AS checklist,r.customer_signature_url AS customerSignatureUrl,r.technician_signature_url AS technicianSignatureUrl,r.submitted_time AS submittedAt,r.started_at AS startedAt,r.completed_at AS completedAt FROM service_report r WHERE r.job_id=?`;
 async function ownedWork(c, userId, jobId, lock = false) {
+  if(lock){const [[booking]]=await c.execute('SELECT booking_id FROM work_order WHERE job_id=?',[jobId]);if(booking)await c.execute('SELECT booking_id FROM booking WHERE booking_id=? FOR UPDATE',[booking.booking_id]);}
   const [[row]] = await c.execute(
     `SELECT w.*,b.booking_status FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id WHERE w.job_id=? AND t.user_id=? AND u.status='Active' AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') ${lock ? 'FOR UPDATE' : ''}`,
     [jobId, userId],
@@ -44,6 +47,7 @@ async function ownedWork(c, userId, jobId, lock = false) {
 }
 export async function getReport(c, userId, jobId) {
   const work = await ownedWork(c, userId, jobId);
+  const [[eligibility]]=await c.execute(`SELECT (EXISTS(SELECT 1 FROM booking b JOIN simple_service_catalog ss ON ss.service_id=b.service_id WHERE b.booking_id=? AND ss.code='repair') OR EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog ss ON ss.service_id=bs.service_id WHERE bs.booking_id=? AND ss.code='repair')) AS repairEligible`,[work.booking_id,work.booking_id]);
   const [[report]] = await c.execute(reportSelect, [jobId]);
   const [history] = await c.execute(
     'SELECT version,changed_at AS changedAt,after_json AS content FROM service_report_revision WHERE job_id=? ORDER BY version DESC',
@@ -52,6 +56,8 @@ export async function getReport(c, userId, jobId) {
   return {
     jobId,
     status: work.current_status,
+    repairEligible:Boolean(eligibility.repairEligible),
+    serviceProgress: await getServiceProgress(c,jobId),
     report: report ?? null,
     version: hash(report ?? null),
     history: history.map((r) => ({
@@ -75,8 +81,10 @@ export async function saveReport(pool, userId, jobId, raw) {
   try {
     await c.beginTransaction();
     const w = await ownedWork(c, userId, jobId, true);
+    // The booking lookup can predate a lock wait; current reads must see the
+    // edit that committed while waiting, not that earlier transaction snapshot.
     const [[previous]] = await c.execute(
-      'SELECT payload_hash FROM service_report_revision WHERE request_id=?',
+      'SELECT payload_hash FROM service_report_revision WHERE request_id=? FOR SHARE',
       [d.requestId],
     );
     if (previous) {
@@ -93,14 +101,14 @@ export async function saveReport(pool, userId, jobId, raw) {
         'Start this service from My Jobs before submitting its report.',
         409,
       );
-    const [[old]] = await c.execute(reportSelect, [jobId]);
+    const [[old]] = await c.execute(reportSelect+' FOR UPDATE', [jobId]);
     if (hash(old ?? null) !== d.expectedVersion)
       throw new AppError(
         'This report changed elsewhere. Reload it before editing.',
         409,
       );
     const [[revision]] = await c.execute(
-      'SELECT COALESCE(MAX(version),0)+1 AS nextVersion FROM service_report_revision WHERE job_id=?',
+      'SELECT COALESCE(MAX(version),0)+1 AS nextVersion FROM service_report_revision WHERE job_id=? FOR SHARE',
       [jobId],
     );
     const r = d.report;
@@ -165,7 +173,7 @@ export async function saveReport(pool, userId, jobId, raw) {
 }
 export async function getProfile(c, userId) {
   const [[p]] = await c.execute(
-    `SELECT u.user_id AS userId,u.full_name AS fullName,u.email,u.phone,u.status,u.created_at AS memberSince,t.technician_id AS technicianId,t.availability_status AS availability,COALESCE(p.primary_region,'') AS primaryRegion FROM user_account u JOIN technician t ON t.user_id=u.user_id LEFT JOIN technician_portal_profile p ON p.technician_id=t.technician_id WHERE u.user_id=? AND u.status='Active'`,
+    `SELECT u.user_id AS userId,u.full_name AS fullName,u.email,u.phone,u.status,u.created_at AS memberSince,t.technician_id AS technicianId,t.availability_status AS availability,COALESCE(t.base_postal_code,'') AS basePostalCode,COALESCE(p.primary_region,'') AS primaryRegion FROM user_account u JOIN technician t ON t.user_id=u.user_id LEFT JOIN technician_portal_profile p ON p.technician_id=t.technician_id WHERE u.user_id=? AND u.status='Active'`,
     [userId],
   );
   if (!p) throw new AppError('Technician profile not found.', 404);
@@ -177,6 +185,7 @@ export const profileSchema = z
     fullName: z.string().trim().min(1).max(120),
     phone: z.string().trim().min(3).max(30),
     primaryRegion: z.string().trim().max(120),
+    basePostalCode: z.string().trim().regex(/^(\d{6})?$/,'Enter a six-digit Singapore postal code.').optional(),
     availability: z.enum(['Available', 'Busy', 'Unavailable', 'On Leave']),
   })
   .strict();
@@ -191,7 +200,8 @@ export async function saveProfile(pool, userId, raw) {
       [userId],
     );
     const old = await getProfile(c, userId);
-    const same = ['fullName', 'phone', 'primaryRegion', 'availability'].every(
+    d.basePostalCode??=old.basePostalCode;
+    const same = ['fullName', 'phone', 'primaryRegion', 'availability','basePostalCode'].every(
       (k) => d[k] === (old[k] ?? ''),
     );
     if (!same && d.expectedVersion !== old.version)
@@ -199,13 +209,14 @@ export async function saveProfile(pool, userId, raw) {
         'Your profile changed elsewhere. Reload before saving.',
         409,
       );
+    if(!['Unavailable','On Leave'].includes(old.availability)&&['Unavailable','On Leave'].includes(d.availability))await assertTechnicianCanBecomeUnavailable(c,old.technicianId);
     await c.execute(
       'UPDATE user_account SET full_name=?,phone=? WHERE user_id=?',
       [d.fullName, d.phone, userId],
     );
     await c.execute(
-      'UPDATE technician SET availability_status=? WHERE technician_id=?',
-      [d.availability, old.technicianId],
+      'UPDATE technician SET availability_status=?,base_postal_code=? WHERE technician_id=?',
+      [d.availability,d.basePostalCode||null, old.technicianId],
     );
     await c.execute(
       'INSERT INTO technician_portal_profile(technician_id,primary_region) VALUES(?,?) ON DUPLICATE KEY UPDATE primary_region=VALUES(primary_region)',

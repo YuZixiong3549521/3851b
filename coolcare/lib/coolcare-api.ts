@@ -42,7 +42,10 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return result as T;
 }
 
+export type BookingNotice = {bookingId:number;reference:string;status:string;reason:string;noticeKey:string};
 export const coolcareApi = {
+  getBookingNotices: async () => (await apiRequest<{notices:BookingNotice[]}>('/booking-notifications')).notices,
+  readBookingNotice: async (id:number,noticeKey:string) => apiRequest('/booking-notifications/'+id+'/read',{method:'POST',body:JSON.stringify({noticeKey})}),
   getCustomerContext: async () =>
     (await apiRequest<{ customer: CustomerContext['customer']; addresses: CustomerContext['addresses']; units: CustomerContext['units'] }>('/customer-context')),
   getServices: async () => (await apiRequest<{ services: Service[] }>('/services')).services,
@@ -59,8 +62,8 @@ export const coolcareApi = {
     Object.entries(input).forEach(([key, value]) => { if (value !== undefined) query.set(key, String(value)); });
     return apiRequest<BookingAvailability>(`/booking-availability?${query}`);
   },
-  getSlotAvailability: async (dates: string[]) =>
-    apiRequest<SlotAvailability>(`/slot-availability?dates=${encodeURIComponent(dates.join(','))}`),
+  getSlotAvailability: async (dates: string[], durationMinutes?: number, excludeBookingId?: number) =>
+    apiRequest<SlotAvailability>(`/slot-availability?dates=${encodeURIComponent(dates.join(','))}${durationMinutes ? `&durationMinutes=${durationMinutes}` : ''}${excludeBookingId ? `&excludeBookingId=${excludeBookingId}` : ''}`),
   createAddress: async (input: CreateAddressInput) => {
     const result = await apiRequest<{ address: Address }>('/addresses', { method: 'POST', body: JSON.stringify(input) });
     if (!result.address || !Number.isInteger(Number(result.address.addressId)) || Number(result.address.addressId) < 1 || typeof result.address.addressLine !== 'string') {

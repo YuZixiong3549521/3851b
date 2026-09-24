@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CalendarCheck, Check, Clock3, MapPin, Snowflake, Wind } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
-import { BookingServiceSelection, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
+import { BookingServiceSelection, bookingChangeNotice, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
 import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingAddressField } from '@/components/booking-address-field';
@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { coolcareApi } from '@/lib/coolcare-api';
-import { formatDate, formatMoney } from '@/lib/format';
+import { formatDate, formatMoney, formatServiceWindow } from '@/lib/format';
 import { annualVisitDates,assertBookingConfirmation } from '@/lib/annual-booking';
 import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
 import { useSlotAvailability } from '@/lib/use-slot-availability';
@@ -31,13 +31,15 @@ const timeSlots: BookingInput['timeSlot'][] = ['09:00 - 11:00', '11:00 - 13:00',
 
 type FormState = {
   serviceAddress: string;
+  postalCode: string;
+  specialNotes: string;
   numberOfUnits: number;
   preferredDate: string;
   timeSlot: BookingInput['timeSlot'] | '';
   problemDescription: string;
 };
 
-const initialForm: FormState = { serviceAddress: '', numberOfUnits: 1, preferredDate: '', timeSlot: '', problemDescription: '' };
+const initialForm: FormState = { serviceAddress: '', postalCode: '', specialNotes: '', numberOfUnits: 1, preferredDate: '', timeSlot: '', problemDescription: '' };
 
 export default function BookServicePage() {
   const [step, setStep] = useState(1);
@@ -58,21 +60,28 @@ export default function BookServicePage() {
   useEffect(() => {
     requestId.current = crypto.randomUUID();
     Promise.all([coolcareApi.getCustomerContext(), coolcareApi.getBookingOptions()])
-      .then(([nextContext, nextOptions]) => {
+      .then(async ([nextContext, nextOptions]) => {
         setContext(nextContext);
         setOptions(nextOptions);
-        setForm((current) => ({ ...current, serviceAddress: nextContext.addresses.find((address) => address.isDefault)?.addressLine ?? nextContext.addresses[0]?.addressLine ?? '' }));
+        const address=nextContext.addresses.find(item=>item.isDefault) ?? nextContext.addresses[0];
+        setForm(current=>({...current,serviceAddress:address?.addressLine ?? '',postalCode:address?.postalCode ?? ''}));
+        const rebook=Number(new URLSearchParams(window.location.search).get('rebook'));
+        if(Number.isSafeInteger(rebook)&&rebook>0){
+          const previous=await coolcareApi.getBooking(rebook);
+          const serviceIds=previous.serviceIds?.length ? previous.serviceIds : nextOptions.services.filter(service=>previous.serviceName.includes(service.name)).map(service=>service.serviceId);
+          setSelection(previous.annualBundle && previous.packageId ? {mode:'bundle',packageId:previous.packageId,serviceIds:[],propertyType:previous.propertyType ?? previous.annualBundle.propertyType ?? undefined} : {mode:'custom',serviceIds});
+          setForm(current=>({...current,serviceAddress:previous.addressLine,postalCode:previous.postalCode ?? '',numberOfUnits:previous.numberOfUnits,problemDescription:previous.problemDescription ?? '',specialNotes:previous.specialNotes ?? ''}));
+        }
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to load booking information.'));
   }, []);
 
-  const selectedAddress = context?.addresses.find((address) => address.addressLine === form.serviceAddress);
   const selectedServices = getBookingSelection(options, selection, Math.max(1, form.numberOfUnits));
   const total = form.numberOfUnits > 0 ? selectedServices.estimate : 0;
   const minimumDate = earliestBookingDate();
-  const availability = useBookingAvailability({ serviceAddress: form.serviceAddress, selectedDate: form.preferredDate, enabled: Boolean(context && !created && step >= 2 && !retryLocked) });
+  const availability = useBookingAvailability({ serviceAddress: form.serviceAddress, selectedDate: form.preferredDate, serviceIds: selectedServices.payload.serviceIds, packageId: selectedServices.payload.packageId, enabled: Boolean(context && !created && step >= 2 && !retryLocked) });
   const slotDates=selectedServices.isAnnual?annualVisitDates(form.preferredDate):form.preferredDate?[form.preferredDate]:[];
-  const slotAvailability=useSlotAvailability(slotDates,Boolean(context&&!created&&step>=3&&!retryLocked));
+  const slotAvailability=useSlotAvailability(slotDates,Boolean(context&&!created&&step>=3&&!retryLocked),selectedServices.durationMinutes);
   const selectedSlotFull=Boolean(form.timeSlot&&!slotAvailability.isAvailable(form.timeSlot));
 
   const submitBooking = useCallback(async (input: BookingInput) => {
@@ -132,6 +141,9 @@ export default function BookServicePage() {
           serviceId: { type: 'integer', minimum: 1 },
           serviceIds: { type: 'array', items: { type: 'integer', minimum: 1 }, minItems: 1 },
           packageId: { type: 'integer', minimum: 1 },
+          propertyType: { type: 'string' },
+          postalCode: { type: 'string', minLength: 6, maxLength: 6 },
+          specialNotes: { type: 'string', maxLength: 1000 },
           requestId: { type: 'string', format: 'uuid' },
           addressId: { type: 'integer', minimum: 1 },
           unitIds: { type: 'array', items: { type: 'integer', minimum: 1 }, minItems: 1 },
@@ -155,9 +167,10 @@ export default function BookServicePage() {
   }, [submitBooking]);
 
   function validateCurrentStep() {
-    if (step === 1 && !selectedServices.valid) return 'Choose Cleaning, Repair or the Annual Cleaning Bundle to continue.';
+    if (step === 1 && !selectedServices.valid) return 'Choose your service(s), and select a property type for an annual bundle.';
     if (step === 2 && (form.serviceAddress.trim().length < 5 || form.serviceAddress.trim().length > 255)) return 'Enter a service address between 5 and 255 characters.';
     if (step === 2 && (!Number.isInteger(form.numberOfUnits) || form.numberOfUnits < 1 || form.numberOfUnits > 10)) return 'Enter an AC unit count from 1 to 10.';
+    if (step === 2 && form.postalCode && !/^\d{6}$/.test(form.postalCode)) return 'Enter a six-digit Singapore postal code.';
     if (step === 3 && bookingDateError(form.preferredDate)) return bookingDateError(form.preferredDate);
     if (step === 3 && availability.selectedDateBlocked) return bookingConflictMessage;
     if (step === 3 && !form.timeSlot) return 'Choose a preferred time slot.';
@@ -183,6 +196,8 @@ export default function BookServicePage() {
         preferredDate: form.preferredDate,
         timeSlot: form.timeSlot,
         problemDescription: form.problemDescription,
+        specialNotes: form.specialNotes,
+        postalCode: form.postalCode || undefined,
       });
     } catch {
       // The shared submit path displays errors for both the form and WebMCP.
@@ -191,7 +206,7 @@ export default function BookServicePage() {
 
   function handleAddressSaved(address: Address) {
     setContext(current => current ? { ...current, addresses: [address, ...current.addresses.filter(item => item.addressId !== address.addressId)] } : current);
-    setForm(current => ({ ...current, serviceAddress: address.addressLine }));
+    setForm(current => ({ ...current, serviceAddress: address.addressLine, postalCode: address.postalCode ?? '' }));
     setFieldError('');
   }
 
@@ -234,17 +249,19 @@ export default function BookServicePage() {
 
               {step === 2 && (
                 <div><h2 className="text-xl font-bold">Where should we service?</h2><p className="mt-1 text-sm text-muted-foreground">Choose a saved address or enter a new service address.</p>
-                  <div className="mt-6"><BookingAddressField key={context.customer.userId} expectedUserId={context.customer.userId} addresses={context.addresses} value={form.serviceAddress} onChange={value => { setForm(current => ({ ...current, serviceAddress: value })); setFieldError(''); }} onAddressSaved={handleAddressSaved} onEditingChange={setAddressEditorOpen} /></div>
-                  <div className="mt-7"><FieldLabel htmlFor="number-of-units">Number of AC units</FieldLabel><Input id="number-of-units" type="number" inputMode="numeric" min={1} max={10} step={1} value={form.numberOfUnits || ''} onChange={event => { setForm(current => ({ ...current, numberOfUnits: Number(event.target.value) })); setFieldError(''); }} className="mt-2 h-12 max-w-40" /><p className="mt-2 text-xs text-muted-foreground">Enter how many air conditioners need service (1–10).</p><p className="mt-3 text-sm font-semibold text-primary">{selectedServices.isAnnual ? 'Annual estimate' : 'Visit estimate'}: {formatMoney(total)}</p></div>
+                  <div className="mt-6"><BookingAddressField key={context.customer.userId} expectedUserId={context.customer.userId} addresses={context.addresses} value={form.serviceAddress} postalCode={form.postalCode} onPostalCodeChange={postalCode=>setForm(current=>({...current,postalCode}))} onChange={value => { setForm(current => ({ ...current, serviceAddress: value })); setFieldError(''); }} onAddressSaved={handleAddressSaved} onEditingChange={setAddressEditorOpen} /></div>
+                  <div className="mt-7"><FieldLabel htmlFor="number-of-units">Number of AC units</FieldLabel><Input id="number-of-units" type="number" inputMode="numeric" min={1} max={10} step={1} value={form.numberOfUnits || ''} onChange={event => { setForm(current => ({ ...current, numberOfUnits: Number(event.target.value) })); setFieldError(''); }} className="mt-2 h-12 max-w-40" /><p className="mt-2 text-xs text-muted-foreground">Enter how many air conditioners need service (1–10). Estimated visit duration: {selectedServices.durationMinutes} minutes.</p><p className="mt-3 text-sm font-semibold text-primary">{selectedServices.isAnnual ? 'Annual estimate' : 'Visit estimate'}: {formatMoney(total)}</p></div>
                 </div>
               )}
 
               {step === 3 && (
                 <div><h2 className="text-xl font-bold">Choose a preferred schedule</h2><p className="mt-1 text-sm text-muted-foreground">{bookingScheduleNotice}</p>
-                  <div className="mt-6 grid gap-5 sm:grid-cols-2"><div><FieldLabel htmlFor="preferred-date">{selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'}</FieldLabel><EnglishDatePicker id="preferred-date" label={selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'} min={minimumDate} aria-invalid={Boolean(bookingDateError(form.preferredDate)) || availability.selectedDateBlocked} value={form.preferredDate} blockedDates={availability.blockedDates} onMonthChange={availability.onMonthChange} onChange={value => { setForm(current => ({ ...current, preferredDate: value })); setFieldError(bookingDateError(value)); }} className="mt-2" /></div><div><FieldLabel htmlFor="time-slot">Preferred time</FieldLabel><Select value={form.timeSlot || undefined} onValueChange={(value) => setForm((current) => ({ ...current, timeSlot: value as BookingInput['timeSlot'] }))}><SelectTrigger id="time-slot" className="mt-2 h-12 w-full"><SelectValue placeholder="Choose a time slot" /></SelectTrigger><SelectContent>{timeSlots.map((slot) => <SelectItem key={slot} value={slot} disabled={!slotAvailability.isAvailable(slot)}>{slot}{slotAvailability.isAvailable(slot)?'':' · Fully booked'}</SelectItem>)}</SelectContent></Select>{slotAvailability.loading&&<p className="mt-2 text-xs text-muted-foreground">Checking team availability…</p>}{slotAvailability.error&&<p className="mt-2 text-xs text-amber-800">Availability will be checked again when you confirm.</p>}{selectedSlotFull&&<p role="alert" className="mt-2 text-xs text-red-700">This service time is fully booked.</p>}</div></div>
+                  <div className="mt-6 grid gap-5 sm:grid-cols-2"><div><FieldLabel htmlFor="preferred-date">{selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'}</FieldLabel><EnglishDatePicker id="preferred-date" label={selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'} min={minimumDate} aria-invalid={Boolean(bookingDateError(form.preferredDate)) || availability.selectedDateBlocked} value={form.preferredDate} blockedDates={availability.blockedDates} onMonthChange={availability.onMonthChange} onChange={value => { setForm(current => ({ ...current, preferredDate: value })); setFieldError(bookingDateError(value)); }} className="mt-2" /></div><div><FieldLabel htmlFor="time-slot">Preferred time</FieldLabel><Select value={form.timeSlot || null} onValueChange={(value) => setForm((current) => ({ ...current, timeSlot: value as BookingInput['timeSlot'] }))}><SelectTrigger id="time-slot" className="mt-2 h-12 w-full"><SelectValue placeholder="Choose a time slot" /></SelectTrigger><SelectContent>{timeSlots.map((slot) => <SelectItem key={slot} value={slot} disabled={!slotAvailability.isAvailable(slot)}>{formatServiceWindow(slot,selectedServices.durationMinutes)}{slotAvailability.isAvailable(slot)?'':' · Unavailable'}</SelectItem>)}</SelectContent></Select>{slotAvailability.loading&&<p className="mt-2 text-xs text-muted-foreground">Checking team availability…</p>}{slotAvailability.error&&<p className="mt-2 text-xs text-amber-800">Availability will be checked again when you confirm.</p>}{selectedSlotFull&&<p role="alert" className="mt-2 text-xs text-red-700">This service time is fully booked.</p>}</div></div>
                   <BookingAvailabilityNotice availability={availability} />
                   <p className="mt-3 text-xs text-muted-foreground">{bookingFrequencyNotice} The service team will confirm availability.</p>
-                  {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} collapsible /></div>}
+                  {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary durationMinutes={selectedServices.durationMinutes} firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} collapsible /></div>}
+                  <p className="mt-3 text-xs text-muted-foreground">{bookingChangeNotice}</p>
+                  <div className="mt-6"><FieldLabel htmlFor="other-remarks">Other remarks (optional)</FieldLabel><Textarea id="other-remarks" maxLength={1000} value={form.specialNotes} onChange={event=>setForm(current=>({...current,specialNotes:event.target.value}))} placeholder="For the administrator: preferred technician, access instructions or other requests." className="mt-2" /></div>
                   <div className="mt-6"><FieldLabel htmlFor="problem-description">Problem description <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Textarea id="problem-description" value={form.problemDescription} onChange={(event) => setForm((current) => ({ ...current, problemDescription: event.target.value }))} maxLength={1000} placeholder="Tell the technician about leaks, noise, weak cooling or other concerns." className="mt-2 min-h-28 resize-y" /><p className="mt-1 text-right text-xs text-muted-foreground">{form.problemDescription.length}/1000</p></div>
                 </div>
               )}
@@ -253,13 +270,17 @@ export default function BookServicePage() {
                 <div><h2 className="text-xl font-bold">Review your request</h2><p className="mt-1 text-sm text-muted-foreground">Check your services and visit details before confirming.</p>
                   <dl className="mt-6 divide-y divide-border rounded-2xl border border-border bg-muted/35 px-5">
                     <ReviewRow icon={Snowflake} label="Services" value={`${selectedServices.label}${selection.mode !== 'custom' ? ` · ${selectedServices.serviceNames}` : ''}`} />
-                    <ReviewRow icon={MapPin} label="Address" value={`${form.serviceAddress}${selectedAddress?.postalCode ? `, ${selectedAddress.postalCode}` : ''}`} />
+                    <ReviewRow icon={MapPin} label="Address" value={`${form.serviceAddress}${form.postalCode ? `, ${form.postalCode}` : ''}`} />
+                    {selectedServices.propertyLabel && <ReviewRow icon={MapPin} label="Property type" value={selectedServices.propertyLabel} />}
+                    <ReviewRow icon={Clock3} label="Estimated duration" value={`${selectedServices.durationMinutes} minutes`} />
                     <ReviewRow icon={Wind} label="Number of AC units" value={String(form.numberOfUnits)} />
-                    <ReviewRow icon={CalendarCheck} label="Schedule" value={`${formatDate(form.preferredDate)} · ${form.timeSlot}`} />
+                    <ReviewRow icon={CalendarCheck} label="Schedule" value={`${formatDate(form.preferredDate)} · ${formatServiceWindow(form.timeSlot,selectedServices.durationMinutes)}`} />
                     <ReviewRow icon={Clock3} label={selectedServices.isAnnual ? 'Annual estimate' : 'Visit estimate'} value={formatMoney(total)} />
                   </dl>
-                  {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} /></div>}
+                  {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary durationMinutes={selectedServices.durationMinutes} firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} /></div>}
                   {selectedServices.pricingNote && <p className="mt-4 text-sm text-muted-foreground">{selectedServices.pricingNote}</p>}
+                  <p className="mt-4 text-sm text-muted-foreground">{bookingChangeNotice} Unconfirmed requests expire after 48 hours.</p>
+                  {form.specialNotes && <p className="mt-4 whitespace-pre-wrap text-sm"><strong>Other remarks: </strong>{form.specialNotes}</p>}
                   {form.problemDescription && <div className="mt-5 rounded-2xl border border-border p-4"><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Problem description</p><p className="mt-2 text-sm leading-6">{form.problemDescription}</p></div>}
                 </div>
               )}

@@ -41,7 +41,7 @@ test('new customer can save an address without AC records and book by count thro
     const [[persisted]]=await c.execute('SELECT customer_id,address_line,postal_code FROM service_address WHERE address_id=?',[saved.addressId]);
     assert.equal(persisted.customer_id,context.customer.customerId);assert.equal(persisted.postal_code,'012345');
     const options=await(await request('/api/customer/booking-options')).json();
-    const payload={serviceAddress:saved.addressLine,addressId:saved.addressId,numberOfUnits:2,serviceIds:options.bundles[0].serviceIds,packageId:options.bundles[0].packageId,preferredDate:nextWeekday(minimumBookingDate()),timeSlot:'09:00 - 11:00',requestId:randomUUID(),expectedUserId:login.user.id,customerId:1,userId:1};
+    const payload={serviceAddress:saved.addressLine,addressId:saved.addressId,numberOfUnits:2,serviceIds:options.bundles[0].serviceIds,propertyType:'hdb-4',packageId:options.bundles[0].packageId,preferredDate:nextWeekday(minimumBookingDate()),timeSlot:'09:00 - 11:00',requestId:randomUUID(),expectedUserId:login.user.id,customerId:1,userId:1};
     const [[foreign]]=await c.execute('SELECT address_id,address_line FROM service_address WHERE customer_id<>? LIMIT 1',[context.customer.customerId]);assert.ok(foreign);
     assert.equal((await request('/api/customer/bookings','POST',{...payload,addressId:foreign.address_id,serviceAddress:foreign.address_line})).status,400);
     assert.equal((await request('/api/customer/bookings','POST',{...payload,serviceAddress:'A different address'})).status,400);
@@ -58,7 +58,7 @@ test('new customer can save an address without AC records and book by count thro
     const [[messages]]=await c.execute(`SELECT COUNT(*) AS n FROM booking_email_outbox e JOIN annual_booking_visit v ON v.booking_id=e.booking_id WHERE v.series_id=?`,[annual.annualBundle.seriesId]);assert.equal(messages.n,0);
     const direct={serviceAddress:'25 Direct Typed Street #03-04',numberOfUnits:3,serviceIds:[options.services.find(service=>service.code==='cleaning').serviceId],preferredDate:payload.preferredDate,timeSlot:payload.timeSlot,requestId:randomUUID(),expectedUserId:login.user.id};
     const directResponse=await request('/api/customer/bookings','POST',direct);assert.equal(directResponse.status,201);
-    const oneOff=(await directResponse.json()).booking;assert.equal(oneOff.totalAmount,100);
+    const oneOff=(await directResponse.json()).booking;assert.equal(oneOff.totalAmount,150);
     assert.equal((await(await request('/api/customer/bookings','POST',direct)).json()).booking.bookingId,oneOff.bookingId);
     context=await state();assert.equal(context.addresses.length,2);assert.equal(context.units.length,5);
     const countsBefore={addresses:context.addresses.length,units:context.units.length};

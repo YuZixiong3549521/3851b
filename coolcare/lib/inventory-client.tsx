@@ -35,17 +35,89 @@ export type List<T> = {
   page: number;
   pageSize: number;
 };
-export type User = { user_id: number; full_name: string; email: string; access_level: 'Owner' | 'Admin' };
+export type User = {
+  user_id: number;
+  full_name: string;
+  email: string;
+  access_level: 'Owner' | 'Admin';
+};
 export type AdminBooking = {
-  bookingId: number; status: string; preferredDate: string; timeSlot: string; totalAmount: number | null;
-  createdAt: string; customerName: string; email: string; addressLine: string; serviceName: string;
-  numberOfUnits: number; technicianName: string | null;
+  bookingId: number;
+  status: string;
+  preferredDate: string;
+  timeSlot: string;
+  slotStart?: string | null;
+  slotEnd?: string | null;
+  estimatedDurationMinutes?: number | null;
+  totalAmount: number | null;
+  createdAt: string;
+  customerName: string;
+  email: string;
+  addressLine: string;
+  serviceName: string;
+  numberOfUnits: number;
+  technicianName: string | null;
+  expiresAt?: string | null;
 };
 export type AdminBookingDetail = AdminBooking & {
-  reports?: Array<{photos?:Array<{photoId:number;url:string|null;description:string|null;uploadedAt:string}>;customerSignatureUrl?:string|null;technicianSignatureUrl?:string|null;reportId:number;workPerformed:string;problemFound:string|null;solutionApplied:string|null;checklist:string|null;startedAt:string|null;completedAt:string|null}>;
-  phone: string | null; postalCode: string | null; problemDescription: string | null;
-  timeline: Array<{ historyId: number; oldStatus: string | null; status: string; note: string | null; changedAt: string; changedBy: string | null }>;
-  assignments: Array<{ assignmentId: number; status: string; assignedAt: string; technicianName: string; jobId: number; workStatus: string }>;
+  reports?: Array<{
+    photos?: Array<{
+      photoId: number;
+      url: string | null;
+      description: string | null;
+      uploadedAt: string;
+    }>;
+    customerSignatureUrl?: string | null;
+    technicianSignatureUrl?: string | null;
+    reportId: number;
+    workPerformed: string;
+    problemFound: string | null;
+    solutionApplied: string | null;
+    checklist: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+  }>;
+  phone: string | null;
+  postalCode: string | null;
+  problemDescription: string | null;
+  rejectionReason?: string | null;
+  rejectionVersion?: number;
+  otherRemarks?: string | null;
+
+  timeline: Array<{
+    historyId: number;
+    oldStatus: string | null;
+    status: string;
+    note: string | null;
+    changedAt: string;
+    changedBy: string | null;
+  }>;
+  assignments: Array<{
+    assignmentId: number;
+    status: string;
+    assignedAt: string;
+    technicianName: string;
+    jobId: number;
+    workStatus: string;
+    progress?: {
+      extensionMinutes: number;
+      expectedEndTime: string | null;
+      followUpStatus: string;
+      followUpDate: string | null;
+      followUpStart: string | null;
+      followUpEnd: string | null;
+      additionalRepairFee: number;
+      repairQuoteNote: string | null;
+      events: Array<{
+        id: number;
+        kind: string;
+        notes: string;
+        reason: string;
+        partNotes: string;
+        createdAt: string;
+      }>;
+    } | null;
+  }>;
 };
 export type AdminSchedule = {
   from: string;
@@ -59,6 +131,14 @@ export type DispatchTechnicianOption = {
   accountStatus: string;
   availability: string;
   dailyJobs: number;
+  proximity?: {
+    rank: number;
+    label: string;
+    basis: string;
+    originPostalCode: string | null;
+    origin: string;
+    previousBookingId: number | null;
+  };
   current: boolean;
   eligible: boolean;
   reason: string | null;
@@ -68,14 +148,28 @@ export type DispatchOptions = {
   status: string;
   preferredDate: string;
   timeSlot: string;
+  slotStart?: string | null;
+  slotEnd?: string | null;
+  estimatedDurationMinutes?: number | null;
   technicians: DispatchTechnicianOption[];
 };
 export type StaffMember = {
-  userId: number; technicianId?: number; fullName: string; email: string; phone: string | null; status: 'Active' | 'Inactive' | 'Suspended';
-  createdAt: string; accessLevel?: 'Owner' | 'Admin'; availability?: 'Available' | 'Busy' | 'Unavailable' | 'On Leave';
-  lastAssignedAt?: string | null; invitationId?: number | null; invitationExpiresAt?: string | null;
-  invitationAcceptedAt?: string | null; invitationRevokedAt?: string | null;
+  userId: number;
+  technicianId?: number;
+  fullName: string;
+  email: string;
+  phone: string | null;
+  status: 'Active' | 'Inactive' | 'Suspended';
+  createdAt: string;
+  accessLevel?: 'Owner' | 'Admin';
+  availability?: 'Available' | 'Busy' | 'Unavailable' | 'On Leave';
+  lastAssignedAt?: string | null;
+  invitationId?: number | null;
+  invitationExpiresAt?: string | null;
+  invitationAcceptedAt?: string | null;
+  invitationRevokedAt?: string | null;
   futureWorkOrders?: number;
+  basePostalCode?: string | null;
 };
 export type Options = {
   parts: Part[];

@@ -76,6 +76,27 @@ export function slotColumns(value) {
   return { slotStart: slot.start, slotEnd: slot.end };
 }
 
+// Slot codes retain the familiar arrival choices; occupied time reflects work.
+export function bookingServiceSlot(value, durationMinutes) {
+  const slot = normalizeBookingSlot(value);
+  if (!durationMinutes) return slot; // Preserve historical bookings without a duration snapshot.
+  const duration = Number(durationMinutes);
+  if (!Number.isInteger(duration) || duration < 1 || duration > 540)
+    throw new AppError('The service duration is not available.', 400);
+  const [hours, minutes] = slot.start.split(':').map(Number);
+  const end = hours * 60 + minutes + duration;
+  if (end > 18 * 60)
+    throw new AppError(
+      'This service would finish after 6:00 PM. Choose an earlier start time or fewer units.',
+      409,
+    );
+  return {
+    ...slot,
+    end: `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}:00`,
+    durationMinutes: duration,
+  };
+}
+
 export function intervalsOverlap(aStart, aEnd, bStart, bEnd) {
   return String(aStart) < String(bEnd) && String(aEnd) > String(bStart);
 }
@@ -112,18 +133,57 @@ export async function eligibleTechnicianCount(executor) {
   return rows.length;
 }
 
+export function peakConcurrentReservations(intervals, start, end) {
+  const events = [];
+  for (const interval of intervals) {
+    const clippedStart =
+      String(interval.start) > String(start)
+        ? String(interval.start)
+        : String(start);
+    const clippedEnd =
+      String(interval.end) < String(end) ? String(interval.end) : String(end);
+    if (clippedStart < clippedEnd)
+      events.push([clippedStart, 1], [clippedEnd, -1]);
+  }
+  events.sort(
+    (a, b) =>
+      String(a[0]).localeCompare(String(b[0])) || Number(a[1]) - Number(b[1]),
+  );
+  let count = 0,
+    peak = 0;
+  for (const [, delta] of events) {
+    count += Number(delta);
+    peak = Math.max(peak, count);
+  }
+  return peak;
+}
+
 export async function activeReservationCount(
   executor,
-  { date, start, end, excludeBookingId = 0 },
+  { date, start, end, excludeBookingId = 0, additionalReservations = [] },
 ) {
   const [rows] = await executor.execute(
-    `SELECT b.booking_id FROM booking b
+    `SELECT b.booking_id,b.slot_start AS start,b.slot_end AS end FROM booking b
     WHERE b.preferred_service_date=? AND b.booking_status IN ('Submitted','Confirmed','Assigned','On The Way','In Progress')
     AND b.booking_id<>? AND b.slot_start IS NOT NULL AND b.slot_end IS NOT NULL
     AND b.slot_start<? AND b.slot_end>? ORDER BY b.booking_id FOR UPDATE`,
     [date, excludeBookingId, end, start],
   );
-  return rows.length;
+  const [followups] = await executor.execute(
+    `SELECT p.job_id,p.follow_up_start AS start,p.follow_up_end AS end FROM service_progress p JOIN work_order w ON w.job_id=p.job_id
+    WHERE p.follow_up_date=? AND p.follow_up_status IN ('Scheduled','In Progress') AND w.booking_id<>?
+    AND p.follow_up_start<? AND p.follow_up_end>? ORDER BY p.job_id FOR UPDATE`,
+    [date, excludeBookingId, end, start],
+  );
+  return peakConcurrentReservations(
+    [
+      ...rows,
+      ...followups,
+      ...additionalReservations.filter((visit) => visit.date === date),
+    ],
+    start,
+    end,
+  );
 }
 
 // The caller owns the transaction. Locking service dates in a stable order
@@ -158,13 +218,9 @@ export async function assertTeamCapacity(
     const reserved = await activeReservationCount(connection, {
       ...visit,
       excludeBookingId,
+      additionalReservations: proposed,
     });
-    const sameRequest = proposed.filter(
-      (other) =>
-        other.date === visit.date &&
-        intervalsOverlap(other.start, other.end, visit.start, visit.end),
-    ).length;
-    if (reserved + sameRequest >= technicianCount) {
+    if (reserved >= technicianCount) {
       conflicts.push({ ...visit, reserved, capacity: technicianCount });
     } else {
       proposed.push(visit);
@@ -181,22 +237,43 @@ export async function assertTeamCapacity(
   return { technicianCount, visits: normalized };
 }
 
-export async function getTeamSlotAvailability(executor, dates) {
+export async function getTeamSlotAvailability(
+  executor,
+  dates,
+  { durationMinutes, excludeBookingId = 0 } = {},
+) {
   const unique = [...new Set(dates.map((value) => String(value).slice(0, 10)))];
   const technicianCount = await eligibleTechnicianCount(executor);
   const result = [];
   for (const date of unique) {
     const slots = [];
-    for (const slot of BOOKING_TIME_SLOTS) {
+    for (const choice of BOOKING_TIME_SLOTS) {
+      let slot;
+      try {
+        slot = bookingServiceSlot(choice.code, durationMinutes);
+      } catch (error) {
+        if (error.status !== 409) throw error;
+        slots.push({
+          code: choice.code,
+          label: choice.label,
+          available: false,
+          reason: error.message,
+        });
+        continue;
+      }
       const reserved = await activeReservationCount(executor, {
         date,
         start: slot.start,
         end: slot.end,
+        excludeBookingId,
       });
       slots.push({
         code: slot.code,
         label: slot.label,
         available: technicianCount > reserved,
+        start: slot.start,
+        end: slot.end,
+        durationMinutes: durationMinutes ?? null,
       });
     }
     result.push({ date, slots });

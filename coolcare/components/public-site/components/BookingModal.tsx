@@ -1,22 +1,42 @@
-
 import { SiteIcon } from '@/components/ui/site-icon';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { BookingServiceSelection, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
+import {
+  BookingServiceSelection,
+  bookingFrequencyNotice,
+  bookingChangeNotice,
+  emptyBookingSelection,
+  getBookingSelection,
+  type BookingSelection,
+} from '@/components/booking-service-selection';
 import { BookingAddressField } from '@/components/booking-address-field';
 import { EnglishDatePicker } from '@/components/english-date-picker';
-import { BookingAvailabilityNotice, bookingConflictMessage } from '@/components/booking-availability-notice';
+import {
+  BookingAvailabilityNotice,
+  bookingConflictMessage,
+} from '@/components/booking-availability-notice';
 import { useBookingAvailability } from '@/lib/use-booking-availability';
 import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { coolcareApi } from '@/lib/coolcare-api';
-import { formatDate, formatMoney } from '@/lib/format';
-import { annualVisitDates,assertBookingConfirmation } from '@/lib/annual-booking';
+import { formatDate, formatMoney, formatServiceWindow } from '@/lib/format';
+import {
+  annualVisitDates,
+  assertBookingConfirmation,
+} from '@/lib/annual-booking';
 import { useSlotAvailability } from '@/lib/use-slot-availability';
-import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
-import type { Address, AnnualBundle, BookingOptions } from '@/lib/coolcare-types';
+import {
+  bookingDateError,
+  bookingScheduleNotice,
+  earliestBookingDate,
+} from '@/lib/booking-schedule';
+import type {
+  Address,
+  AnnualBundle,
+  BookingOptions,
+} from '@/lib/coolcare-types';
 import { apiFetch as fetch } from '../api';
 import React, { useState, useEffect, useRef } from 'react';
 import type { BookingIntent, User, PageRoute } from '../types';
@@ -29,11 +49,11 @@ interface BookingModalProps {
   onNavigate: (page: PageRoute) => void;
   onBookingConfirmed: (summary: string) => void;
 }
-const publicSlots=[
-  {label:'09:00 AM - 11:00 AM',code:'09:00 - 11:00'},
-  {label:'11:00 AM - 01:00 PM',code:'11:00 - 13:00'},
-  {label:'02:00 PM - 04:00 PM',code:'14:00 - 16:00'},
-  {label:'04:00 PM - 06:00 PM',code:'16:00 - 18:00'},
+const publicSlots = [
+  { label: '09:00 AM - 11:00 AM', code: '09:00 - 11:00' },
+  { label: '11:00 AM - 01:00 PM', code: '11:00 - 13:00' },
+  { label: '02:00 PM - 04:00 PM', code: '14:00 - 16:00' },
+  { label: '04:00 PM - 06:00 PM', code: '16:00 - 18:00' },
 ] as const;
 
 export const BookingModal: React.FC<BookingModalProps> = ({
@@ -44,7 +64,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   onNavigate,
   onBookingConfirmed,
 }) => {
-  const [selection, setSelection] = useState<BookingSelection>(emptyBookingSelection);
+  const [selection, setSelection] = useState<BookingSelection>(
+    emptyBookingSelection,
+  );
   const [options, setOptions] = useState<BookingOptions | null>(null);
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [unitsCount, setUnitsCount] = useState(2);
@@ -53,12 +75,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
   const [notes, setNotes] = useState('');
+  const [otherRemarks, setOtherRemarks] = useState('');
+  const [postalCode, setPostalCode] = useState('');
   const [step, setStep] = useState<'form' | 'success'>('form');
-  const [pricesReady,setPricesReady]=useState(false);
+  const [pricesReady, setPricesReady] = useState(false);
   const [error, setError] = useState('');
   const [retryLocked, setRetryLocked] = useState(false);
   const [addressEditorOpen, setAddressEditorOpen] = useState(false);
-  const [created, setCreated] = useState<{ id: number; status: string; totalAmount: number; annualBundle?: AnnualBundle | null } | null>(null);
+  const [created, setCreated] = useState<{
+    id: number;
+    status: string;
+    totalAmount: number;
+    annualBundle?: AnnualBundle | null;
+  } | null>(null);
   const ownerId = useRef<string | number | null>(null);
   const lastPrefill = useRef<string | undefined>(undefined);
   const lastAutomaticSymptom = useRef('');
@@ -67,47 +96,126 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   useEffect(() => {
     if (!isOpen || !currentUser) return;
     let active = true;
-    setPricesReady(false); setError('');
+    setPricesReady(false);
+    setError('');
     const accountChanged = ownerId.current !== currentUser.id;
-    const prefillChanged = Boolean(prefill && lastPrefill.current !== prefill.key);
-    const requestLocked = !accountChanged && Boolean(pendingRequest.current || requestInFlight.current);
+    const prefillChanged = Boolean(
+      prefill && lastPrefill.current !== prefill.key,
+    );
+    const requestLocked =
+      !accountChanged &&
+      Boolean(pendingRequest.current || requestInFlight.current);
     if (accountChanged) {
       ownerId.current = currentUser.id;
       lastAutomaticSymptom.current = '';
       pendingRequest.current = null;
-      setRequestId(crypto.randomUUID()); setSelection(emptyBookingSelection); setStep('form'); setCreated(null); setRetryLocked(false); setAddress(''); setNotes(''); setPhone(currentUser.phone || '');
-      setUnitsCount(2); setDate(earliestBookingDate()); setTimeSlot('09:00 AM - 11:00 AM');
+      setRequestId(crypto.randomUUID());
+      setSelection(emptyBookingSelection);
+      setStep('form');
+      setCreated(null);
+      setRetryLocked(false);
+      setAddress('');
+      setPostalCode('');
+      setNotes('');
+      setOtherRemarks('');
+      setPhone(currentUser.phone || '');
+      setUnitsCount(2);
+      setDate(earliestBookingDate());
+      setTimeSlot('09:00 AM - 11:00 AM');
     }
-    Promise.all([coolcareApi.getBookingOptions(), coolcareApi.getCustomerContext()]).then(([nextOptions, context]) => { if (active) {
-      if (context.customer.userId !== Number(currentUser.id)) throw new Error('Your signed-in account changed. Reload before booking.');
-      if (!requestLocked) setOptions(nextOptions);
-      setAddresses(context.addresses); setPricesReady(true);
-      setAddress(value => value || context.addresses.find(item => item.isDefault)?.addressLine || context.addresses[0]?.addressLine || '');
-      const defaultService = prefill?.serviceName;
-      if (!requestLocked && (prefillChanged || accountChanged) && defaultService) setSelection(value => {
-        const bundle = nextOptions.bundles.find(item => item.name.toLowerCase() === defaultService.toLowerCase());
-        if (bundle) return { mode: 'bundle', packageId: bundle.packageId, serviceIds: bundle.serviceIds };
-        const match = nextOptions.services.find(item => item.name.toLowerCase() === defaultService.toLowerCase());
-        return match ? { mode: 'custom', serviceIds: [match.serviceId] } : value;
-      });
-      if (!requestLocked && (prefillChanged || accountChanged) && prefill) {
-        if (Number.isInteger(prefill.numberOfUnits) && prefill.numberOfUnits! >= 1 && prefill.numberOfUnits! <= 10) setUnitsCount(prefill.numberOfUnits!);
-        if (prefill.symptoms?.trim()) {
-          const symptom = prefill.symptoms.trim();
-          const previousSymptom = lastAutomaticSymptom.current;
-          setNotes(value => {
-            let existing = accountChanged ? '' : value;
-            // Replace only the untouched automatic note; keep customer-written instructions.
-            if (previousSymptom && (existing === previousSymptom || existing.startsWith(previousSymptom + '\n'))) existing = existing.slice(previousSymptom.length).trimStart();
-            return existing.includes(symptom) ? existing : [symptom, existing].filter(Boolean).join('\n').slice(0, 1000);
-          });
-          lastAutomaticSymptom.current = symptom;
+    Promise.all([
+      coolcareApi.getBookingOptions(),
+      coolcareApi.getCustomerContext(),
+    ])
+      .then(([nextOptions, context]) => {
+        if (active) {
+          if (context.customer.userId !== Number(currentUser.id))
+            throw new Error(
+              'Your signed-in account changed. Reload before booking.',
+            );
+          if (!requestLocked) setOptions(nextOptions);
+          setAddresses(context.addresses);
+          setPricesReady(true);
+          setAddress(
+            (value) =>
+              value ||
+              context.addresses.find((item) => item.isDefault)?.addressLine ||
+              context.addresses[0]?.addressLine ||
+              '',
+          );
+          const defaultService = prefill?.serviceName;
+          if (
+            !requestLocked &&
+            (prefillChanged || accountChanged) &&
+            defaultService
+          )
+            setSelection((value) => {
+              const bundle = nextOptions.bundles.find(
+                (item) =>
+                  item.name.toLowerCase() === defaultService.toLowerCase(),
+              );
+              if (bundle)
+                return {
+                  mode: 'bundle',
+                  packageId: bundle.packageId,
+                  serviceIds: bundle.serviceIds,
+                  propertyType: prefill?.propertyType,
+                };
+              const match = nextOptions.services.find(
+                (item) =>
+                  item.name.toLowerCase() === defaultService.toLowerCase(),
+              );
+              return match
+                ? { mode: 'custom', serviceIds: [match.serviceId] }
+                : value;
+            });
+          if (!requestLocked && (prefillChanged || accountChanged) && prefill) {
+            if (
+              Number.isInteger(prefill.numberOfUnits) &&
+              prefill.numberOfUnits! >= 1 &&
+              prefill.numberOfUnits! <= 10
+            )
+              setUnitsCount(prefill.numberOfUnits!);
+            if (prefill.symptoms?.trim()) {
+              const symptom = prefill.symptoms.trim();
+              const previousSymptom = lastAutomaticSymptom.current;
+              setNotes((value) => {
+                let existing = accountChanged ? '' : value;
+                // Replace only the untouched automatic note; keep customer-written instructions.
+                if (
+                  previousSymptom &&
+                  (existing === previousSymptom ||
+                    existing.startsWith(previousSymptom + '\n'))
+                )
+                  existing = existing.slice(previousSymptom.length).trimStart();
+                return existing.includes(symptom)
+                  ? existing
+                  : [symptom, existing]
+                      .filter(Boolean)
+                      .join('\n')
+                      .slice(0, 1000);
+              });
+              lastAutomaticSymptom.current = symptom;
+            }
+            lastPrefill.current = prefill.key;
+          }
+          if (requestLocked)
+            setError(
+              'A previous request still needs confirmation. Retry with the same details before starting another booking.',
+            );
         }
-        lastPrefill.current = prefill.key;
-      }
-      if (requestLocked) setError('A previous request still needs confirmation. Retry with the same details before starting another booking.');
-    } }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load prices. Please reopen this window to retry.'); });
-    return () => { active = false; };
+      })
+      .catch((reason) => {
+        if (active)
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : 'Unable to load prices. Please reopen this window to retry.',
+          );
+      });
+    return () => {
+      active = false;
+    };
   }, [isOpen, currentUser?.id, prefill]);
 
   // Pre-fill user contact info if available
@@ -117,90 +225,201 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     }
   }, [currentUser]);
 
-  const [submitting,setSubmitting]=useState(false);
-  const [requestId,setRequestId]=useState('');
-  const availability = useBookingAvailability({ serviceAddress: address, selectedDate: date, enabled: Boolean(isOpen && currentUser && pricesReady && step === 'form' && !retryLocked) });
+  const [submitting, setSubmitting] = useState(false);
+  const [requestId, setRequestId] = useState('');
   const selectedServices = getBookingSelection(options, selection, unitsCount);
-  const slotDates=selectedServices.isAnnual?annualVisitDates(date):date?[date]:[];
-  const slotAvailability=useSlotAvailability(slotDates,Boolean(isOpen&&currentUser&&pricesReady&&step==='form'&&!retryLocked));
-  const selectedSlotCode=publicSlots.find(slot=>slot.label===timeSlot)?.code??'09:00 - 11:00';
-  const selectedSlotFull=!slotAvailability.isAvailable(selectedSlotCode);
+  const availability = useBookingAvailability({
+    serviceAddress: address,
+    selectedDate: date,
+    serviceIds: selectedServices.payload.serviceIds,
+    packageId: selectedServices.payload.packageId,
+    enabled: Boolean(
+      isOpen && currentUser && pricesReady && step === 'form' && !retryLocked,
+    ),
+  });
+  const slotDates = selectedServices.isAnnual
+    ? annualVisitDates(date)
+    : date
+      ? [date]
+      : [];
+  const slotAvailability = useSlotAvailability(
+    slotDates,
+    Boolean(
+      isOpen && currentUser && pricesReady && step === 'form' && !retryLocked,
+    ),
+    selectedServices.durationMinutes || undefined,
+  );
+  const selectedSlotCode =
+    publicSlots.find((slot) => slot.label === timeSlot)?.code ??
+    '09:00 - 11:00';
+  const selectedSlotFull = !slotAvailability.isAvailable(selectedSlotCode);
   if (!isOpen) return null;
 
   const serviceType = selectedServices.label;
   const estimatedTotal = selectedServices.estimate;
 
- const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
 
-  if (!currentUser) {
-    setError('Please sign in before booking a service.');
-    return;
-  }
+    if (!currentUser) {
+      setError('Please sign in before booking a service.');
+      return;
+    }
 
-  if(requestInFlight.current||addressEditorOpen||(!pendingRequest.current && (!pricesReady||!selectedServices.valid)))return;
-  if (!pendingRequest.current && availability.selectedDateBlocked) { setError(bookingConflictMessage); return; }
-  if (!pendingRequest.current && selectedSlotFull) { setError('This service time is fully booked. Choose another available time.'); return; }
-  if (!pendingRequest.current && (address.trim().length < 5 || address.trim().length > 255)) { setError('Enter a service address between 5 and 255 characters.'); return; }
-  if (!pendingRequest.current && bookingDateError(date)) { setError(bookingDateError(date)); return; }
-  requestInFlight.current = true;
-  setSubmitting(true); setError('');
-  if (!pendingRequest.current) pendingRequest.current = {
-    requestId, phone, expectedUserId: Number(currentUser.id), ...selectedServices.payload,
-    numberOfUnits: unitsCount, preferredDate: date, timeWindow: timeSlot,
-    serviceAddress: address, symptoms: notes, specialNotes: notes,
+    if (
+      requestInFlight.current ||
+      addressEditorOpen ||
+      (!pendingRequest.current && (!pricesReady || !selectedServices.valid))
+    )
+      return;
+    if (!pendingRequest.current && availability.selectedDateBlocked) {
+      setError(bookingConflictMessage);
+      return;
+    }
+    if (!pendingRequest.current && selectedSlotFull) {
+      setError(
+        'This service time is fully booked. Choose another available time.',
+      );
+      return;
+    }
+    if (
+      !pendingRequest.current &&
+      (address.trim().length < 5 || address.trim().length > 255)
+    ) {
+      setError('Enter a service address between 5 and 255 characters.');
+      return;
+    }
+    if (!pendingRequest.current && bookingDateError(date)) {
+      setError(bookingDateError(date));
+      return;
+    }
+    if (
+      !pendingRequest.current &&
+      !/^\d{6}$/.test(
+        postalCode ||
+          addresses.find((item) => item.addressLine === address)?.postalCode ||
+          '',
+      )
+    ) {
+      setError('Enter a six-digit Singapore postal code.');
+      return;
+    }
+    requestInFlight.current = true;
+    setSubmitting(true);
+    setError('');
+    if (!pendingRequest.current)
+      pendingRequest.current = {
+        requestId,
+        phone,
+        expectedUserId: Number(currentUser.id),
+        ...selectedServices.payload,
+        numberOfUnits: unitsCount,
+        preferredDate: date,
+        timeWindow: timeSlot,
+        serviceAddress: address,
+        postalCode:
+          postalCode ||
+          addresses.find((item) => item.addressLine === address)?.postalCode,
+        symptoms: notes,
+        specialNotes: otherRemarks,
+      };
+    try {
+      const response = await fetch('/api/public/bookings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(pendingRequest.current),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw Object.assign(
+          new Error(data.message || data.error || 'Unable to create booking.'),
+          { status: response.status },
+        );
+      }
+
+      assertBookingConfirmation(
+        data.booking,
+        Boolean(pendingRequest.current.packageId),
+      );
+      setCreated(data.booking);
+      setRetryLocked(false);
+      pendingRequest.current = null;
+      setStep('success');
+
+      onBookingConfirmed(
+        data.booking.annualBundle
+          ? `Four quarterly cleaning requests saved for ${unitsCount} unit(s). The service team will confirm availability.`
+          : `Booking request saved for ${serviceType} on ${formatDate(date)} (${formatServiceWindow(timeSlot, selectedServices.durationMinutes)}) for ${unitsCount} unit(s).`,
+      );
+    } catch (reason) {
+      const rejected =
+        reason instanceof Error &&
+        'status' in reason &&
+        Number(reason.status) < 500;
+      if (rejected) pendingRequest.current = null;
+      if (
+        reason instanceof Error &&
+        reason.message.includes('signed-in account changed')
+      ) {
+        setOptions(null);
+        setAddresses([]);
+        setSelection(emptyBookingSelection);
+        setAddress('');
+        setPhone('');
+        setNotes('');
+        setPricesReady(false);
+      }
+      setRetryLocked(!rejected);
+      setError(
+        `${reason instanceof Error ? reason.message : 'Unable to reach the booking server.'}${rejected ? '' : ' Retry confirmation with the same details to safely check or complete this request.'}`,
+      );
+    } finally {
+      requestInFlight.current = false;
+      setSubmitting(false);
+    }
   };
-  try {
-    const response = await fetch('/api/public/bookings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(pendingRequest.current),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw Object.assign(new Error(data.message || data.error || 'Unable to create booking.'), { status: response.status });
-    }
-
-    assertBookingConfirmation(data.booking, Boolean(pendingRequest.current.packageId));
-    setCreated(data.booking); setRetryLocked(false); pendingRequest.current = null;
-    setStep('success');
-
-    onBookingConfirmed(
-      data.booking.annualBundle ? `Four quarterly cleaning requests saved for ${unitsCount} unit(s). The service team will confirm availability.` : `Booking request saved for ${serviceType} on ${formatDate(date)} (${timeSlot}) for ${unitsCount} unit(s).`
-    );
-
-  } catch (reason) {
-    const rejected = reason instanceof Error && 'status' in reason && Number(reason.status) < 500;
-    if (rejected) pendingRequest.current = null;
-    if (reason instanceof Error && reason.message.includes('signed-in account changed')) {
-      setOptions(null); setAddresses([]); setSelection(emptyBookingSelection); setAddress(''); setPhone(''); setNotes(''); setPricesReady(false);
-    }
-    setRetryLocked(!rejected);
-    setError(`${reason instanceof Error ? reason.message : 'Unable to reach the booking server.'}${rejected ? '' : ' Retry confirmation with the same details to safely check or complete this request.'}`);
-  } finally {requestInFlight.current = false; setSubmitting(false);}
-};
   const handleFinish = () => {
     if (requestInFlight.current) return;
-    if (step !== 'success') { onClose(); return; }
+    if (step !== 'success') {
+      onClose();
+      return;
+    }
     setStep('form');
-    setRequestId(crypto.randomUUID()); setSelection(emptyBookingSelection); setCreated(null); setNotes('');
+    setRequestId(crypto.randomUUID());
+    setSelection(emptyBookingSelection);
+    setCreated(null);
+    setNotes('');
+    setOtherRemarks('');
     lastAutomaticSymptom.current = '';
     onClose();
   };
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open && !submitting) handleFinish(); }}>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !submitting) handleFinish();
+      }}
+    >
       {/* Modal Container: 650px - 800px on desktop */}
-      <DialogContent showCloseButton={false} className="ac-site bg-ac-surface w-[calc(100%-2rem)] max-w-2xl sm:max-w-3xl rounded-2xl shadow-2xl border border-ac-outline-variant/40 p-5 sm:p-7 md:p-8 max-h-[92dvh] flex flex-col overflow-hidden" aria-describedby={undefined}>
-        <DialogTitle className="sr-only">Schedule a CoolCare Service</DialogTitle>
+      <DialogContent
+        showCloseButton={false}
+        className="ac-site bg-ac-surface w-[calc(100%-2rem)] max-w-2xl sm:max-w-3xl rounded-2xl shadow-2xl border border-ac-outline-variant/40 p-5 sm:p-7 md:p-8 max-h-[92dvh] flex flex-col overflow-hidden"
+        aria-describedby={undefined}
+      >
+        <DialogTitle className="sr-only">
+          Schedule a CoolCare Service
+        </DialogTitle>
         {/* Close button */}
-        <Button variant="ghost"
+        <Button
+          variant="ghost"
           type="button"
-          onClick={handleFinish} disabled={submitting}
+          onClick={handleFinish}
+          disabled={submitting}
           className="absolute top-4 right-4 sm:top-5 sm:right-5 text-ac-outline hover:text-ac-on-surface bg-ac-surface-container-low hover:bg-ac-surface-container border-none cursor-pointer flex items-center justify-center p-1.5 rounded-full transition-colors z-10"
           aria-label="Close booking modal"
         >
@@ -219,20 +438,30 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   Schedule a CoolCare Service
                 </h2>
                 <p className="text-xs sm:text-sm text-ac-on-surface-variant">
-                  Choose your services, preferred time window and property details.
+                  Choose your services, preferred time window and property
+                  details.
                 </p>
               </div>
             </div>
 
             {/* Scrollable Form Body */}
-            <form onSubmit={handleSubmit} className="mt-4 space-y-4 overflow-y-auto pr-1">
+            <form
+              onSubmit={handleSubmit}
+              className="mt-4 space-y-4 overflow-y-auto pr-1"
+            >
               {/* Authenticated Customer Banner */}
               {currentUser && (
                 <div className="p-3 bg-ac-primary-fixed/50 rounded-xl border border-ac-primary-fixed-dim/60 text-xs flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <SiteIcon className=" text-ac-primary text-[18px]">verified</SiteIcon>
+                    <SiteIcon className=" text-ac-primary text-[18px]">
+                      verified
+                    </SiteIcon>
                     <span className="font-medium text-ac-on-primary-fixed">
-                      Booking as <strong className="text-ac-primary">{currentUser.name}</strong> ({currentUser.email})
+                      Booking as{' '}
+                      <strong className="text-ac-primary">
+                        {currentUser.name}
+                      </strong>{' '}
+                      ({currentUser.email})
                     </span>
                   </div>
                   {currentUser.propertyType && (
@@ -243,64 +472,130 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
               )}
 
-              {!currentUser && <div className="space-y-3 rounded-xl border p-4 text-sm"><p>Sign in to book a service.</p><Button type="button" onClick={() => { onClose(); onNavigate('login'); }}>Sign in</Button></div>}
-              {currentUser && !pricesReady && !error && <p role="status" className="text-sm">Loading your service options…</p>}
-              <fieldset disabled={submitting || retryLocked || !currentUser || !pricesReady} className="min-w-0 space-y-4">
-              {/* Service Selection */}
-              <div>
-                <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
-                  1. How would you like to book?
-                </label>
-                {options && <BookingServiceSelection options={options} value={selection} onChange={setSelection} units={unitsCount} disabled={submitting || retryLocked || !pricesReady} />}
-              </div>
-
-              {/* Units & Date Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {!currentUser && (
+                <div className="space-y-3 rounded-xl border p-4 text-sm">
+                  <p>Sign in to book a service.</p>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onNavigate('login');
+                    }}
+                  >
+                    Sign in
+                  </Button>
+                </div>
+              )}
+              {currentUser && !pricesReady && !error && (
+                <p role="status" className="text-sm">
+                  Loading your service options…
+                </p>
+              )}
+              <fieldset
+                disabled={
+                  submitting || retryLocked || !currentUser || !pricesReady
+                }
+                className="min-w-0 space-y-4"
+              >
+                {/* Service Selection */}
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
-                    2. Number of AC Units
+                    1. How would you like to book?
                   </label>
-                  <div className="flex items-center border border-ac-outline-variant rounded-xl bg-ac-surface-container-lowest overflow-hidden h-[42px]">
-                    <Button variant="ghost"
-                      type="button"
-                      aria-label="Remove one AC unit"
-                      onClick={() => setUnitsCount(Math.max(1, unitsCount - 1))}
-                      className="w-12 h-full bg-ac-surface-container-low hover:bg-ac-surface-container font-bold text-ac-primary text-lg cursor-pointer border-none transition-colors flex items-center justify-center"
+                  {options && (
+                    <BookingServiceSelection
+                      options={options}
+                      value={selection}
+                      onChange={setSelection}
+                      units={unitsCount}
+                      disabled={submitting || retryLocked || !pricesReady}
+                    />
+                  )}
+                </div>
+
+                {/* Units & Date Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
+                      2. Number of AC Units
+                    </label>
+                    <div className="flex items-center border border-ac-outline-variant rounded-xl bg-ac-surface-container-lowest overflow-hidden h-[42px]">
+                      <Button
+                        variant="ghost"
+                        type="button"
+                        aria-label="Remove one AC unit"
+                        onClick={() =>
+                          setUnitsCount(Math.max(1, unitsCount - 1))
+                        }
+                        className="w-12 h-full bg-ac-surface-container-low hover:bg-ac-surface-container font-bold text-ac-primary text-lg cursor-pointer border-none transition-colors flex items-center justify-center"
+                      >
+                        -
+                      </Button>
+                      <span className="flex-1 text-center font-bold text-sm sm:text-base text-ac-on-surface">
+                        {unitsCount} {unitsCount === 1 ? 'Unit' : 'Units'}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        type="button"
+                        aria-label="Add one AC unit"
+                        onClick={() =>
+                          setUnitsCount(Math.min(10, unitsCount + 1))
+                        }
+                        className="w-12 h-full bg-ac-surface-container-low hover:bg-ac-surface-container font-bold text-ac-primary text-lg cursor-pointer border-none transition-colors flex items-center justify-center"
+                      >
+                        +
+                      </Button>
+                    </div>
+                    <p className="mt-2 text-xs text-ac-on-surface-variant">
+                      Estimated time: {selectedServices.durationMinutes} minutes
+                      per visit. Changing the AC count updates the service time.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="public-preferred-date"
+                      className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5"
                     >
-                      -
-                    </Button>
-                    <span className="flex-1 text-center font-bold text-sm sm:text-base text-ac-on-surface">
-                      {unitsCount} {unitsCount === 1 ? 'Unit' : 'Units'}
-                    </span>
-                    <Button variant="ghost"
-                      type="button"
-                      aria-label="Add one AC unit"
-                      onClick={() => setUnitsCount(Math.min(10, unitsCount + 1))}
-                      className="w-12 h-full bg-ac-surface-container-low hover:bg-ac-surface-container font-bold text-ac-primary text-lg cursor-pointer border-none transition-colors flex items-center justify-center"
-                    >
-                      +
-                    </Button>
+                      {selectedServices.isAnnual
+                        ? '3. First Preferred Visit Date'
+                        : '3. Preferred Date'}
+                    </label>
+                    <EnglishDatePicker
+                      id="public-preferred-date"
+                      label={
+                        selectedServices.isAnnual
+                          ? 'First preferred visit date'
+                          : 'Preferred date'
+                      }
+                      min={earliestBookingDate()}
+                      aria-invalid={
+                        !retryLocked &&
+                        (Boolean(bookingDateError(date)) ||
+                          availability.selectedDateBlocked)
+                      }
+                      value={date}
+                      blockedDates={availability.blockedDates}
+                      onMonthChange={availability.onMonthChange}
+                      disabled={submitting || retryLocked || !pricesReady}
+                      onChange={(value) => {
+                        setDate(value);
+                        setError(bookingDateError(value));
+                      }}
+                    />
+                    <BookingAvailabilityNotice availability={availability} />
                   </div>
                 </div>
 
+                {/* Time Window */}
                 <div>
-                  <label htmlFor="public-preferred-date" className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
-                    {selectedServices.isAnnual ? '3. First Preferred Visit Date' : '3. Preferred Date'}
+                  <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
+                    4. Preferred Arrival Time Window
                   </label>
-                  <EnglishDatePicker id="public-preferred-date" label={selectedServices.isAnnual ? 'First preferred visit date' : 'Preferred date'} min={earliestBookingDate()} aria-invalid={!retryLocked && (Boolean(bookingDateError(date)) || availability.selectedDateBlocked)} value={date} blockedDates={availability.blockedDates} onMonthChange={availability.onMonthChange} disabled={submitting || retryLocked || !pricesReady} onChange={value => { setDate(value); setError(bookingDateError(value)); }} />
-                  <BookingAvailabilityNotice availability={availability} />
-                </div>
-              </div>
-
-              {/* Time Window */}
-              <div>
-                <label className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
-                  4. Preferred Arrival Time Window
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                  {publicSlots.map(
-                    (slot) => (
-                      <Button variant="ghost"
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    {publicSlots.map((slot) => (
+                      <Button
+                        variant="ghost"
                         key={slot.code}
                         type="button"
                         disabled={!slotAvailability.isAvailable(slot.code)}
@@ -311,63 +606,169 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                             : 'bg-ac-surface-container-lowest border-ac-outline-variant hover:border-ac-primary text-ac-on-surface'
                         }`}
                       >
-                        {slot.label}{slotAvailability.isAvailable(slot.code)?'':' · Fully booked'}
+                        {formatServiceWindow(
+                          slot.code,
+                          selectedServices.durationMinutes,
+                        )}
+                        {slotAvailability.isAvailable(slot.code)
+                          ? ''
+                          : ' · Fully booked'}
                       </Button>
-                    )
+                    ))}
+                  </div>
+                  {slotAvailability.loading && (
+                    <p className="mt-2 text-xs text-ac-on-surface-variant">
+                      Checking team availability…
+                    </p>
                   )}
+                  {selectedSlotFull && (
+                    <p role="alert" className="mt-2 text-xs text-ac-error">
+                      This service time is fully booked.
+                    </p>
+                  )}
+                  <p className="mt-3 rounded-xl bg-ac-primary/5 p-3 text-sm leading-6 text-ac-on-surface-variant">
+                    {bookingScheduleNotice}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-ac-on-surface-variant">
+                    {bookingFrequencyNotice}
+                  </p>
                 </div>
-                {slotAvailability.loading&&<p className="mt-2 text-xs text-ac-on-surface-variant">Checking team availability…</p>}
-                {selectedSlotFull&&<p role="alert" className="mt-2 text-xs text-ac-error">This service time is fully booked.</p>}
-                <p className="mt-3 rounded-xl bg-ac-primary/5 p-3 text-sm leading-6 text-ac-on-surface-variant">{bookingScheduleNotice}</p><p className="mt-2 text-xs leading-5 text-ac-on-surface-variant">{bookingFrequencyNotice}</p>
-              </div>
 
-              {/* Address & Phone */}
-              {currentUser && <BookingAddressField key={currentUser.id} expectedUserId={Number(currentUser.id)} addresses={addresses} value={address} onChange={setAddress} onAddressSaved={saved => { setAddresses(current => [saved, ...current.filter(item => item.addressId !== saved.addressId)]); setAddress(saved.addressLine); }} onEditingChange={setAddressEditorOpen} />}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="public-booking-phone" className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
-                    Contact Phone Number
-                  </label>
+                {/* Address & Phone */}
+                {currentUser && (
+                  <BookingAddressField
+                    key={currentUser.id}
+                    expectedUserId={Number(currentUser.id)}
+                    addresses={addresses}
+                    value={address}
+                    onChange={(value) => {
+                      setAddress(value);
+                      setPostalCode('');
+                    }}
+                    onAddressSaved={(saved) => {
+                      setAddresses((current) => [
+                        saved,
+                        ...current.filter(
+                          (item) => item.addressId !== saved.addressId,
+                        ),
+                      ]);
+                      setAddress(saved.addressLine);
+                      setPostalCode(saved.postalCode || '');
+                    }}
+                    onEditingChange={setAddressEditorOpen}
+                  />
+                )}
+                <label className="block text-sm font-semibold">
+                  Singapore postal code
                   <Input
-                    id="public-booking-phone"
-                    type="tel"
+                    className="mt-2"
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
                     required
-                    maxLength={30}
-                    placeholder="e.g. +65 9123 4567"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-ac-outline-variant bg-ac-surface-container-lowest text-sm text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20"
+                    value={
+                      postalCode ||
+                      addresses.find((item) => item.addressLine === address)
+                        ?.postalCode ||
+                      ''
+                    }
+                    onChange={(event) => setPostalCode(event.target.value)}
+                    placeholder="Six-digit postal code"
+                  />
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label
+                      htmlFor="public-booking-phone"
+                      className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5"
+                    >
+                      Contact Phone Number
+                    </label>
+                    <Input
+                      id="public-booking-phone"
+                      type="tel"
+                      required
+                      maxLength={30}
+                      placeholder="e.g. +65 9123 4567"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-ac-outline-variant bg-ac-surface-container-lowest text-sm text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20"
+                    />
+                  </div>
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <label
+                    htmlFor="public-booking-notes"
+                    className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5"
+                  >
+                    Unit Symptoms / Technician Instructions (Optional)
+                  </label>
+                  <Textarea
+                    id="public-booking-notes"
+                    rows={2}
+                    maxLength={1000}
+                    placeholder="e.g. Master bedroom unit has weak airflow, water drips occasionally from right drain..."
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    className="w-full px-3.5 py-2 rounded-xl border border-ac-outline-variant bg-ac-surface-container-lowest text-sm text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20"
                   />
                 </div>
-              </div>
-
-              {/* Notes */}
-              <div>
-                <label htmlFor="public-booking-notes" className="block text-xs sm:text-sm font-semibold text-ac-on-surface mb-1.5">
-                  Unit Symptoms / Technician Instructions (Optional)
+                <label className="block text-sm font-semibold">
+                  Other remarks (optional)
+                  <Textarea
+                    className="mt-2"
+                    value={otherRemarks}
+                    maxLength={1000}
+                    onChange={(event) => setOtherRemarks(event.target.value)}
+                    placeholder="Preferred technician, access instructions, or other notes for the administrator."
+                  />
+                  <span className="mt-1 block text-xs font-normal text-ac-on-surface-variant">
+                    Technician preferences are requests and depend on
+                    availability.
+                  </span>
                 </label>
-                <Textarea
-                  id="public-booking-notes"
-                  rows={2}
-                  maxLength={1000}
-                  placeholder="e.g. Master bedroom unit has weak airflow, water drips occasionally from right drain..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl border border-ac-outline-variant bg-ac-surface-container-lowest text-sm text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20"
-                />
-              </div>
+                <p className="rounded-xl bg-ac-primary/5 p-3 text-xs leading-5 text-ac-on-surface-variant">
+                  {bookingChangeNotice}
+                </p>
               </fieldset>
-              {selectedServices.isAnnual && <AnnualBookingSummary firstDate={date} timeSlot={timeSlot} totalAmount={estimatedTotal} collapsible />}
-              {selectedServices.pricingNote && <p className="text-sm text-ac-on-surface-variant">{selectedServices.pricingNote}</p>}
-              {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+              {selectedServices.isAnnual && (
+                <AnnualBookingSummary
+                  firstDate={date}
+                  timeSlot={timeSlot}
+                  durationMinutes={selectedServices.durationMinutes}
+                  totalAmount={estimatedTotal}
+                  collapsible
+                />
+              )}
+              {selectedServices.pricingNote && (
+                <p className="text-sm text-ac-on-surface-variant">
+                  {selectedServices.pricingNote}
+                </p>
+              )}
+              {error && (
+                <p
+                  role="alert"
+                  className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+                >
+                  {error}
+                </p>
+              )}
 
               {/* Price Summary & Action Buttons */}
               <div className="sticky bottom-0 z-10 border-t border-ac-outline-variant/30 bg-ac-surface py-3 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div>
-                  <span className="text-xs text-ac-on-surface-variant block">{selectedServices.isAnnual ? 'Annual Estimate' : 'Visit Estimate'}</span>
+                  <span className="text-xs text-ac-on-surface-variant block">
+                    {selectedServices.isAnnual
+                      ? 'Annual Estimate'
+                      : 'Visit Estimate'}
+                  </span>
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-extrabold text-ac-primary">
-                      {selectedServices.valid ? formatMoney(estimatedTotal) : 'Choose services'}
+                      {selectedServices.valid
+                        ? formatMoney(estimatedTotal)
+                        : 'Choose services'}
                     </span>
                     <span className="text-xs text-ac-on-surface-variant">
                       (Pay after each service visit)
@@ -376,18 +777,35 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </div>
 
                 <div className="flex items-center gap-3 w-full sm:w-auto">
-                  <Button variant="ghost"
+                  <Button
+                    variant="ghost"
                     type="button"
-                    onClick={handleFinish} disabled={submitting}
+                    onClick={handleFinish}
+                    disabled={submitting}
                     className="flex-1 sm:flex-initial px-5 py-2.5 border border-ac-outline-variant rounded-full text-sm font-semibold text-ac-on-surface bg-transparent hover:bg-ac-surface-container-low cursor-pointer transition-colors"
                   >
                     Cancel
                   </Button>
-                  <Button variant="ghost"
-                    type="submit" disabled={submitting || addressEditorOpen || (!pendingRequest.current && (!pricesReady || !selectedServices.valid || availability.selectedDateBlocked || selectedSlotFull || slotAvailability.loading))}
+                  <Button
+                    variant="ghost"
+                    type="submit"
+                    disabled={
+                      submitting ||
+                      addressEditorOpen ||
+                      (!pendingRequest.current &&
+                        (!pricesReady ||
+                          !selectedServices.valid ||
+                          availability.selectedDateBlocked ||
+                          selectedSlotFull ||
+                          slotAvailability.loading))
+                    }
                     className="flex-1 sm:flex-initial px-6 py-2.5 bg-ac-primary text-ac-on-primary rounded-full text-sm font-semibold hover:opacity-90 active:scale-95 cursor-pointer border-none shadow-sm transition-all flex items-center justify-center gap-1.5"
                   >
-                    {submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm Booking'}
+                    {submitting
+                      ? 'Saving…'
+                      : retryLocked
+                        ? 'Retry confirmation'
+                        : 'Confirm Booking'}
                     <SiteIcon className=" text-[18px]">check</SiteIcon>
                   </Button>
                 </div>
@@ -400,29 +818,65 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <SiteIcon className=" text-[36px]">task_alt</SiteIcon>
             </div>
             <h3 className="text-2xl font-bold text-ac-on-background">
-              {created?.annualBundle ? 'Four Booking Requests Saved!' : 'Booking Submitted!'}
+              {created?.annualBundle
+                ? 'Four Booking Requests Saved!'
+                : 'Booking Submitted!'}
             </h3>
             <p className="text-sm text-ac-on-surface-variant max-w-md mx-auto">
-              Your request for <strong className="text-ac-on-background">{serviceType}</strong> has been saved {created?.annualBundle ? 'with the first preferred visit on' : 'for'}{' '}
-              <strong className="text-ac-on-background">{formatDate(date)}</strong> during <strong className="text-ac-on-background">{timeSlot}</strong>.
+              Your request for{' '}
+              <strong className="text-ac-on-background">{serviceType}</strong>{' '}
+              has been saved{' '}
+              {created?.annualBundle
+                ? 'with the first preferred visit on'
+                : 'for'}{' '}
+              <strong className="text-ac-on-background">
+                {formatDate(date)}
+              </strong>{' '}
+              during{' '}
+              <strong className="text-ac-on-background">
+                {formatServiceWindow(
+                  timeSlot,
+                  selectedServices.durationMinutes,
+                )}
+              </strong>
+              .
             </p>
             <div className="p-4 bg-ac-surface-container-low rounded-xl border border-ac-outline-variant/30 text-left text-xs sm:text-sm space-y-2 max-w-md mx-auto">
-              <div className="flex justify-between"><span>Reference:</span><strong>#{created?.id}</strong></div>
+              <div className="flex justify-between">
+                <span>Reference:</span>
+                <strong>#{created?.id}</strong>
+              </div>
               <div className="flex justify-between">
                 <span className="text-ac-on-surface-variant">Service:</span>
-                <span className="max-w-[70%] text-right font-semibold text-ac-on-background">{selectedServices.serviceNames}</span>
+                <span className="max-w-[70%] text-right font-semibold text-ac-on-background">
+                  {selectedServices.serviceNames}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-ac-on-surface-variant">Units Count:</span>
-                <span className="font-semibold text-ac-on-background">{unitsCount} Unit(s)</span>
+                <span className="font-semibold text-ac-on-background">
+                  {unitsCount} Unit(s)
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-ac-on-surface-variant">Address:</span>
-                <span className="font-semibold text-ac-on-background truncate max-w-[200px]">{address}</span>
+                <span className="font-semibold text-ac-on-background truncate max-w-[200px]">
+                  {address}
+                </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-ac-on-surface-variant">{created?.annualBundle ? 'Annual Estimate:' : 'Visit Estimate:'}</span>
-                <span className="font-bold text-ac-primary">{formatMoney(created?.annualBundle?.totalAmount ?? created?.totalAmount ?? estimatedTotal)}</span>
+                <span className="text-ac-on-surface-variant">
+                  {created?.annualBundle
+                    ? 'Annual Estimate:'
+                    : 'Visit Estimate:'}
+                </span>
+                <span className="font-bold text-ac-primary">
+                  {formatMoney(
+                    created?.annualBundle?.totalAmount ??
+                      created?.totalAmount ??
+                      estimatedTotal,
+                  )}
+                </span>
               </div>
               <div className="flex justify-between border-t border-ac-outline-variant/20 pt-2">
                 <span className="text-ac-on-surface-variant">Status:</span>
@@ -432,10 +886,19 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 </span>
               </div>
             </div>
-            {created?.annualBundle && <AnnualBookingSummary saved={created.annualBundle} totalAmount={created.annualBundle.totalAmount} />}
-            <Button variant="ghost"
+            {created?.annualBundle && (
+              <AnnualBookingSummary
+                saved={created.annualBundle}
+                totalAmount={created.annualBundle.totalAmount}
+              />
+            )}
+            <Button
+              variant="ghost"
               type="button"
-              onClick={() => { handleFinish(); onNavigate('bookings'); }}
+              onClick={() => {
+                handleFinish();
+                onNavigate('bookings');
+              }}
               className="px-8 py-3 bg-ac-primary text-ac-on-primary rounded-full text-sm font-semibold hover:opacity-90 active:scale-95 transition-all cursor-pointer border-none shadow-sm"
             >
               View My Bookings

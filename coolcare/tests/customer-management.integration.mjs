@@ -36,7 +36,7 @@ async function fixture(work,{privileged=false}={}) {
 test('address edits preserve historical bookings and annual locations; archive/default and profile changes remain owned',async()=>fixture(async(db,c,user,create,options)=>{
   const first=await createCustomerAddress(db,user.id,{addressLine:'78 Management Test Street #01-02',postalCode:'012345',label:'Home'});
   const other=await createCustomerAddress(db,user.id,{addressLine:'80 Management Test Street #03-04',label:'Office'});
-  const annual=await create({addressId:first.addressId,packageId:options.bundles[0].packageId,serviceId:undefined});
+  const annual=await create({addressId:first.addressId,propertyType:'hdb-4',packageId:options.bundles[0].packageId,serviceId:undefined});
   const detail=await getBookingDetail(db,annual.bookingId,user.id);
   assert.equal(detail.addressId,first.addressId);assert.equal(detail.numberOfUnits,2);assert.equal(detail.canModify,true);assert.equal(detail.statusTimeline.at(-1).status,'Submitted');
   const changed=await manageCustomerAddress(db,user.id,first.addressId,'update',{addressLine:'79 Management Test Street #02-03',postalCode:'012346',label:'New home'});
@@ -67,15 +67,15 @@ test('address edits preserve historical bookings and annual locations; archive/d
   assert.equal(stored.full_name,'Updated Customer');assert.equal(stored.email,profile.email);
 }));
 
-test('availability previews enforce exact rolling seven-day rules, calendar bounds and owned exclusions',async()=>fixture(async(db,c,user,create)=>{
+test('availability previews enforce Cleaning calendar-week rules, calendar bounds and owned exclusions',async()=>fixture(async(db,c,user,create)=>{
   const first=await create();
-  const second=await create({preferredDate:addCalendarDays(monday(),4),serviceAddress:' 78 MANAGEMENT TEST STREET, #01-02 '});
+  const second=await create({preferredDate:addCalendarDays(monday(),7),serviceAddress:' 78 MANAGEMENT TEST STREET, #01-02 '});
   const input={serviceAddress:'78 Management Test Street #01-02',from:monday(),to:addCalendarDays(monday(),20)};
   const preview=await getBookingAvailability(db,user.id,input);
   assert.equal(preview.timeZone,'Asia/Singapore');assert.equal(preview.existingBookings.length,2);
   assert.ok(preview.blockedDates.includes(addCalendarDays(monday(),2)));
   assert.ok(preview.blockedDates.includes(addCalendarDays(monday(),5)),'Saturday is blocked');
-  assert.ok(!preview.blockedDates.includes(addCalendarDays(monday(),11)),'following Friday is outside existing seven-day windows');
+  assert.ok(!preview.blockedDates.includes(addCalendarDays(monday(),14)),'a different calendar week remains available');
   await assert.rejects(create({preferredDate:addCalendarDays(monday(),2)}),error=>error.status===409,'write agrees with preview');
   const own=await getBookingAvailability(db,user.id,{...input,excludeBookingId:first.bookingId});
   assert.equal(own.existingBookings.length,1);assert.ok(!own.blockedDates.includes(addCalendarDays(monday(),2)));
@@ -89,7 +89,8 @@ test('availability previews enforce exact rolling seven-day rules, calendar boun
   assert.equal(early.blockedDates.length,14);
   await changePublicBooking(db,user,second.bookingId,'cancel',{status:'Cancelled'});
   const afterCancel=await getBookingAvailability(db,user.id,input);
-  assert.equal(afterCancel.existingBookings.length,1);assert.ok(!afterCancel.blockedDates.includes(addCalendarDays(monday(),2)));
+  assert.equal(afterCancel.existingBookings.length,1);assert.ok(!afterCancel.blockedDates.includes(addCalendarDays(monday(),8)));
+  const repairPreview=await getBookingAvailability(db,user.id,{...input,includesCleaning:'false'});assert.ok(!repairPreview.blockedDates.includes(addCalendarDays(monday(),2)));
   const booking=await getBookingDetail(db,first.bookingId,user.id);
   await manageCustomerAddress(db,user.id,booking.addressId,'archive');
   await assert.rejects(getBookingAvailability(db,user.id,{...input,addressId:booking.addressId}),error=>error.status===404);
@@ -136,16 +137,31 @@ test('customer HTTP management aliases require login, customer ownership and CSR
     assert.equal((await request(`/api/customer/bookings/${httpBooking.bookingId}/reschedule`,'PATCH',{preferredDate:revised.preferredDate,timeWindow:revised.timeSlot})).status,200,'an exact schedule retry after cancellation is still a no-op');
     assert.deepEqual(await auditCount(httpBooking.bookingId),cancelAudit,'an identical cancellation retry adds no audit entries');
     assert.equal((await request(`/api/customer/bookings/${httpBooking.bookingId}/reschedule`,'PATCH',{preferredDate:addCalendarDays(monday(),2),timeWindow:'11:00 - 13:00'})).status,409);
-    const [[assigned]]=await c.execute(`SELECT b.booking_id,c.user_id FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN assignment a ON a.booking_id=b.booking_id LIMIT 1`);
+    // Rejection notices are owned, acknowledged with CSRF, and redisplayed only
+    // when the admin publishes a different rejection revision.
+    await c.execute("UPDATE booking SET booking_status='Rejected',rejection_reason='No suitable technician is available.',rejection_version=1 WHERE booking_id IN (?,?)",[httpBooking.bookingId,booking.bookingId]);
+    const notices=(await(await request('/api/customer/booking-notifications')).json()).notices;
+    assert.equal(notices.length,1);assert.equal(notices[0].bookingId,httpBooking.bookingId);assert.equal(notices[0].noticeKey,'Rejected:1');
+    const readPath=`/api/customer/booking-notifications/${httpBooking.bookingId}/read`;
+    csrf='wrong';assert.equal((await request(readPath,'POST',{noticeKey:'Rejected:1'})).status,403);csrf=validCsrf;
+    assert.equal((await request(`/api/customer/booking-notifications/${booking.bookingId}/read`,'POST',{noticeKey:'Rejected:1'})).status,409);
+    assert.equal((await request(readPath,'POST',{noticeKey:'Rejected:2'})).status,409);
+    assert.equal((await request(readPath,'POST',{noticeKey:'Rejected:1'})).status,200);
+    assert.equal((await request(readPath,'POST',{noticeKey:'Rejected:1'})).status,200);
+    assert.equal((await(await request('/api/customer/booking-notifications')).json()).notices.length,0);
+    await c.execute("UPDATE booking SET rejection_reason='Please choose an earlier time.',rejection_version=2 WHERE booking_id=?",[httpBooking.bookingId]);
+    const corrected=(await(await request('/api/customer/booking-notifications')).json()).notices;
+    assert.equal(corrected.length,1);assert.equal(corrected[0].noticeKey,'Rejected:2');assert.equal(corrected[0].reason,'Please choose an earlier time.');
+    const [[assigned]]=await c.execute(`SELECT b.booking_id,c.user_id FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN assignment a ON a.booking_id=b.booking_id WHERE b.booking_status='Completed' LIMIT 1`);
     assert.equal((await getBookingDetail(db,assigned.booking_id,assigned.user_id)).canModify,false);
     const [restricted]=await c.execute(`SELECT b.booking_id,c.user_id,b.preferred_service_date,b.preferred_time_slot
-      FROM booking b JOIN customer c ON c.customer_id=b.customer_id WHERE b.booking_status IN ('Assigned','Completed')`);
+      FROM booking b JOIN customer c ON c.customer_id=b.customer_id WHERE b.booking_status IN ('In Progress','Completed')`);
     assert.ok(restricted.length>=2);
     for(const row of restricted) {
       const previousAudit=await auditCount(row.booking_id);
       await assert.rejects(changePublicBooking(db,{id:row.user_id},row.booking_id,'reschedule',{preferredDate:addCalendarDays(monday(),60),timeWindow:'11:00 - 13:00'}),error=>error.status===409);
       await assert.rejects(changePublicBooking(db,{id:row.user_id},row.booking_id,'cancel',{status:'Cancelled'}),error=>error.status===409);
-      assert.deepEqual(await auditCount(row.booking_id),previousAudit,'assigned/completed data remains unchanged');
+      assert.deepEqual(await auditCount(row.booking_id),previousAudit,'started/completed data remains unchanged');
     }
   }finally{await new Promise(resolve=>server.close(resolve));}
 }));

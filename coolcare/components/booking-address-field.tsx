@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { MapPin, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { FieldLabel } from '@/components/ui/field';
@@ -9,7 +9,9 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { coolcareApi } from '@/lib/coolcare-api';
 import type { Address, CreateAddressInput } from '@/lib/coolcare-types';
 
-export function BookingAddressField({ addresses, value, expectedUserId, onChange, onAddressSaved, onEditingChange }: {
+export function BookingAddressField({ addresses, value, expectedUserId, onChange, onAddressSaved, onEditingChange, postalCode, onPostalCodeChange }: {
+  postalCode?: string;
+  onPostalCodeChange?: (value:string)=>void;
   addresses: Address[];
   value: string;
   expectedUserId: number;
@@ -17,6 +19,7 @@ export function BookingAddressField({ addresses, value, expectedUserId, onChange
   onAddressSaved: (address: Address) => void;
   onEditingChange: (editing: boolean) => void;
 }) {
+  const fieldId=useId();
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ label: '', addressLine: '', postalCode: '' });
   const [busy, setBusy] = useState(false);
@@ -53,6 +56,7 @@ export function BookingAddressField({ addresses, value, expectedUserId, onChange
       const address = await coolcareApi.createAddress(pending.current);
       if (!mounted.current) return;
       onAddressSaved(address);
+      onPostalCodeChange?.(address.postalCode ?? '');
       pending.current = null; setRetryLocked(false); setAdding(false); setNotice('Address saved and selected for this booking.');
     } catch (reason) {
       if (!mounted.current) return;
@@ -64,15 +68,16 @@ export function BookingAddressField({ addresses, value, expectedUserId, onChange
   }
 
   return <div className="space-y-5">
-    {addresses.length > 0 && <div><FieldLabel htmlFor="saved-service-address">Saved addresses</FieldLabel><NativeSelect id="saved-service-address" value={selected?.addressId ?? ''} disabled={adding} onChange={event => { const address = addresses.find(item => item.addressId === Number(event.target.value)); if (address) { onChange(address.addressLine); setNotice(''); } }} className="mt-2 h-12 w-full"><option value="">Choose a saved address</option>{addresses.map(address => <option key={address.addressId} value={address.addressId}>{address.label ? address.label + ' · ' : ''}{address.addressLine}{address.postalCode ? ' · ' + address.postalCode : ''}</option>)}</NativeSelect></div>}
-    <div><FieldLabel htmlFor="service-address">Service address</FieldLabel><Input id="service-address" value={value} disabled={adding} minLength={5} maxLength={255} onChange={event => { onChange(event.target.value); setNotice(''); }} placeholder="Street address, building and apartment / unit" className="mt-2 h-12" /><p className="mt-2 text-xs leading-5 text-muted-foreground">You can edit this address directly. A new address is saved with your booking.</p></div>
+    {addresses.length > 0 && <div><FieldLabel htmlFor={fieldId+'-saved-service-address'}>Saved addresses</FieldLabel><NativeSelect id={fieldId+'-saved-service-address'} value={selected?.addressId ?? ''} disabled={adding} onChange={event => { const address = addresses.find(item => item.addressId === Number(event.target.value)); if (address) { onChange(address.addressLine); onPostalCodeChange?.(address.postalCode ?? ''); setNotice(''); } }} className="mt-2 h-12 w-full"><option value="">Choose a saved address</option>{addresses.map(address => <option key={address.addressId} value={address.addressId}>{address.label ? address.label + ' · ' : ''}{address.addressLine}{address.postalCode ? ' · ' + address.postalCode : ''}</option>)}</NativeSelect></div>}
+    <div><FieldLabel htmlFor={fieldId+'-service-address'}>Service address</FieldLabel><Input id={fieldId+'-service-address'} value={value} disabled={adding} minLength={5} maxLength={255} onChange={event => { onChange(event.target.value); onPostalCodeChange?.(addresses.find(item=>item.addressLine===event.target.value)?.postalCode ?? ''); setNotice(''); }} placeholder="Street address, building and apartment / unit" className="mt-2 h-12" /><p className="mt-2 text-xs leading-5 text-muted-foreground">You can edit this address directly. A new address is saved with your booking.</p></div>
+    {onPostalCodeChange && !adding && <div><FieldLabel htmlFor={fieldId+'-service-postal-code'}>Singapore postal code (optional)</FieldLabel><Input id={fieldId+'-service-postal-code'} inputMode="numeric" maxLength={6} value={postalCode ?? selected?.postalCode ?? ''} onChange={event=>onPostalCodeChange(event.target.value)} placeholder="Six digits" className="mt-2 max-w-56" /><p className="mt-2 text-xs text-muted-foreground">Helps the service team assign a nearby technician.</p></div>}
     {!adding && <Button type="button" variant="outline" onClick={startAdding}><Plus className="size-4" />Add new address</Button>}
     {adding && <div className="space-y-4 rounded-2xl border border-primary/20 bg-primary/5 p-5" role="group" aria-label="Add new address">
       <div className="flex items-center gap-2 font-semibold"><MapPin className="size-4 text-primary" />Add new address</div>
       <fieldset disabled={busy || retryLocked} className="min-w-0 space-y-4">
-        <div><FieldLabel htmlFor="new-address-label">Address label <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Input id="new-address-label" maxLength={80} value={draft.label} onChange={event => setDraft({ ...draft, label: event.target.value })} placeholder="Home or Office" className="mt-2" /></div>
-        <div><FieldLabel htmlFor="new-address-line">New service address</FieldLabel><Input id="new-address-line" minLength={5} maxLength={255} value={draft.addressLine} onChange={event => setDraft({ ...draft, addressLine: event.target.value })} placeholder="Street address, building and apartment / unit" className="mt-2" /></div>
-        <div><FieldLabel htmlFor="new-address-postal">Postal code <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Input id="new-address-postal" inputMode="numeric" maxLength={6} value={draft.postalCode} onChange={event => setDraft({ ...draft, postalCode: event.target.value })} placeholder="Six-digit postal code" className="mt-2" /></div>
+        <div><FieldLabel htmlFor={fieldId+'-new-address-label'}>Address label <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Input id={fieldId+'-new-address-label'} maxLength={80} value={draft.label} onChange={event => setDraft({ ...draft, label: event.target.value })} placeholder="Home or Office" className="mt-2" /></div>
+        <div><FieldLabel htmlFor={fieldId+'-new-address-line'}>New service address</FieldLabel><Input id={fieldId+'-new-address-line'} minLength={5} maxLength={255} value={draft.addressLine} onChange={event => setDraft({ ...draft, addressLine: event.target.value })} placeholder="Street address, building and apartment / unit" className="mt-2" /></div>
+        <div><FieldLabel htmlFor={fieldId+'-new-address-postal'}>Postal code <span className="font-normal text-muted-foreground">(optional)</span></FieldLabel><Input id={fieldId+'-new-address-postal'} inputMode="numeric" maxLength={6} value={draft.postalCode} onChange={event => setDraft({ ...draft, postalCode: event.target.value })} placeholder="Six-digit postal code" className="mt-2" /></div>
       </fieldset>
       {error && <p role="alert" className="text-sm leading-6 text-red-700">{error}</p>}
       <div className="flex flex-wrap gap-3"><Button type="button" disabled={busy} onClick={saveAddress}>{busy ? 'Saving address…' : retryLocked ? 'Retry saving address' : 'Save address'}</Button><Button type="button" variant="ghost" disabled={busy || retryLocked} onClick={() => { setAdding(false); setError(''); }}>Cancel</Button></div>

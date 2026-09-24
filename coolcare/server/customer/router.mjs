@@ -9,6 +9,7 @@ import { createCustomerAddress,manageCustomerAddress } from './address-service.m
 import { updateCustomerProfile,getBookingAvailability,getBookingSlotAvailability } from './customer-management.mjs';
 import { getOwnedReportPhoto } from './report-photos.mjs';
 import { getAssistantDraft,saveAssistantDraft,reviewAssistantDraft,confirmAssistantDraft,newAssistantDraft } from './assistant-workflow.mjs';
+import {registerBookingNotifications} from './booking-notifications.mjs';
 
 function identifier(value) {
   const id=Number(value);
@@ -26,6 +27,7 @@ app.get('/health', asyncRoute(async (request, response) => {
 }));
 
 app.use(async (req,_res,next)=>{req.customerUser=await sessionUser(pool,req,'Customer');next();});
+registerBookingNotifications(app,pool);
 
 app.get('/customer-context', asyncRoute(async (request, response) => {
   const customer = await getDemoCustomer(pool, request.customerUser.id);
@@ -69,7 +71,7 @@ app.get('/booking-availability',asyncRoute(async(request,response)=>{
   response.json(await getBookingAvailability(pool,request.customerUser.id,request.query));
 }));
 app.get('/slot-availability',asyncRoute(async(request,response)=>{
-  response.json(await getBookingSlotAvailability(pool,request.query.dates));
+  response.json(await getBookingSlotAvailability(pool,request.query.dates,request.query,request.customerUser.id));
 }));
 
 app.get('/booking-options', asyncRoute(async (request,response) => {

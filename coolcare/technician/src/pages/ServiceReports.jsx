@@ -1,4 +1,5 @@
 import ServicePhotos from '../components/ServicePhotos.jsx';
+import ServiceProgress from '../components/ServiceProgress.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
 import { SignatureImage } from '@/components/signature-image';
 import { useEffect, useState, useRef } from 'react';
@@ -32,7 +33,7 @@ function ReportEditor({ row, onClose, onSaved }) {
     [error, setError] = useState(''),
     [saving, setSaving] = useState(false),
     [uncertain, setUncertain] = useState(false);
-  const [photosLocked,setPhotosLocked]=useState(false);
+  const [photosLocked,setPhotosLocked]=useState(false),[progressLocked,setProgressLocked]=useState(false);
   const pending = useRef(null);
   const [signatureReset, setSignatureReset] = useState(0);
   const contentChanged =
@@ -124,7 +125,7 @@ function ReportEditor({ row, onClose, onSaved }) {
       setSaving(false);
     }
   }
-  const locked = saving || uncertain || photosLocked;
+  const locked = saving || uncertain || photosLocked || progressLocked;
   return (
     <Dialog
       open
@@ -155,9 +156,11 @@ function ReportEditor({ row, onClose, onSaved }) {
               <span>Started: {moment(data.report?.startedAt)}</span>
               <span>Completed: {moment(data.report?.completedAt)}</span>
             </div>
+            <ServiceProgress jobId={row.jobId} status={data.status} repairEligible={data.repairEligible} progress={data.serviceProgress} disabled={saving||uncertain||photosLocked} onLockedChange={setProgressLocked} onSaved={async()=>{const fresh=await technicianRequest('/reports/'+row.jobId);setData(current=>({...current,serviceProgress:fresh.serviceProgress,status:fresh.status,repairEligible:fresh.repairEligible}));onSaved();}}/>
             {edit ? (
               <form onSubmit={submit} className="portal-form">
                 <fieldset disabled={locked}>
+                  <label>Checks template<NativeSelect aria-label="Checks template" value="" onChange={e=>{if(e.target.value)changeContent('checklist',e.target.value);}}><option value="">Choose checks to start with</option><option value="Cooling performance, drainage, filters and controls checked.">Cleaning checks</option><option value="Fault diagnosis, electrical safety and operation checked.">Repair checks</option><option value="Work incomplete; return visit details recorded in service updates.">Return visit required</option></NativeSelect></label>
                   {fields.map(([key, label, required]) => (
                     <label key={key}>
                       {label}

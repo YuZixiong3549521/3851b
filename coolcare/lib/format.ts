@@ -40,3 +40,12 @@ export function formatTimeSlot(value: string | null | undefined) {
 export function formatMoney(value: number | null) {
   return new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(value ?? 0);
 }
+
+export function formatServiceWindow(slot: string, durationMinutes?: number): string {
+  const match=/^(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(slot.trim());
+  if(!match || !durationMinutes) return formatTimeSlot(slot);
+  const hour=match[3] ? Number(match[1])%12+(match[3].toUpperCase()==='PM'?12:0) : Number(match[1]);
+  const start=hour*60+Number(match[2]), end=start+durationMinutes;
+  const clock=(minutes:number)=>String(Math.floor(minutes/60)).padStart(2,'0')+':'+String(minutes%60).padStart(2,'0');
+  return formatTimeSlot(clock(start)+' - '+clock(end));
+}

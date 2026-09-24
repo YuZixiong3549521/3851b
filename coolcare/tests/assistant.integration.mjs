@@ -203,7 +203,7 @@ test('assistant review validates contact phone and calendar rules without creati
     ...identity(client.user,state),draft:{...state.draft,numberOfUnits},
   })).status,400);
   state=await save(client,{...state.draft,preferredDate:futureDate()},state);
-  state=await review(client,state);assert.equal(state.status,'reviewed');assert.equal(state.quote.totalAmount,75);
+  state=await review(client,state);assert.equal(state.status,'reviewed');assert.equal(state.quote.totalAmount,100);
   assert.equal(state.quote.visits.length,1);
   const forged=await client.request(`${prefix}/confirm`,'POST',{...confirmInput(client,state),quoteId:randomUUID()});
   assert.equal(forged.status,409);assert.equal(forged.data.code,'REVIEW_REQUIRED');
@@ -213,12 +213,12 @@ test('assistant review validates contact phone and calendar rules without creati
 test('assistant annual review reports every conflicting quarter and confirmation rechecks a later visit',async()=>fixture(async({connection,customer})=>{
   const {client,customerId}=await customer();
   const options=(await client.request('/api/customer/booking-options')).data;
-  const draft=await selectedDraft(client,{serviceId:undefined,packageId:options.bundles[0].packageId});
+  const draft=await selectedDraft(client,{serviceId:undefined,propertyType:'hdb-4',packageId:options.bundles[0].packageId});
   const schedule=annualVisitSchedule(draft.preferredDate,260);
   const conflicts=[];
   for(const visit of schedule) {
     const bookings=[];
-    for(let index=0;index<2;index++) {
+    for(let index=0;index<1;index++) {
       const result=await client.request('/api/public/bookings','POST',{expectedUserId:client.user.id,
         serviceId:options.services[0].serviceId,serviceAddress:draft.serviceAddress,numberOfUnits:1,
         preferredDate:visit.preferredDate,timeWindow:draft.timeWindow,requestId:randomUUID()});
@@ -231,7 +231,7 @@ test('assistant annual review reports every conflicting quarter and confirmation
   assert.equal(blocked.status,409);assert.equal(blocked.data.code,'SCHEDULE_CONFLICT');
   assert.deepEqual(blocked.data.details.conflicts.map(({visitNumber,preferredDate})=>({visitNumber,preferredDate})),
     schedule.map(({visitNumber,preferredDate})=>({visitNumber,preferredDate})));
-  assert.ok(blocked.data.details.conflicts.every(conflict=>conflict.message.includes('two bookings')));
+  assert.ok(blocked.data.details.conflicts.every(conflict=>conflict.message.includes('calendar week')));
   assert.deepEqual((await client.request(`${prefix}/draft`)).data.state,state,'failed review does not consume a revision or store a misleading quote');
   for(const bookings of conflicts)assert.equal((await client.request(`/api/customer/bookings/${bookings[0]}/status`,'PATCH',{status:'Cancelled'})).status,200);
   const reviewed=await review(client,state);assert.equal(reviewed.quote.visits.length,4);
@@ -243,14 +243,14 @@ test('assistant annual review reports every conflicting quarter and confirmation
   assert.equal(confirm.status,409);assert.equal(confirm.data.code,'SCHEDULE_CONFLICT');
   assert.deepEqual(confirm.data.details.conflicts.map(conflict=>conflict.visitNumber),[4]);
   assert.deepEqual(await recordCounts(connection,customerId),before,'a conflict on visit four cannot create the first three visits');
-  assert.equal(before.series,0);assert.equal(before.bookings,9);assert.equal(before.emails,0);
+  assert.equal(before.series,0);assert.equal(before.bookings,5);assert.equal(before.emails,0);
 }));
 
 test('assistant requires a new reviewed price before committing, without modifying the live catalogue',async()=>fixture(async({connection,hooks,customer})=>{
   const {client,customerId}=await customer();
   const draft=await selectedDraft(client);
   const state=await review(client,await save(client,draft));
-  assert.equal(state.quote.totalAmount,75);
+  assert.equal(state.quote.totalAmount,100);
   const [[original]]=await connection.execute('SELECT base_price FROM service_catalog WHERE service_id=?',[draft.serviceId]);
   let changedReads=0;
   hooks.after=(sql,result)=>{
@@ -264,15 +264,15 @@ test('assistant requires a new reviewed price before committing, without modifyi
   const changed=await client.request(`${prefix}/confirm`,'POST',previous);
   assert.equal(changed.status,409);assert.equal(changed.data.code,'REVIEW_REQUIRED');
   const updated=changed.data.state;assert.equal(updated.status,'reviewed');assert.equal(updated.revision,state.revision+1);
-  assert.equal(updated.quote.totalAmount,85);assert.notEqual(updated.quote.quoteId,state.quote.quoteId);
+  assert.equal(updated.quote.totalAmount,110);assert.notEqual(updated.quote.quoteId,state.quote.quoteId);
   assert.deepEqual((await client.request(`${prefix}/draft`)).data.state,updated,'replacement quote is durably saved despite the 409 response');
   assert.equal((await client.request(`${prefix}/confirm`,'POST',previous)).status,409);
   assert.deepEqual(await recordCounts(connection,customerId),{bookings:0,series:0,addresses:0,units:0,emails:0});
   const accepted=await client.request(`${prefix}/confirm`,'POST',confirmInput(client,updated));
-  assert.equal(accepted.status,200,JSON.stringify(accepted.data));assert.equal(accepted.data.booking.totalAmount,85);
+  assert.equal(accepted.status,200,JSON.stringify(accepted.data));assert.equal(accepted.data.booking.totalAmount,110);
   assert.ok(changedReads>=2,'both confirmation attempts resolve the current service price');
   const [[snapshot]]=await connection.execute('SELECT base_price,line_total FROM booking_service WHERE booking_id=?',[accepted.data.booking.bookingId]);
-  assert.equal(Number(snapshot.base_price),Number(original.base_price)+10);assert.equal(Number(snapshot.line_total),85);
+  assert.equal(Number(snapshot.base_price),Number(original.base_price)+10);assert.equal(Number(snapshot.line_total),110);
   assert.equal(Number((await connection.execute('SELECT base_price FROM service_catalog WHERE service_id=?',[draft.serviceId]))[0][0].base_price),Number(original.base_price));
 }));
 
@@ -281,7 +281,7 @@ test('assistant annual confirmation is atomic, recovers a lost response, and rep
   try {await fixture(async({connection,hooks,customer,newClient})=>{
     const {client,account,customerId}=await customer();
     const options=(await client.request('/api/customer/booking-options')).data;
-    const draft=await selectedDraft(client,{serviceId:undefined,packageId:options.bundles[0].packageId,preferredDate:'2028-01-31'});
+    const draft=await selectedDraft(client,{serviceId:undefined,propertyType:'hdb-4',packageId:options.bundles[0].packageId,preferredDate:'2028-01-31'});
     const reviewed=await review(client,await save(client,draft));
     assert.deepEqual(reviewed.quote.visits.map(visit=>visit.preferredDate),['2028-01-31','2028-05-01','2028-07-31','2028-10-31']);
     assert.deepEqual(reviewed.quote.visits.map(visit=>visit.totalAmount),[65,65,65,65]);

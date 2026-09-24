@@ -8,6 +8,7 @@ import Header from './components/Header.jsx';
 import JobDrawer from './components/JobDrawer.jsx';
 import TechnicianDashboard from './pages/TechnicianDashboard.jsx';
 import MyJobs from './pages/MyJobs.jsx';
+import {formatDate,formatTime} from './utils/jobs.js';
 import {
   getPortalData,
   getPortalDate,
@@ -131,6 +132,7 @@ function TechnicianPortal({ user }) {
               </Button>
             )}
           </div>
+          {['dashboard','jobs'].includes(page)&&jobs.some(j=>['Required','Scheduled','In Progress'].includes(j.followUpStatus))&&<section className="panel p-5 mb-5"><h2>Return visits</h2><p>Continue work on the original work order and service report.</p><div className="flex flex-wrap gap-3 mt-3">{jobs.filter(j=>['Required','Scheduled','In Progress'].includes(j.followUpStatus)).map(j=><Button key={j.jobId} type="button" variant="outline" className="h-auto whitespace-normal text-left" onClick={()=>setSelected(j)}><span>{j.id} · {j.customer}<br/>{j.followUpStatus}{j.followUpDate?` · ${formatDate(j.followUpDate)} · ${formatTime(j.followUpStart)}`:''}</span></Button>)}</div></section>}
           {page === 'reports' ? (
             <ServiceReports onChanged={changed} />
           ) : page === 'profile' ? (

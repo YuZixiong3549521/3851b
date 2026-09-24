@@ -4,9 +4,10 @@ import { HttpError } from './errors.mjs';
 import { lockCustomer, resolveBookingSelection, attachBookingSelections } from './booking-options.mjs';
 import { writeSelectedBookings,describeCreatedBooking } from './booking-writer.mjs';
 import { config } from './config.mjs';
-import { isCalendarDate } from './booking-schedule.mjs';
+import { isCalendarDate,canChangeAppointment,appointmentInstant,MINIMUM_CHANGE_HOURS } from './booking-schedule.mjs';
 import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './address-service.mjs';
 import { resolveReportPhoto } from './report-photos.mjs';
+import {getServiceProgress} from '../service-progress.mjs';
 
 const timeSlots = ['09:00 - 11:00', '11:00 - 13:00', '14:00 - 16:00', '16:00 - 18:00'];
 
@@ -16,6 +17,8 @@ export const createBookingSchema = z.object({
   serviceType: z.string().trim().min(1).max(120).optional(),
   serviceIds: z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),
   packageId: z.coerce.number().int().positive().optional(),
+  propertyType:z.string().trim().max(40).optional(),
+  postalCode:z.string().trim().regex(/^\d{6}$/,'Enter a six-digit Singapore postal code.').optional(),
   subscriptionId: z.coerce.number().int().positive().optional(),
   requestId: z.uuid().optional(),
   addressId: z.coerce.number().int().positive().optional(),
@@ -25,6 +28,7 @@ export const createBookingSchema = z.object({
   preferredDate: z.string().refine(isCalendarDate, 'Choose a valid service date.'),
   timeSlot: z.enum(timeSlots),
   problemDescription: z.string().trim().max(1000).optional().default(''),
+  specialNotes:z.string().trim().max(1000).optional(),
 }).superRefine((input,context)=>{
   const countMode=input.serviceAddress!==undefined||input.numberOfUnits!==undefined;
   if(countMode) {
@@ -73,7 +77,7 @@ export async function createBooking(pool, untrustedInput, userId) {
     let address;
     let uniqueUnitIds;
     if(input.numberOfUnits!==undefined) {
-      address=await findOrCreateServiceAddress(connection,customer.customerId,input.serviceAddress,{addressId:input.addressId});
+      address=await findOrCreateServiceAddress(connection,customer.customerId,input.serviceAddress,{addressId:input.addressId,postalCode:input.postalCode,verifyPostalCode:true});
       uniqueUnitIds=await addressUnitIds(connection,customer.customerId,address.addressId,input.numberOfUnits);
     }else {
       const [[savedAddress]]=await connection.execute(`SELECT address_id AS addressId,address_line AS addressLine FROM service_address
@@ -90,7 +94,7 @@ export async function createBooking(pool, untrustedInput, userId) {
     const selection=await resolveBookingSelection(connection,customer.customerId,input,uniqueUnitIds.length);
     const booking=await writeSelectedBookings(connection,selection,{customerId:customer.customerId,userId:customer.userId,
       addressId:address.addressId,addressLine:address.addressLine,unitIds:uniqueUnitIds,preferredDate:input.preferredDate,
-      timeSlot:input.timeSlot,problemDescription:input.problemDescription,phone:customer.phone,requestId:input.requestId,source:'Created from customer portal.'});
+      timeSlot:input.timeSlot,problemDescription:input.problemDescription,specialNotes:input.specialNotes,phone:customer.phone,requestId:input.requestId,source:'Created from customer portal.'});
     await connection.commit();
     return {
       ...booking,
@@ -108,24 +112,26 @@ export async function listBookings(pool, scope = 'all', userId) {
   const customer = await getDemoCustomer(pool, userId);
   const conditions = ['b.customer_id = ?'];
   const values = [customer.customerId];
-  if (scope === 'upcoming') conditions.push("b.booking_status NOT IN ('Completed', 'Cancelled', 'Rejected')");
-  if (scope === 'history') conditions.push("b.booking_status IN ('Completed','Cancelled','Rejected')");
+  if (scope === 'upcoming') conditions.push("b.booking_status NOT IN ('Completed', 'Cancelled', 'Rejected','Expired')");
+  if (scope === 'history') conditions.push("b.booking_status IN ('Completed','Cancelled','Rejected','Expired')");
 
   const [rows] = await pool.execute(
     `SELECT
        b.booking_id AS bookingId,
        b.address_id AS addressId,
        (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
-       (b.booking_status='Submitted' AND NOT EXISTS(SELECT 1 FROM assignment owned_assignment WHERE owned_assignment.booking_id=b.booking_id)) AS canModify,
+       (b.booking_status IN ('Submitted','Confirmed','Assigned') AND (b.booking_status<>'Submitted' OR b.expires_at IS NULL OR b.expires_at>UTC_TIMESTAMP()) AND NOT EXISTS(SELECT 1 FROM work_order ow LEFT JOIN service_report osr ON osr.job_id=ow.job_id WHERE ow.booking_id=b.booking_id AND (ow.current_status IN ('In Progress','Completed') OR osr.started_at IS NOT NULL OR EXISTS(SELECT 1 FROM inventory_transaction it WHERE it.job_id=ow.job_id)))) AS canModify,
        b.created_at AS createdAt,
        UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,
        b.preferred_service_date AS preferredDate,
        b.preferred_time_slot AS timeSlot,
+       b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,
+       d.special_notes AS specialNotes,b.expires_at AS expiresAt,
        b.problem_description AS problemDescription,
        b.booking_status AS status,
-       (SELECT h.change_note FROM booking_status_history h
+       COALESCE(b.rejection_reason,(SELECT h.change_note FROM booking_status_history h
         WHERE h.booking_id=b.booking_id AND h.new_status='Rejected'
-        ORDER BY h.history_id DESC LIMIT 1) AS rejectionReason,
+        ORDER BY h.history_id DESC LIMIT 1)) AS rejectionReason,
        b.total_amount AS totalAmount,
        sc.service_name AS serviceName,
        sa.address_label AS addressLabel,
@@ -136,9 +142,10 @@ export async function listBookings(pool, scope = 'all', userId) {
      FROM booking b
      JOIN service_catalog sc ON sc.service_id = b.service_id
      JOIN service_address sa ON sa.address_id = b.address_id
+     LEFT JOIN web_booking_details d ON d.booking_id=b.booking_id
      LEFT JOIN assignment a ON a.assignment_id = (
        SELECT a2.assignment_id FROM assignment a2
-       WHERE a2.booking_id = b.booking_id
+       WHERE a2.booking_id = b.booking_id AND a2.assignment_status NOT IN ('Cancelled','Reassigned','Declined')
        ORDER BY a2.assignment_id DESC LIMIT 1
      )
      LEFT JOIN technician t ON t.technician_id = a.technician_id
@@ -170,7 +177,9 @@ export async function listBookings(pool, scope = 'all', userId) {
 
   return attachBookingSelections(pool, rows.map(({createdAtEpoch,...row}) => ({
     ...row,
-    canModify:Boolean(row.canModify),
+    canModify:Boolean(row.canModify)&&canChangeAppointment(row.preferredDate,row.slotStart||'09:00:00'),
+    changeDeadline:new Date(appointmentInstant(row.preferredDate,row.slotStart||'09:00:00').getTime()-MINIMUM_CHANGE_HOURS*3600000).toISOString(),
+    expiresAt:row.expiresAt?`${String(row.expiresAt).replace(' ','T')}Z`:null,
     createdAt:timestampIso(createdAtEpoch),
     bookingReference: bookingReference(row.bookingId, row.createdAt),
     units: unitsByBooking.get(row.bookingId) ?? [],
@@ -185,7 +194,8 @@ export async function getBookingDetail(pool,bookingId,userId) {
   const [timelineRows]=await pool.execute(`SELECT new_status AS status,UNIX_TIMESTAMP(changed_at) AS changedAtEpoch,change_note AS remarks
     FROM booking_status_history WHERE booking_id=? ORDER BY changed_at,history_id`,[bookingId]);
   const statusTimeline=timelineRows.map(({changedAtEpoch,...event})=>({...event,changedAt:timestampIso(changedAtEpoch)}));
-  return {...booking,statusTimeline};
+  const [[job]]=await pool.execute("SELECT job_id FROM work_order WHERE booking_id=? AND current_status<>'Cancelled' ORDER BY job_id DESC LIMIT 1",[bookingId]);
+  return {...booking,statusTimeline,serviceProgress:job?await getServiceProgress(pool,job.job_id):null};
 }
 
 export async function getBookingReport(pool, bookingId, userId) {
@@ -195,7 +205,7 @@ export async function getBookingReport(pool, bookingId, userId) {
        b.booking_id AS bookingId,
        b.created_at AS createdAt,
        b.preferred_service_date AS serviceDate,
-       b.preferred_time_slot AS timeSlot,
+       COALESCE(CONCAT(TIME_FORMAT(b.slot_start,'%H:%i'),' - ',TIME_FORMAT(b.slot_end,'%H:%i')),b.preferred_time_slot) AS timeSlot,
        sc.service_name AS serviceName,
        tech_user.full_name AS technicianName,
        sr.report_id AS reportId,
@@ -245,6 +255,7 @@ export async function getBookingReport(pool, bookingId, userId) {
     bookingReference: bookingReference(rows[0].bookingId, rows[0].createdAt),
     photos:availablePhotos,
     partsUsed:partsUsed.map(part=>({...part,quantity:Number(part.quantity)})),
+    serviceProgress:await getServiceProgress(pool,jobId),
   }]);
   return report;
 }

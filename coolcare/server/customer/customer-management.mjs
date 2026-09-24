@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { HttpError } from './errors.mjs';
 import { getDemoCustomer } from './customer.mjs';
-import { lockCustomer,normalizeAddress,exceedsWeeklyLimit } from './booking-options.mjs';
+import { lockCustomer,normalizeAddress,exceedsWeeklyLimit,cleaningBookingPredicate,bookingIncludesCleaning } from './booking-options.mjs';
 import { isCalendarDate,addCalendarDays,minimumBookingDate,nextWeekday,isWeekday,BOOKING_TIME_ZONE } from './booking-schedule.mjs';
 import { addressLineSchema } from './address-service.mjs';
 import { getTeamSlotAvailability } from '../scheduling.mjs';
@@ -24,7 +24,8 @@ export async function updateCustomerProfile(pool,userId,untrustedInput) {
 
 const calendar=z.string().refine(isCalendarDate);
 const availabilitySchema=z.object({serviceAddress:addressLineSchema.optional(),addressId:z.coerce.number().int().positive().optional(),
-  from:calendar,to:calendar,excludeBookingId:z.coerce.number().int().positive().optional()});
+  from:calendar,to:calendar,excludeBookingId:z.coerce.number().int().positive().optional(),includesCleaning:z.enum(['true','false']).optional(),
+  serviceIds:z.union([z.string(),z.array(z.coerce.number().int().positive())]).optional(),packageId:z.coerce.number().int().positive().optional()});
 
 export async function getBookingAvailability(pool,userId,untrustedInput) {
   const parsed=availabilitySchema.safeParse(untrustedInput);
@@ -54,22 +55,39 @@ export async function getBookingAvailability(pool,userId,untrustedInput) {
     const [rows]=await pool.execute(`SELECT b.booking_id AS bookingId,b.preferred_service_date AS preferredDate,
       b.preferred_time_slot AS timeSlot,b.booking_status AS status,sa.address_line AS addressLine
       FROM booking b JOIN service_address sa ON sa.address_id=b.address_id
-      WHERE b.customer_id=? AND b.booking_status NOT IN ('Cancelled','Rejected') AND b.booking_id<>?
+      WHERE b.customer_id=? AND b.booking_status NOT IN ('Cancelled','Rejected','Expired') AND b.booking_id<>? AND ${cleaningBookingPredicate}
       AND b.preferred_service_date BETWEEN ? AND ? ORDER BY b.preferred_service_date,b.booking_id`,
       [customer.customerId,input.excludeBookingId??0,addCalendarDays(input.from,-6),addCalendarDays(input.to,6)]);
     existingBookings=rows.filter(row=>normalizeAddress(row.addressLine)===normalizeAddress(addressLine)).map(({addressLine,...booking})=>booking);
   }
-  const earliestDate=nextWeekday(minimumBookingDate());
+  const earliestDate=nextWeekday(input.excludeBookingId?new Date(Date.now()+72*3600000+8*3600000).toISOString().slice(0,10):minimumBookingDate());
+  let includesCleaning=input.excludeBookingId?await bookingIncludesCleaning(pool,input.excludeBookingId):input.includesCleaning!=='false';
+  if(!input.excludeBookingId&&input.packageId)includesCleaning=true;
+  else if(!input.excludeBookingId&&input.serviceIds) {
+    const ids=z.array(z.coerce.number().int().positive()).min(1).max(2).parse(Array.isArray(input.serviceIds)?input.serviceIds:input.serviceIds.split(','));
+    const [services]=await pool.execute(`SELECT code FROM simple_service_catalog WHERE service_id IN (${ids.map(()=>'?').join(',')})`,ids);
+    if(services.length!==new Set(ids).size)throw new HttpError(400,'Choose an available service.');
+    includesCleaning=services.some(service=>service.code==='cleaning');
+  }
   const existingDates=existingBookings.map(booking=>booking.preferredDate);
   const blockedDates=[];
   for(let date=input.from;date<=input.to;date=addCalendarDays(date,1)) {
-    if(date<earliestDate||!isWeekday(date)||exceedsWeeklyLimit(existingDates,date))blockedDates.push(date);
+    if(date<earliestDate||!isWeekday(date)||(includesCleaning&&exceedsWeeklyLimit(existingDates,date)))blockedDates.push(date);
   }
   return {blockedDates,existingBookings,earliestDate,timeZone:BOOKING_TIME_ZONE};
 }
 
-export async function getBookingSlotAvailability(pool,untrustedDates) {
+export async function getBookingSlotAvailability(pool,untrustedDates,query={},userId) {
   const dates=String(untrustedDates??'').split(',').map(value=>value.trim()).filter(Boolean);
   if(!dates.length||dates.length>4||dates.some(value=>!isCalendarDate(value)))throw new HttpError(400,'Choose between one and four valid service dates.');
-  return getTeamSlotAvailability(pool,dates);
+  const options={};
+  if(query.durationMinutes!==undefined)options.durationMinutes=z.coerce.number().int().min(1).max(540).parse(query.durationMinutes);
+  if(query.excludeBookingId!==undefined) {
+    const id=z.coerce.number().int().positive().parse(query.excludeBookingId);
+    const customer=await getDemoCustomer(pool,userId);
+    const [[booking]]=await pool.execute('SELECT estimated_duration_minutes FROM booking WHERE booking_id=? AND customer_id=?',[id,customer.customerId]);
+    if(!booking)throw new HttpError(404,'Booking not found.');
+    options.excludeBookingId=id;options.durationMinutes=booking.estimated_duration_minutes;
+  }
+  return getTeamSlotAvailability(pool,dates,options);
 }

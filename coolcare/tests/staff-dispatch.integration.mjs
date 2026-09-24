@@ -327,7 +327,7 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       timeZone: 'UTC',
     }).format(new Date(`${rescheduledDate}T00:00:00Z`));
     assert.match(dispatchMail.body_text, new RegExp(emailDate));
-    assert.match(dispatchMail.body_text, /14:00 - 16:00/);
+    assert.match(dispatchMail.body_text, /Service time: 14:00 - 14:45 \(Singapore time\)/);
     assert.match(
       dispatchMail.body_text,
       new RegExp(technicians[0].fullName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
@@ -497,7 +497,7 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       updateTechnician(db, secondDispatch.technician.technicianId, {
         availability: 'On Leave',
       }),
-      (error) => error.status === 409 && /Redispatch/.test(error.message),
+      (error) => error.status === 409 && /active service|work orders|return visits/.test(error.message),
     );
   }));
 

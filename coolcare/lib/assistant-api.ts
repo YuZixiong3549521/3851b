@@ -6,6 +6,9 @@ export type AssistantStep = 'service' | 'address' | 'schedule' | 'review';
 export type AssistantDraft = {
   step: AssistantStep;
   serviceId?: number;
+  serviceIds?: number[];
+  propertyType?: string;
+  postalCode?: string;
   packageId?: number;
   numberOfUnits: number;
   serviceAddress: string;
@@ -52,7 +55,7 @@ export type AssistantError = Error & {
 export const emptyAssistantDraft: AssistantDraft = { step: 'service', numberOfUnits: 2, serviceAddress: '', phone: '', preferredDate: '', timeWindow: '09:00 AM - 11:00 AM', notes: '' };
 
 export function sameAssistantDraft(a: AssistantDraft, b: AssistantDraft) {
-  return ['step', 'serviceId', 'packageId', 'numberOfUnits', 'serviceAddress', 'phone', 'preferredDate', 'timeWindow', 'notes'].every(key => (a[key as keyof AssistantDraft] ?? '') === (b[key as keyof AssistantDraft] ?? ''));
+  return ['step', 'serviceId', 'packageId', 'propertyType', 'postalCode', 'numberOfUnits', 'serviceAddress', 'phone', 'preferredDate', 'timeWindow', 'notes'].every(key => (a[key as keyof AssistantDraft] ?? '') === (b[key as keyof AssistantDraft] ?? '')) && JSON.stringify(a.serviceIds ?? []) === JSON.stringify(b.serviceIds ?? []);
 }
 
 export function verifyAssistantState(state: AssistantState | null, expectedUserId: number) {

@@ -10,7 +10,8 @@ export function buildAssignedBookingMail(booking, technicianName) {
     ['Booking reference', `#${booking.booking_id}`],
     ['Services', booking.services],
     ['Service date', date],
-    ['Arrival window', booking.preferred_time_slot],
+    ['Service time',booking.slot_start&&booking.slot_end?`${String(booking.slot_start).slice(0,5)} - ${String(booking.slot_end).slice(0,5)} (Singapore time)`:booking.preferred_time_slot],
+    ...(booking.estimated_duration_minutes?[['Estimated duration',`${booking.estimated_duration_minutes} minutes`]]:[]),
     ['Service address', booking.address_line],
     ['Technician', technicianName],
   ];
@@ -34,12 +35,12 @@ async function enqueueMail(connection,{eventKey,eventType,bookingId=null,invitat
 
 export async function enqueueBookingLifecycleEmail(connection,bookingId,eventType,{technicianName='',eventKey=`${eventType}:${bookingId}`}={}) {
   if(eventType!=='booking.assigned')throw new Error('Unsupported booking mail event.');
-  const [[booking]]=await connection.execute(`SELECT b.booking_id,b.preferred_service_date,b.preferred_time_slot,
+  const [[booking]]=await connection.execute(`SELECT b.booking_id,b.preferred_service_date,b.preferred_time_slot,b.slot_start,b.slot_end,b.estimated_duration_minutes,
     u.full_name,u.email,sa.address_line,COALESCE(GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', '),MAX(sc.service_name)) AS services
     FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN user_account u ON u.user_id=c.user_id
     JOIN service_address sa ON sa.address_id=b.address_id JOIN service_catalog sc ON sc.service_id=b.service_id
     LEFT JOIN booking_service bs ON bs.booking_id=b.booking_id WHERE b.booking_id=?
-    GROUP BY b.booking_id,b.preferred_service_date,b.preferred_time_slot,u.full_name,u.email,sa.address_line`,[bookingId]);
+    GROUP BY b.booking_id,b.preferred_service_date,b.preferred_time_slot,b.slot_start,b.slot_end,b.estimated_duration_minutes,u.full_name,u.email,sa.address_line`,[bookingId]);
   if(!booking)throw new Error('Cannot queue mail for a missing booking.');
   const mail=buildAssignedBookingMail(booking,technicianName);
   return enqueueMail(connection,{eventKey,eventType,bookingId,recipient:booking.email,...mail});

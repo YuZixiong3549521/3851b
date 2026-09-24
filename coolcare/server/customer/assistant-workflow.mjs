@@ -5,7 +5,7 @@ import { lockCustomer,resolveBookingSelection,assertAddressBookingLimit } from '
 import { annualVisitSchedule } from './annual-bookings.mjs';
 import { assertBookableDate,isCalendarDate } from './booking-schedule.mjs';
 import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './address-service.mjs';
-import { assertTeamCapacity,normalizeBookingSlot } from '../scheduling.mjs';
+import { assertTeamCapacity,bookingServiceSlot } from '../scheduling.mjs';
 import { describeCreatedBooking,writeSelectedBookings } from './booking-writer.mjs';
 import { bookingReference } from './booking-service.mjs';
 import { normalizePhoneNumber,phoneNumberError } from '../../lib/phone-number.mjs';
@@ -15,6 +15,8 @@ const positiveId=z.number().int().positive();
 const draftSchema=z.object({
   step:z.enum(['service','units','address','schedule','review']),
   serviceId:positiveId.optional(),packageId:positiveId.optional(),
+  serviceIds:z.array(positiveId).max(2).optional(),propertyType:z.string().max(40).optional(),
+  postalCode:z.string().refine(value=>value===''||/^\d{6}$/.test(value),'Enter a six-digit Singapore postal code.').optional(),
   numberOfUnits:z.number().int().min(1).max(10),
   serviceAddress:z.string().max(255),phone:z.string().max(30),
   preferredDate:z.string().max(10),timeWindow:z.union([z.enum(timeWindows),z.literal('')]),notes:z.string().max(1000),
@@ -127,12 +129,13 @@ export async function newAssistantDraft(pool,user,untrustedInput) {
 
 function validateReadyDraft(draft) {
   const fieldErrors={};
-  if(Boolean(draft.serviceId)===Boolean(draft.packageId))fieldErrors.serviceId=['Choose Cleaning, Repair or the Annual Cleaning Bundle.'];
+  if(!draft.serviceId&&!draft.serviceIds?.length&&!draft.packageId)fieldErrors.serviceId=['Choose Cleaning, Repair, both services or the Annual Cleaning Bundle.'];
+  if(draft.packageId&&!draft.propertyType)fieldErrors.propertyType=['Choose a property type for your annual bundle.'];
   const address=addressLineSchema.safeParse(draft.serviceAddress);
   if(!address.success)fieldErrors.serviceAddress=address.error.issues.map(issue=>issue.message);
   const phoneError=phoneNumberError(draft.phone);
   if(phoneError)fieldErrors.phone=[phoneError];
-  if(!timeWindows.includes(draft.timeWindow))fieldErrors.timeWindow=['Choose a preferred arrival window.'];
+  if(!timeWindows.includes(draft.timeWindow))fieldErrors.timeWindow=['Choose an available service start time.'];
   if(!isCalendarDate(draft.preferredDate)||draft.preferredDate<'1000-01-07'||draft.preferredDate>'9998-12-25')fieldErrors.preferredDate=['Choose a valid first service date.'];
   if(Object.keys(fieldErrors).length)throw fail(400,'Please correct the highlighted booking details.','VALIDATION_ERROR',{fieldErrors});
   return {...draft,serviceAddress:address.data,phone:normalizePhoneNumber(draft.phone)};
@@ -149,6 +152,7 @@ async function lockedSelection(connection,customerId,input,requestId) {
   await connection.query('SELECT package_id,service_id FROM package_service ORDER BY package_id,service_id FOR SHARE');
   await connection.query('SELECT service_id FROM simple_service_catalog ORDER BY service_id FOR SHARE');
   await connection.query('SELECT package_id FROM simple_package_catalog ORDER BY package_id FOR SHARE');
+  await connection.query('SELECT package_id,property_type FROM annual_property_pricing ORDER BY package_id,property_type FOR SHARE');
   try {
     const selection=await resolveBookingSelection(connection,customerId,{...input,requestId},input.numberOfUnits);
     const amounts=[selection.totalAmount,...selection.services.flatMap(service=>[service.basePrice,service.additionalUnitPrice,service.lineTotal])];
@@ -164,16 +168,16 @@ function describeQuote(selection,input) {
     {visitNumber:1,preferredDate:input.preferredDate,totalAmount:selection.totalAmount},
   ];
   const terms={currency:'SGD',serviceName:selection.package?.name||selection.serviceName,annual:selection.annual,
-    totalAmount:selection.totalAmount,numberOfUnits:input.numberOfUnits,
+    totalAmount:selection.totalAmount,numberOfUnits:input.numberOfUnits,estimatedDurationMinutes:selection.estimatedDurationMinutes,includesCleaning:selection.includesCleaning,
     services:selection.services.map(service=>({serviceId:service.serviceId,name:service.name,basePrice:service.basePrice,
       additionalUnitPrice:service.additionalUnitPrice,quantity:service.quantity,lineTotal:service.lineTotal})),
     package:selection.package?{packageId:selection.package.packageId,name:selection.package.name,price:Number(selection.package.price),
-      additionalUnitPrice:Number(selection.package.additionalUnitPrice),includedUnits:selection.package.includedUnits,includedVisits:selection.package.includedVisits}:null,
+      additionalUnitPrice:Number(selection.package.additionalUnitPrice),includedUnits:selection.package.includedUnits,includedVisits:selection.package.includedVisits,propertyType:selection.package.propertyType,propertyLabel:selection.package.propertyLabel}:null,
     visits:visits.map(({visitNumber,preferredDate,totalAmount})=>({visitNumber,preferredDate,totalAmount})),
-    serviceAddress:input.serviceAddress,timeWindow:input.timeWindow};
+    serviceAddress:input.serviceAddress,postalCode:input.postalCode||'',timeWindow:input.timeWindow};
   const fingerprint=createHash('sha256').update(JSON.stringify(terms)).digest('hex');
   return {fingerprint,quote:{quoteId:randomUUID(),currency:terms.currency,serviceName:terms.serviceName,annual:terms.annual,
-    totalAmount:terms.totalAmount,numberOfUnits:input.numberOfUnits,visits:terms.visits,reviewedAt:new Date().toISOString()}};
+    totalAmount:terms.totalAmount,numberOfUnits:input.numberOfUnits,estimatedDurationMinutes:selection.estimatedDurationMinutes,includesCleaning:selection.includesCleaning,propertyType:selection.package?.propertyType,propertyLabel:selection.package?.propertyLabel,visits:terms.visits,reviewedAt:new Date().toISOString()}};
 }
 
 async function validateSchedule(connection,customerId,input,quote,state) {
@@ -181,14 +185,14 @@ async function validateSchedule(connection,customerId,input,quote,state) {
   for(const visit of quote.visits) {
     try {
       assertBookableDate(visit.preferredDate);
-      await assertAddressBookingLimit(connection,customerId,input.serviceAddress,visit.preferredDate);
+      await assertAddressBookingLimit(connection,customerId,input.serviceAddress,visit.preferredDate,0,{includesCleaning:quote.includesCleaning});
     }catch(error){
       if(!error.status||error.status>=500)throw error;
       conflicts.push({visitNumber:visit.visitNumber,preferredDate:visit.preferredDate,message:error.message});
     }
   }
   try {
-    const slot=normalizeBookingSlot(input.timeWindow);
+    const slot=bookingServiceSlot(input.timeWindow,quote.estimatedDurationMinutes);
     await assertTeamCapacity(connection,quote.visits.map(visit=>({date:visit.preferredDate,start:slot.start,end:slot.end})));
   } catch(error) {
     if(!error.status||error.status>=500)throw error;
@@ -254,7 +258,7 @@ export async function confirmAssistantDraft(pool,user,untrustedInput) {
         // Return a problem rather than throwing so the replacement quote commits.
         return {error:'The price or service details changed. Review the updated estimate and confirm again.',code:'REVIEW_REQUIRED',state};
       }
-      const address=await findOrCreateServiceAddress(connection,customer.customerId,draft.serviceAddress);
+      const address=await findOrCreateServiceAddress(connection,customer.customerId,draft.serviceAddress,{postalCode:draft.postalCode,verifyPostalCode:true});
       const unitIds=await addressUnitIds(connection,customer.customerId,address.addressId,draft.numberOfUnits);
       const created=await writeSelectedBookings(connection,selection,{customerId:customer.customerId,userId:user.id,addressId:address.addressId,
         addressLine:address.addressLine,unitIds,preferredDate:draft.preferredDate,timeSlot:draft.timeWindow,problemDescription:draft.notes,

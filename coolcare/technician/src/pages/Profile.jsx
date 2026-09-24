@@ -51,6 +51,7 @@ export default function Profile({ onChanged }) {
       fullName: source.fullName,
       phone: source.phone ?? '',
       primaryRegion: source.primaryRegion,
+      basePostalCode:source.basePostalCode??'',
       availability:
         kind === 'availability' ? availability : profile.availability,
     };
@@ -256,6 +257,7 @@ export default function Profile({ onChanged }) {
                     }
                   />
                 </label>
+                <label>Base postal code<Input inputMode="numeric" pattern="[0-9]{6}" maxLength={6} readOnly={!edit} disabled={disabled} placeholder="Six-digit Singapore postal code" value={form.basePostalCode??''} onChange={e=>setForm({...form,basePostalCode:e.target.value})}/></label>
               </div>
               {edit && (
                 <div className="portal-actions">
@@ -277,8 +279,7 @@ export default function Profile({ onChanged }) {
               )}
               <p className="muted">
                 Your sign-in email is managed by the administrator. Primary
-                region is profile information; dispatch uses availability and
-                schedule.
+                region is profile information. Dispatch uses your base postal code or previous visit location, availability and schedule.
               </p>
             </form>
           </section>

@@ -10,10 +10,11 @@ type AvailabilityState = {
   available: Map<string, boolean>;
 };
 
-export function useSlotAvailability(dates: string[], enabled = true) {
-  const key = [...new Set(dates.filter(Boolean))]
+export function useSlotAvailability(dates: string[], enabled = true, durationMinutes?: number, excludeBookingId?: number) {
+  const dateKey = [...new Set(dates.filter(Boolean))]
     .sort((left, right) => left.localeCompare(right))
     .join(',');
+  const key = `${dateKey}|${durationMinutes ?? ''}|${excludeBookingId ?? ''}`;
   const [state, setState] = useState<AvailabilityState>({
     key: '',
     error: '',
@@ -22,11 +23,11 @@ export function useSlotAvailability(dates: string[], enabled = true) {
 
   useEffect(() => {
     let active = true;
-    const requested = key ? key.split(',') : [];
+    const requested = dateKey ? dateKey.split(',') : [];
     if (!enabled || !requested.length) return;
 
     coolcareApi
-      .getSlotAvailability(requested)
+      .getSlotAvailability(requested, durationMinutes, excludeBookingId)
       .then((result) => {
         if (!active) return;
         const availability = new Map<string, boolean>();
@@ -54,11 +55,11 @@ export function useSlotAvailability(dates: string[], enabled = true) {
     return () => {
       active = false;
     };
-  }, [key, enabled]);
+  }, [key, dateKey, enabled, durationMinutes, excludeBookingId]);
 
   return useMemo(
     () => ({
-      loading: enabled && Boolean(key) && state.key !== key,
+      loading: enabled && Boolean(dateKey) && state.key !== key,
       error: enabled && state.key === key ? state.error : '',
       isAvailable: (slot: BookingInput['timeSlot']) =>
         !enabled || state.key !== key || state.error
@@ -70,6 +71,6 @@ export function useSlotAvailability(dates: string[], enabled = true) {
         !state.error &&
         state.available.size > 0,
     }),
-    [enabled, key, state],
+    [enabled, key, dateKey, state],
   );
 }

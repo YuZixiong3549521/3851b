@@ -12,3 +12,10 @@ test('assigned booking email uses English dates, technician details and escaped 
  assert.match(result.html,/&lt;img/);
  assert.equal(createMailTransport('disabled'),null);
 });
+
+test('confirmation mail uses saved service duration instead of the old two-hour arrival code',()=>{
+ const result=buildAssignedBookingMail({booking_id:43,full_name:'Customer',preferred_service_date:'2026-10-05',preferred_time_slot:'09:00 - 11:00',slot_start:'09:00:00',slot_end:'12:15:00',estimated_duration_minutes:195,address_line:'Singapore',services:'Cleaning + Repair'},'Technician');
+ assert.match(result.text,/Service time: 09:00 - 12:15 \(Singapore time\)/);
+ assert.match(result.text,/Estimated duration: 195 minutes/);
+ assert.doesNotMatch(result.text,/09:00 - 11:00/);
+});

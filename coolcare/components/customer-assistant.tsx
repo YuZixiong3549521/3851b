@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
-import { bookingFrequencyNotice, getBookingSelection } from '@/components/booking-service-selection';
+import { BookingServiceSelection, bookingChangeNotice, bookingFrequencyNotice, getBookingSelection } from '@/components/booking-service-selection';
 import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingAddressField } from '@/components/booking-address-field';
@@ -19,7 +19,7 @@ import { useSlotAvailability } from '@/lib/use-slot-availability';
 import { useAssistantDraft } from '@/lib/use-assistant-draft';
 import { assistantApi, emptyAssistantDraft, verifyAssistantState, type AssistantConflict, type AssistantError, type AssistantState, type AssistantStep } from '@/lib/assistant-api';
 import { coolcareApi } from '@/lib/coolcare-api';
-import { formatDate, formatDateTime, formatMoney, formatTimeSlot } from '@/lib/format';
+import { formatDate, formatDateTime, formatMoney, formatTimeSlot, formatServiceWindow } from '@/lib/format';
 import { annualVisitAmounts,annualVisitDates } from '@/lib/annual-booking';
 import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
 import { bookingSupportLink, customerSupportEmail } from '@/lib/customer-support';
@@ -89,13 +89,13 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   }, [open]);
   useEffect(() => { body.current?.scrollTo({ top: 0 }); }, [screen]);
 
-  const selection = draft.packageId ? { mode: 'bundle' as const, packageId: draft.packageId, serviceIds: [] } : { mode: 'custom' as const, serviceIds: draft.serviceId ? [draft.serviceId] : [] };
+  const selection = draft.packageId ? { mode: 'bundle' as const, packageId: draft.packageId, propertyType: draft.propertyType, serviceIds: [] } : { mode: 'custom' as const, serviceIds: draft.serviceIds ?? (draft.serviceId ? [draft.serviceId] : []) };
   const selected = getBookingSelection(options, selection, draft.numberOfUnits);
   const locked = Boolean(operation || uncertain || authExpired || draftConflict || ['conflict', 'auth'].includes(store.saveStatus));
-  const availability = useBookingAvailability({ serviceAddress: draft.serviceAddress, selectedDate: draft.preferredDate, enabled: Boolean(open && context && screen === 'schedule' && !locked) });
+  const availability = useBookingAvailability({ serviceAddress: draft.serviceAddress, selectedDate: draft.preferredDate, serviceIds: selected.payload.serviceIds, packageId: selected.payload.packageId, enabled: Boolean(open && context && screen === 'schedule' && !locked) });
   const annual = Boolean(draft.packageId);
   const slotDates=annual?annualVisitDates(draft.preferredDate):draft.preferredDate?[draft.preferredDate]:[];
-  const slotAvailability=useSlotAvailability(slotDates,Boolean(open&&context&&screen==='schedule'&&!locked));
+  const slotAvailability=useSlotAvailability(slotDates,Boolean(open&&context&&screen==='schedule'&&!locked),selected.durationMinutes);
   const selectedSlotFull=Boolean(draft.timeWindow&&!slotAvailability.isAvailable(timeCodes[draft.timeWindow]));
   const receipt = record?.status === 'completed' ? record.booking : null;
   const quote = record?.quote;
@@ -124,8 +124,8 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
     if (problem.details?.conflicts) setConflicts(problem.details.conflicts);
     if (fields && problem.code === 'VALIDATION_ERROR') {
       const field = Object.keys(fields)[0];
-      if (['phone', 'serviceAddress', 'notes'].includes(field)) { setScreen('address'); setPhoneTouched(true); }
-      else if (['serviceId', 'packageId', 'numberOfUnits'].includes(field)) setScreen('service');
+      if (['phone', 'postalCode', 'serviceAddress', 'notes'].includes(field)) { setScreen('address'); setPhoneTouched(true); }
+      else if (['serviceId', 'serviceIds', 'propertyType', 'packageId', 'numberOfUnits'].includes(field)) setScreen('service');
       else if (['preferredDate', 'timeWindow'].includes(field)) setScreen('schedule');
       setEditingReview(true);
     }
@@ -167,7 +167,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
       }
       setNotice(''); setConflicts([]); setEditingReview(false); setPriceChanged(false); setPhoneTouched(false);
       pendingConfirmation.current = null;
-      store.update({ step: 'service', preferredDate: earliestBookingDate(), serviceAddress: context.addresses.find(address => address.isDefault)?.addressLine || context.addresses[0]?.addressLine || '', phone: context.customer.phone || '', notes: '', serviceId: undefined, packageId: undefined });
+      store.update({ step: 'service', preferredDate: earliestBookingDate(), serviceAddress: context.addresses.find(address => address.isDefault)?.addressLine || context.addresses[0]?.addressLine || '', phone: context.customer.phone || '', notes: '', serviceId: undefined, serviceIds: [], propertyType: undefined, packageId: undefined });
       await store.flush(true); setScreen('service');
     });
   }
@@ -183,11 +183,12 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   }
   function edit(step: AssistantStep) { setEditingReview(true); setPriceChanged(false); setConflicts([]); void move(step); }
   function validCurrentStep() {
-    if (screen === 'service' && !selected.valid) { setError('Choose a service to continue.'); return false; }
+    if (screen === 'service' && !selected.valid) { setError('Choose your service(s) and, for an annual bundle, your property type.'); return false; }
     if (screen === 'address') {
       setPhoneTouched(true);
       if (addressEditorOpen) return false;
       if (draft.serviceAddress.trim().length < 5 || draft.serviceAddress.trim().length > 255) { setError('Enter a service address between 5 and 255 characters.'); return false; }
+      if(draft.postalCode && !/^\d{6}$/.test(draft.postalCode)){setError('Enter a six-digit Singapore postal code.');return false;}
       const message = phoneNumberError(draft.phone);
       if (message) { setError(message); return false; }
     }
@@ -283,7 +284,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
     if (!service && !bundle) { setError('This service is currently unavailable. Reload the assistant to check again.'); return; }
     const notes = note && !draft.notes.includes(note) ? [draft.notes, note].filter(Boolean).join('\n') : draft.notes;
     if (notes.length > 1000) { setError('Shorten your technician notes before adding another symptom. Notes can contain up to 1,000 characters.'); return; }
-    store.update({ serviceId: service?.serviceId, packageId: bundle?.packageId, ...(note ? { notes } : {}) });
+    store.update({ serviceId: undefined, serviceIds: service ? [service.serviceId] : [], packageId: bundle?.packageId, propertyType: undefined, ...(note ? { notes } : {}) });
     setNotice(note ? 'Service selected and your symptom added to the technician notes.' : 'Quarterly cleaning selected.'); setHelp(null);
   }
 
@@ -312,26 +313,14 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
             <Button variant="outline" className="h-auto whitespace-normal py-3" onClick={() => void startBooking(true)} disabled={locked}>Discard saved draft and start again</Button>
           </> : <Button className="h-14 justify-start" onClick={() => void startBooking()} disabled={locked}><CalendarPlus />Create a new booking</Button>}</div>}
           {screen === 'service' && options && <fieldset disabled={locked} className="min-w-0 space-y-4">
-            <div className="grid gap-2" aria-label="Service options">
-              {options.services.map(service => {
-                const active = draft.serviceId === service.serviceId && !draft.packageId;
-                const Icon = service.code === 'repair' ? Wrench : Sparkles;
-                const price = Number(service.basePrice) + (draft.numberOfUnits - 1) * Number(service.additionalUnitPrice);
-                return <Button key={service.serviceId} variant="outline" aria-pressed={active} onClick={() => store.update({ serviceId: service.serviceId, packageId: undefined })} className={'h-auto items-start justify-start gap-3 whitespace-normal rounded-xl p-3 text-left ' + (active ? 'border-primary bg-primary/5' : '')}><Icon className="mt-1 size-5 text-primary" /><span className="flex-1"><span className="font-semibold">{service.name}</span><span className="mt-1 block text-xs font-normal text-muted-foreground">{service.code === 'repair' ? 'On-site diagnosis; repair work and parts quoted separately.' : 'One visit; your technician decides the cleaning method.'}</span><span className="mt-1 block text-sm text-primary">{formatMoney(price)} {service.code === 'repair' ? 'diagnosis visit' : 'per visit'}</span></span>{active && <Check className="size-4 text-primary" />}</Button>;
-              })}
-              {options.bundles.filter(bundle => bundle.code === 'annual-cleaning').map(bundle => {
-                const price = Number(bundle.price) + Math.max(0, draft.numberOfUnits - Number(bundle.includedUnits)) * Number(bundle.additionalUnitPrice);
-                const amounts = annualVisitAmounts(price);
-                return <Button key={bundle.packageId} variant="outline" aria-pressed={draft.packageId === bundle.packageId} onClick={() => store.update({ packageId: bundle.packageId, serviceId: undefined })} className={'h-auto items-start justify-start gap-3 whitespace-normal rounded-xl p-3 text-left ' + (draft.packageId === bundle.packageId ? 'border-primary bg-primary/5' : '')}><CalendarDays className="mt-1 size-5 text-primary" /><span className="flex-1"><span className="font-semibold">Annual Cleaning Bundle</span><span className="mt-1 block text-xs font-normal text-muted-foreground">Four quarterly cleaning visits at one address.</span><span className="mt-1 block text-sm text-primary">{formatMoney(price)} per year · {amounts.every(amount => amount === amounts[0]) ? formatMoney(amounts[0]) + ' per visit' : 'split across four visits'}</span></span>{draft.packageId === bundle.packageId && <Check className="size-4 text-primary" />}</Button>;
-              })}
-            </div>
+            <BookingServiceSelection options={options} value={selection} units={draft.numberOfUnits} onChange={value=>store.update({serviceId:undefined,serviceIds:value.serviceIds,packageId:value.mode==='bundle'?value.packageId:undefined,propertyType:value.mode==='bundle'?value.propertyType:undefined})} />
             <div><label htmlFor="assistant-unit-count" className="mb-2 block text-sm font-semibold">Number of aircon units</label><NativeSelect id="assistant-unit-count" value={draft.numberOfUnits} onChange={event => store.update({ numberOfUnits: Number(event.target.value) })}>{Array.from({ length: 10 }, (_, index) => index + 1).map(count => <option key={count} value={count}>{count} {count === 1 ? 'aircon unit' : 'aircon units'}</option>)}</NativeSelect></div>
             <Button variant="outline" className="w-full" aria-expanded={help === 'service'} onClick={() => setHelp(help === 'service' ? null : 'service')}><HelpCircle className="size-4" />Help me choose a service</Button>
           </fieldset>}
           {screen === 'address' && <fieldset disabled={locked} className="min-w-0 space-y-4">
-            <BookingAddressField key={context.customer.userId} expectedUserId={context.customer.userId} addresses={context.addresses} value={draft.serviceAddress} onChange={value => store.update({ serviceAddress: value })} onAddressSaved={addressSaved} onEditingChange={setAddressEditorOpen} />
+            <BookingAddressField key={context.customer.userId} expectedUserId={context.customer.userId} addresses={context.addresses} value={draft.serviceAddress} postalCode={draft.postalCode} onPostalCodeChange={postalCode=>store.update({postalCode})} onChange={value => store.update({ serviceAddress: value })} onAddressSaved={addressSaved} onEditingChange={setAddressEditorOpen} />
             <div><label htmlFor="assistant-phone" className="mb-2 block text-sm font-medium">Contact phone</label><Input id="assistant-phone" type="tel" autoComplete="tel" maxLength={30} value={draft.phone} aria-invalid={Boolean(phoneError)} aria-describedby="assistant-phone-help" onBlur={() => setPhoneTouched(true)} onChange={event => store.update({ phone: event.target.value })} /><p id="assistant-phone-help" className={'mt-2 text-xs ' + (phoneError ? 'text-red-700' : 'text-muted-foreground')}>{phoneError || 'Singapore: 8 digits, or +country code for an international number.'}</p></div>
-            <div><label htmlFor="assistant-notes" className="mb-2 block text-sm font-medium">Notes for the technician (optional)</label><Textarea id="assistant-notes" maxLength={1000} value={draft.notes} onChange={event => store.update({ notes: event.target.value })} /><p className="mt-1 text-right text-xs text-muted-foreground">{draft.notes.length}/1000</p></div>
+            <div><label htmlFor="assistant-notes" className="mb-2 block text-sm font-medium">Problem / Other remarks (optional)</label><Textarea id="assistant-notes" maxLength={1000} value={draft.notes} onChange={event => store.update({ notes: event.target.value })} /><p className="mt-1 text-right text-xs text-muted-foreground">{draft.notes.length}/1000</p></div>
           </fieldset>}
           {screen === 'schedule' && <fieldset disabled={locked} className="min-w-0 space-y-4">
             <p className="rounded-xl bg-primary/5 p-3 text-sm leading-6">{bookingScheduleNotice}</p>
@@ -340,9 +329,9 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
             {availability.selectedDateBlocked && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{bookingConflictMessage}</p>}
             {availability.error && <p className="text-xs text-muted-foreground">The calendar check is unavailable. All dates will be checked before confirmation.</p>}
             {conflicts.length > 0 && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p className="font-semibold">Choose another first date to resolve these visits:</p><ul className="mt-2 space-y-2">{conflicts.map(item => <li key={item.visitNumber}><strong>Visit {item.visitNumber} · {formatDate(item.preferredDate)}</strong><br />{item.message}</li>)}</ul></div>}
-            <p className="text-sm font-medium">Preferred arrival window</p><div className="grid grid-cols-2 gap-2">{times.map(time => <Button key={time} className="h-auto whitespace-normal py-3" disabled={!slotAvailability.isAvailable(timeCodes[time])} variant={draft.timeWindow === time ? 'default' : 'outline'} aria-pressed={draft.timeWindow === time} onClick={() => store.update({ timeWindow: time })}>{time}{slotAvailability.isAvailable(timeCodes[time])?'':' · Fully booked'}</Button>)}</div>
+            <p className="text-sm font-medium">Preferred service time</p><div className="grid grid-cols-2 gap-2">{times.map(time => <Button key={time} className="h-auto whitespace-normal py-3" disabled={!slotAvailability.isAvailable(timeCodes[time])} variant={draft.timeWindow === time ? 'default' : 'outline'} aria-pressed={draft.timeWindow === time} onClick={() => store.update({ timeWindow: time })}>{formatServiceWindow(time,selected.durationMinutes)}{slotAvailability.isAvailable(timeCodes[time])?'':' · Unavailable'}</Button>)}</div>
             {slotAvailability.loading&&<p className="text-xs text-muted-foreground">Checking team availability…</p>}{selectedSlotFull&&<p role="alert" className="text-xs text-red-700">This service time is fully booked.</p>}
-            {annual && <AnnualBookingSummary firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={selected.estimate} collapsible />}
+            {annual && <AnnualBookingSummary durationMinutes={selected.durationMinutes} firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={selected.estimate} collapsible />}
             <p className="text-xs leading-5 text-muted-foreground">All {annual ? 'four dates' : 'dates'} are checked before review and again on confirmation. {bookingFrequencyNotice}</p>
           </fieldset>}
           {(screen === 'review' || screen === 'success') && <>
@@ -353,22 +342,23 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
               {[
                 { key: 'service' as AssistantStep, title: 'Service & quantity', value: (quote?.serviceName || selected.label || 'Service unavailable') + ' · ' + draft.numberOfUnits + ' aircon unit(s)' },
                 { key: 'address' as AssistantStep, title: 'Address & contact', value: draft.serviceAddress + '\n' + draft.phone },
-                { key: 'schedule' as AssistantStep, title: annual ? 'First preferred visit' : 'Preferred visit', value: formatDate(draft.preferredDate) + '\n' + formatTimeSlot(draft.timeWindow) },
+                { key: 'schedule' as AssistantStep, title: annual ? 'First preferred visit' : 'Preferred visit', value: formatDate(draft.preferredDate) + '\n' + formatServiceWindow(draft.timeWindow,selected.durationMinutes) },
               ].map(item => <div key={item.key} className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs text-muted-foreground">{item.title}</p><p className="mt-1 whitespace-pre-line break-words font-medium">{item.value}</p></div>{!receipt && <Button variant="ghost" size="sm" disabled={locked || savedProblem} aria-label={'Edit ' + item.title.toLowerCase()} onClick={() => edit(item.key)}><Pencil className="size-3" />Edit</Button>}</div>)}
-              {draft.notes && <div><p className="text-xs text-muted-foreground">Technician notes</p><p className="mt-1 whitespace-pre-line break-words">{draft.notes}</p></div>}
+              {draft.notes && <div><p className="text-xs text-muted-foreground">Problem / Other remarks</p><p className="mt-1 whitespace-pre-line break-words">{draft.notes}</p></div>}
               <div className="flex items-baseline justify-between gap-3 border-t pt-3"><span>{annual ? 'Annual estimate' : 'Visit estimate'} · SGD</span><strong className="text-xl text-primary">{formatMoney(receipt?.annualBundle?.totalAmount ?? receipt?.totalAmount ?? estimate)}</strong></div>
             </div>
-            {annual && <AnnualBookingSummary firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={estimate} saved={receipt?.annualBundle} compact />}
+            {annual && <AnnualBookingSummary durationMinutes={selected.durationMinutes} firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={estimate} saved={receipt?.annualBundle} compact />}
+            <p className="text-xs leading-5 text-muted-foreground">{bookingChangeNotice} Unconfirmed requests expire after 48 hours.</p>
             {selected.pricingNote && <p className="text-xs leading-5 text-muted-foreground">{selected.pricingNote}</p>}
             {!receipt && <p className="text-xs leading-5 text-muted-foreground">Your request will be saved as Awaiting confirmation. Preferred dates and times still need the service team's confirmation.</p>}
           </>}
-          {screen !== 'menu' && screen !== 'review' && screen !== 'success' && selected.valid && <details className="rounded-xl border p-3 text-sm"><summary className="cursor-pointer font-medium">Your selected answers</summary><dl className="mt-3 space-y-2 text-xs"><div><dt className="text-muted-foreground">Service</dt><dd>{selected.label} · {draft.numberOfUnits} unit(s) · {formatMoney(selected.estimate)} {annual ? 'per year' : 'per visit'}</dd></div>{draft.serviceAddress && <div><dt className="text-muted-foreground">Address</dt><dd className="break-words">{draft.serviceAddress}</dd></div>}{draft.preferredDate && <div><dt className="text-muted-foreground">Preferred date</dt><dd>{formatDate(draft.preferredDate)} · {formatTimeSlot(draft.timeWindow)}</dd></div>}</dl></details>}
+          {screen !== 'menu' && screen !== 'review' && screen !== 'success' && selected.valid && <details className="rounded-xl border p-3 text-sm"><summary className="cursor-pointer font-medium">Your selected answers</summary><dl className="mt-3 space-y-2 text-xs"><div><dt className="text-muted-foreground">Service</dt><dd>{selected.label} · {draft.numberOfUnits} unit(s) · {formatMoney(selected.estimate)} {annual ? 'per year' : 'per visit'}</dd></div>{draft.serviceAddress && <div><dt className="text-muted-foreground">Address</dt><dd className="break-words">{draft.serviceAddress}</dd></div>}{draft.preferredDate && <div><dt className="text-muted-foreground">Preferred date</dt><dd>{formatDate(draft.preferredDate)} · {formatServiceWindow(draft.timeWindow,selected.durationMinutes)}</dd></div>}</dl></details>}
           {screen !== 'success' && <div className="border-t pt-3">
             <div className="flex flex-wrap gap-2" aria-label="Booking help">{([{ id: 'pricing', label: 'Prices & inclusions' }, { id: 'dates', label: 'Booking rules' }, { id: 'changes', label: 'Change a request' }] as const).map(topic => <Button key={topic.id} variant="outline" size="sm" aria-expanded={help === topic.id} onClick={() => setHelp(help === topic.id ? null : topic.id)}>{topic.label}<ChevronDown className="size-3" /></Button>)}</div>
             {help === 'service' && <div className="mt-3 space-y-3 rounded-xl bg-muted p-3 text-sm"><p>Choose the closest description. Your technician will assess the cause on site.</p><div className="grid grid-cols-2 gap-2">{homepageIssues.map(issue => <Button key={issue.id} variant="outline" disabled={locked} className="h-auto whitespace-normal py-2" onClick={() => chooseIssue(issue.id === 'needs-cleaning' ? 'cleaning' : 'repair', issue.name + ': ' + issue.description)}>{issue.name}</Button>)}</div><Button variant="outline" disabled={locked} className="w-full h-auto whitespace-normal py-2" onClick={() => chooseIssue('annual-cleaning')}>I want quarterly cleaning all year</Button></div>}
-            {help === 'pricing' && <div className="mt-3 rounded-xl bg-muted p-3 text-sm leading-6"><p>Prices use your selected AC count and the current service catalogue. Repair covers diagnosis; labour and replacement parts require a separate quote. Cleaning covers routine care; the technician decides whether chemical treatment is needed and asks for approval for extra work.</p>{selected.valid && <p className="mt-2 font-semibold">{selected.label}: {formatMoney(selected.estimate)} {annual ? 'for all four visits, paid after each service' : 'for this visit'}.</p>}<p className="mt-2">The final review checks the current price. A changed price needs your confirmation again.</p></div>}
+            {help === 'pricing' && <div className="mt-3 rounded-xl bg-muted p-3 text-sm leading-6"><p>Prices use your selected AC count and the current service catalogue. Repair has a minimum diagnostic fee. Your technician records additional labour and parts charges in the booking; there is no separate approval step. Cleaning is S$50 per unit; the technician decides the method. Annual bundle prices depend on property type and unit count.</p>{selected.valid && <p className="mt-2 font-semibold">{selected.label}: {formatMoney(selected.estimate)} {annual ? 'for all four visits, paid after each service' : 'for this visit'}.</p>}<p className="mt-2">The final review checks the current price. A changed price needs your confirmation again.</p></div>}
             {help === 'dates' && <div className="mt-3 rounded-xl bg-muted p-3 text-sm leading-6">{bookingScheduleNotice} {bookingFrequencyNotice} Annual care includes four visits every three months; later weekend dates move to Monday. All slots await confirmation.</div>}
-            {help === 'changes' && <div className="mt-3 rounded-xl bg-muted p-3 text-sm leading-6">Before submitting, use Edit on the review to change your answers. After booking, unassigned requests awaiting confirmation can be changed from the booking detail page. For an assigned visit, <a href={supportHref} className="font-medium text-primary underline">email support</a>.</div>}
+            {help === 'changes' && <div className="mt-3 rounded-xl bg-muted p-3 text-sm leading-6">Before submitting, use Edit on the review to change your answers. After booking, eligible visits can be changed from the booking detail page at least 72 hours before the original visit. The new visit must also be at least 72 hours ahead. Annual visits stay within their quarterly window. For help, <a href={supportHref} className="font-medium text-primary underline">email support</a>.</div>}
             <a href={supportHref} className="mt-3 inline-flex items-center gap-2 text-xs font-medium text-primary underline underline-offset-4"><Mail className="size-3" />Contact support</a>
           </div>}
         </>}
