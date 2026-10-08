@@ -95,6 +95,7 @@ const canonicalStatus = (value) =>
   value === 'On the Way' ? 'On The Way' : value;
 const nextStatus = {
   Assigned: 'In Progress',
+  'Return visit': 'In Progress',
   'On The Way': 'In Progress',
   'In Progress': 'Completed',
 };
@@ -586,6 +587,9 @@ export default function JobDrawer({
             onStatusChanged={onStatusChanged}
             onSaved={(text) => setNotice(text)}
           />
+          {detail && (
+              <ServiceProgress jobId={job.jobId} status={canonicalStatus(job.status)} repairEligible={job.repairEligible} progress={job.serviceProgress} disabled={locked} onLockedChange={setLocked} onSaved={()=>{setVersion(v=>v+1);onStatusChanged();}}/>
+          )}
           <h3>Service address</h3>
           <p className="cell-icon">
             <MapPin size={18} />
@@ -610,7 +614,6 @@ export default function JobDrawer({
           )}
           {detail && (
             <>
-              <ServiceProgress jobId={job.jobId} status={canonicalStatus(job.status)} repairEligible={job.repairEligible} progress={job.serviceProgress} disabled={locked} onLockedChange={setLocked} onSaved={()=>{setVersion(v=>v+1);onStatusChanged();}}/>
               <CleaningAssessment
                 key={`assessment-${job.jobId}-${version}`}
                 job={job}

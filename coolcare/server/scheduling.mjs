@@ -62,6 +62,7 @@ export const capacityStatuses = [
   'Assigned',
   'On The Way',
   'In Progress',
+  'Return visit',
 ];
 
 export function normalizeBookingSlot(value) {
@@ -164,14 +165,14 @@ export async function activeReservationCount(
 ) {
   const [rows] = await executor.execute(
     `SELECT b.booking_id,b.slot_start AS start,b.slot_end AS end FROM booking b
-    WHERE b.preferred_service_date=? AND b.booking_status IN ('Submitted','Confirmed','Assigned','On The Way','In Progress')
+    WHERE b.preferred_service_date=? AND b.booking_status IN ('Submitted','Confirmed','Assigned','On The Way','In Progress','Return visit')
     AND b.booking_id<>? AND b.slot_start IS NOT NULL AND b.slot_end IS NOT NULL
     AND b.slot_start<? AND b.slot_end>? ORDER BY b.booking_id FOR UPDATE`,
     [date, excludeBookingId, end, start],
   );
   const [followups] = await executor.execute(
     `SELECT p.job_id,p.follow_up_start AS start,p.follow_up_end AS end FROM service_progress p JOIN work_order w ON w.job_id=p.job_id
-    WHERE p.follow_up_date=? AND p.follow_up_status IN ('Scheduled','In Progress') AND w.booking_id<>?
+    WHERE p.follow_up_date=? AND p.follow_up_status IN ('Scheduled','In Progress') AND w.current_status NOT IN ('Return visit','In Progress') AND w.booking_id<>?
     AND p.follow_up_start<? AND p.follow_up_end>? ORDER BY p.job_id FOR UPDATE`,
     [date, excludeBookingId, end, start],
   );

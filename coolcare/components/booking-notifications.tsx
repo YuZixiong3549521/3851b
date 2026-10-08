@@ -1,4 +1,5 @@
 'use client';
+import {ReturnVisitsPanel} from '@/components/return-visits-panel';
 import {useEffect,useState} from 'react';
 import {useRouter} from 'next/navigation';
 import {coolcareApi,type BookingNotice} from '@/lib/coolcare-api';
@@ -22,5 +23,5 @@ export function BookingNotifications({enabled}:{enabled:boolean}){
   catch(reason){setError(reason instanceof Error?reason.message:'Unable to acknowledge this notice.');}
   finally{setBusy(false);}
  }
- return <Dialog open={enabled&&Boolean(notice)} onOpenChange={open=>{if(!open)void dismiss();}}><DialogContent showCloseButton={!busy} className="sm:max-w-lg"><DialogTitle>{notice?.status==='Expired'?'Your booking request expired':'Your booking could not be confirmed'}</DialogTitle><DialogDescription>{notice?.reference}</DialogDescription><p className="whitespace-pre-wrap text-sm leading-6">{notice?.reason}</p><p className="text-sm text-muted-foreground">You can book again with another date or service. Your previous request remains in Booking History.</p>{error&&<p role="alert" className="text-sm text-destructive">{error}</p>}<DialogFooter><Button variant="ghost" disabled={busy} onClick={()=>void dismiss()}>Dismiss</Button><Button variant="outline" disabled={busy} onClick={()=>void dismiss(`/customer/bookings/${notice.bookingId}`)}>View booking</Button><Button disabled={busy} onClick={()=>void dismiss(`/customer/book?rebook=${notice.bookingId}`)}>Book again</Button></DialogFooter></DialogContent></Dialog>;
+ return <>{enabled&&<ReturnVisitsPanel role="customer" noticeOnly/>}<Dialog open={enabled&&Boolean(notice)} onOpenChange={open=>{if(!open)void dismiss();}}><DialogContent showCloseButton={!busy} className="sm:max-w-lg"><DialogTitle>{notice?.status==='Expired'?'Your booking request expired':'Your booking could not be confirmed'}</DialogTitle><DialogDescription>{notice?.reference}</DialogDescription><p className="whitespace-pre-wrap text-sm leading-6">{notice?.reason}</p><p className="text-sm text-muted-foreground">You can book again with another date or service. Your previous request remains in Booking History.</p>{error&&<p role="alert" className="text-sm text-destructive">{error}</p>}<DialogFooter><Button variant="ghost" disabled={busy} onClick={()=>void dismiss()}>Dismiss</Button><Button variant="outline" disabled={busy} onClick={()=>void dismiss(`/customer/bookings/${notice.bookingId}`)}>View booking</Button><Button disabled={busy} onClick={()=>void dismiss(`/customer/book?rebook=${notice.bookingId}`)}>Book again</Button></DialogFooter></DialogContent></Dialog></>;
 }

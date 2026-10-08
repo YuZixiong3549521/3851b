@@ -13,6 +13,8 @@ export function bookingStatusLabel(status: string) {
 export function bookingStatusDescription(status: string) {
   const descriptions: Record<string, string> = {
     Expired: 'This request expired before confirmation. Please book another appointment.',
+    'Awaiting return arrangement': 'A return visit is needed. Follow the return visit notification to arrange a new appointment.',
+    'Return visit': 'Your return appointment is confirmed and assigned to a technician.',
     Submitted: 'Your preferred date and time are awaiting confirmation by the service team.',
     Confirmed: 'Your appointment is confirmed. Technician details will appear when assigned.',
     Assigned: 'A technician has been assigned. Eligible visits can be changed at least 72 hours in advance.',

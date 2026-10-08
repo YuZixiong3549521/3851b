@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,7 +20,9 @@ export default function ServiceProgress({
     [minutes, setMinutes] = useState('30'),
     [reason, setReason] = useState(''),
     [notes, setNotes] = useState(''),
-    [partNotes, setPartNotes] = useState(''),
+    [selectedParts, setSelectedParts] = useState({}),
+    [parts, setParts] = useState([]),
+    [partsError, setPartsError] = useState(''),
     [date, setDate] = useState(''),
     [start, setStart] = useState('09:00'),
     [duration, setDuration] = useState('60'),
@@ -30,28 +32,21 @@ export default function ServiceProgress({
     [error, setError] = useState('');
   const pending = useRef(null),
     inFlight = useRef(false);
-  if (!progress) return null;
+  useEffect(() => {
+    if (status !== 'In Progress') return;
+    let active = true;
+    technicianRequest(`/jobs/${jobId}/parts`).then(d => { if(active) setParts(d.parts); }).catch(e => { if(active) setPartsError(e.message); });
+    return () => { active = false; };
+  }, [jobId, status]);
+  const partNotes = parts.filter(p => selectedParts[p.part_id] !== undefined).map(p => `${p.part_name}: ${selectedParts[p.part_id]} ${p.stock_unit}`).join('; ');
+  if (!progress || status === 'Completed' || status === 'Historical') return null;
   const follow = progress.followUpStatus;
   const actions = [
     ...(status === 'In Progress' || follow === 'In Progress'
       ? [['extend', 'Extend service time']]
       : []),
-    ...(['None', 'Completed'].includes(follow)
+    ...(['None', 'Completed', 'In Progress'].includes(follow)
       ? [['require-return', 'Return visit required']]
-      : []),
-    ...(['Required', 'Scheduled'].includes(follow) && status === 'Completed'
-      ? [
-          [
-            'schedule-return',
-            follow === 'Scheduled'
-              ? 'Reschedule return visit'
-              : 'Schedule return visit',
-          ],
-        ]
-      : []),
-    ...(follow === 'Scheduled' ? [['start-return', 'Start return visit']] : []),
-    ...(follow === 'In Progress'
-      ? [['complete-return', 'Complete return visit']]
       : []),
     ...(repairEligible ? [['repair-quote', 'Set additional repair fee']] : []),
   ];
@@ -77,7 +72,7 @@ export default function ServiceProgress({
       requestId: crypto.randomUUID(),
       expectedVersion: progress.version,
       action,
-      notes: notes.trim(),
+      notes: action === 'repair-quote' ? notes.trim() : `${actions.find(([id]) => id === action)?.[1] || action}${reason ? ': ' + reason : ''}.`,
       ...(action === 'extend' ? { minutes: Number(minutes), reason } : {}),
       ...(action === 'require-return'
         ? { reason, partNotes: partNotes.trim() }
@@ -103,7 +98,7 @@ export default function ServiceProgress({
       setUncertain(false);
       setAction('');
       setNotes('');
-      setPartNotes('');
+      setSelectedParts({});
       onLockedChange(false);
       await onSaved();
     } catch (e) {
@@ -153,7 +148,7 @@ export default function ServiceProgress({
           </p>
         )}
       </div>
-      {['In Progress', 'Completed'].includes(status) && (
+      {status === 'In Progress' && (
         <form className="tech-stock-form" onSubmit={save}>
           <fieldset disabled={locked} className="space-y-4">
             <label>
@@ -209,20 +204,17 @@ export default function ServiceProgress({
               </label>
             )}
             {['require-return', 'complete-return'].includes(action) && (
-              <label>
-                Parts needed / used
-                <Textarea
-                  aria-label="Return visit parts"
-                  required={
-                    action === 'require-return' && reason === 'Part unavailable'
-                  }
-                  minLength={reason === 'Part unavailable' ? 5 : undefined}
-                  maxLength={2000}
-                  value={partNotes}
-                  onChange={(e) => setPartNotes(e.target.value)}
-                  placeholder="Record part name, quantity and availability, or parts used on the return visit."
-                />
-              </label>
+              <div className="space-y-3">
+                <h4>{action === 'require-return' ? 'Parts needed' : 'Parts used'}</h4>
+                <p>Select parts and quantities. This records the service update; it does not deduct stock.</p>
+                {partsError && <p role="alert">{partsError}</p>}
+                {parts.map(p => <div key={p.part_id} className="rounded-lg border p-3 space-y-2">
+                  <label className="flex items-center gap-3"><input type="checkbox" checked={selectedParts[p.part_id] !== undefined}
+                    onChange={e => setSelectedParts(current => { const next = {...current}; if(e.target.checked) next[p.part_id] = '1'; else delete next[p.part_id]; return next; })}/>{p.part_name} ({p.current_stock} {p.stock_unit} in stock)</label>
+                  {selectedParts[p.part_id] !== undefined && <label>Quantity<Input type="number" min="1" max="9999" step="1" required value={selectedParts[p.part_id]}
+                    onChange={e => setSelectedParts(current => ({...current,[p.part_id]:e.target.value}))}/></label>}
+                </div>)}
+              </div>
             )}
             {action === 'schedule-return' && (
               <>
@@ -292,7 +284,7 @@ export default function ServiceProgress({
                 </p>
               </>
             )}
-            {action && (
+            {action === 'repair-quote' && (
               <label>
                 {action === 'repair-quote'
                   ? 'Repair work and fee breakdown'
@@ -327,7 +319,7 @@ export default function ServiceProgress({
                 busy ||
                 (disabled && !uncertain) ||
                 (!uncertain &&
-                  (!action || (action === 'schedule-return' && !date)))
+                  (!action || (action === 'schedule-return' && !date) || (action === 'require-return' && reason === 'Part unavailable' && !partNotes)))
               }
             >
               {busy

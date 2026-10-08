@@ -1,3 +1,4 @@
+import {snapshotVisit} from './return-visits.mjs';
 import {registerTechnicianPhotos} from './service-photo-upload.mjs';
 import {getServiceProgress} from './service-progress.mjs';
 import {
@@ -96,7 +97,7 @@ export async function saveReport(pool, userId, jobId, raw) {
       await c.commit();
       return { success: true, replayed: true };
     }
-    if (!['In Progress', 'Completed'].includes(w.current_status))
+    if (!['In Progress', 'Completed', 'Awaiting return arrangement', 'Return visit'].includes(w.current_status))
       throw new AppError(
         'Start this service from My Jobs before submitting its report.',
         409,
@@ -127,6 +128,8 @@ export async function saveReport(pool, userId, jobId, raw) {
       ],
     );
     if (w.current_status === 'In Progress') {
+      await snapshotVisit(c,jobId,'Completed');
+      await c.execute("UPDATE service_progress SET follow_up_status=IF(follow_up_status='In Progress','Completed',follow_up_status),revision=revision+1 WHERE job_id=?",[jobId]);
       await c.execute(
         "UPDATE work_order SET current_status='Completed' WHERE job_id=?",
         [jobId],
@@ -291,7 +294,7 @@ export function registerTechnicianPages(router, pool) {
   );
   router.get('/reports', async (req, res) => {
     const [rows] = await pool.execute(
-      `SELECT w.job_id AS jobId,r.report_id AS reportId,u.full_name AS customer,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,sc.service_name AS serviceType,w.current_status AS jobStatus,r.submitted_time AS submittedAt FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN user_account u ON u.user_id=cu.user_id JOIN service_catalog sc ON sc.service_id=b.service_id LEFT JOIN service_report r ON r.job_id=w.job_id WHERE t.user_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status IN ('In Progress','Completed') ORDER BY w.appointment_date DESC,w.job_id DESC`,
+      `SELECT w.job_id AS jobId,r.report_id AS reportId,u.full_name AS customer,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,sc.service_name AS serviceType,w.current_status AS jobStatus,r.submitted_time AS submittedAt FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN user_account u ON u.user_id=cu.user_id JOIN service_catalog sc ON sc.service_id=b.service_id LEFT JOIN service_report r ON r.job_id=w.job_id WHERE t.user_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status IN ('In Progress','Completed','Awaiting return arrangement','Return visit') ORDER BY w.appointment_date DESC,w.job_id DESC`,
       [req.technicianUser.id],
     );
     res.json({ reports: rows });

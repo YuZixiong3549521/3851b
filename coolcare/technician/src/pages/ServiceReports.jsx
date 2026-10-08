@@ -1,3 +1,5 @@
+import ReportChecks from '../components/ReportChecks.jsx';
+import { parseChecks, summarizeChecks } from '../utils/reportChecks.js';
 import ServicePhotos from '../components/ServicePhotos.jsx';
 import ServiceProgress from '../components/ServiceProgress.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
@@ -20,7 +22,7 @@ import { technicianRequest } from '../services/jobService.js';
 import { formatDate } from '../utils/jobs.js';
 const fields = [
   ['workPerformed', 'Work performed', true],
-  ['problemFound', 'Problem found', false],
+  ['problemFound', 'Remarks / previously recorded problems', false],
   ['solutionApplied', 'Solution applied', false],
   ['checklist', 'Checks completed', true],
 ];
@@ -34,6 +36,7 @@ function ReportEditor({ row, onClose, onSaved }) {
     [saving, setSaving] = useState(false),
     [uncertain, setUncertain] = useState(false);
   const [photosLocked,setPhotosLocked]=useState(false),[progressLocked,setProgressLocked]=useState(false);
+  const [checks, setChecks] = useState([]);
   const pending = useRef(null);
   const [signatureReset, setSignatureReset] = useState(0);
   const contentChanged =
@@ -56,6 +59,7 @@ function ReportEditor({ row, onClose, onSaved }) {
       setError('');
       const d = await technicianRequest('/reports/' + row.jobId);
       setData(d);
+      setChecks(parseChecks(d.report?.checklist));
       setForm(
         Object.fromEntries(
           [
@@ -77,6 +81,7 @@ function ReportEditor({ row, onClose, onSaved }) {
   }, [row.jobId]);
   async function submit(e) {
     e.preventDefault();
+    if (!uncertain && !checks.length) { setError('Choose a checks template before submitting.'); return; }
     setSaving(true);
     setError('');
     try {
@@ -157,30 +162,19 @@ function ReportEditor({ row, onClose, onSaved }) {
               <span>Completed: {moment(data.report?.completedAt)}</span>
             </div>
             <ServiceProgress jobId={row.jobId} status={data.status} repairEligible={data.repairEligible} progress={data.serviceProgress} disabled={saving||uncertain||photosLocked} onLockedChange={setProgressLocked} onSaved={async()=>{const fresh=await technicianRequest('/reports/'+row.jobId);setData(current=>({...current,serviceProgress:fresh.serviceProgress,status:fresh.status,repairEligible:fresh.repairEligible}));onSaved();}}/>
+            {data.serviceProgress?.visits?.length > 0 && <details><summary>Visit records ({data.serviceProgress.visits.length})</summary>{data.serviceProgress.visits.map((visit,index)=><section key={visit.id} className="rounded-lg border p-3 my-2"><h3>Visit {index+1} · {visit.outcome}</h3><p>{moment(visit.startedAt)} – {moment(visit.endedAt)}</p><p className="whitespace-pre-wrap">{visit.snapshot.checklist_result || 'No checklist recorded for this visit.'}</p><p>{visit.snapshot.problem_found}</p></section>)}</details>}
             {edit ? (
               <form onSubmit={submit} className="portal-form">
                 <fieldset disabled={locked}>
-                  <label>Checks template<NativeSelect aria-label="Checks template" value="" onChange={e=>{if(e.target.value)changeContent('checklist',e.target.value);}}><option value="">Choose checks to start with</option><option value="Cooling performance, drainage, filters and controls checked.">Cleaning checks</option><option value="Fault diagnosis, electrical safety and operation checked.">Repair checks</option><option value="Work incomplete; return visit details recorded in service updates.">Return visit required</option></NativeSelect></label>
-                  {fields.map(([key, label, required]) => (
-                    <label key={key}>
-                      {label}
-                      {required ? ' *' : ''}
-                      <Textarea
-                        required={required}
-                        minLength={
-                          required
-                            ? key === 'workPerformed'
-                              ? 5
-                              : 3
-                            : undefined
-                        }
-                        maxLength={5000}
-                        rows={3}
-                        value={form[key]}
-                        onChange={(e) => changeContent(key, e.target.value)}
-                      />
-                    </label>
-                  ))}
+                  {!checks.length && form.checklist && <p className="whitespace-pre-wrap">Previous checklist: {form.checklist}</p>}
+                  <ReportChecks rows={checks} remarks={form.problemFound} onRemarksChange={value => changeContent('problemFound', value)} onChange={next => {
+                    setChecks(next);
+                    const summary = summarizeChecks(next);
+                    setForm(f => ({ ...f, checklist: summary,
+                      workPerformed: next.filter(r => r.done).map(r => r.name).join('; ') || 'No checks completed.',
+                      solutionApplied: '', customerSignatureUrl: '', technicianSignatureUrl: '' }));
+                    setSignatureReset(n => n + 1);
+                  }}/>
                 </fieldset>
                 <ServicePhotos jobId={row.jobId} disabled={saving||uncertain} onLockedChange={setPhotosLocked}/>
                 <fieldset disabled={locked}>
@@ -228,7 +222,7 @@ function ReportEditor({ row, onClose, onSaved }) {
                         ? 'Retry same submission'
                         : data.report?.submittedAt
                           ? 'Save report changes'
-                          : row.jobStatus === 'Completed' ? 'Submit report' : 'Submit report & complete'}
+                          : data.status === 'In Progress' ? 'Submit report & complete' : 'Submit report'}
                   </Button>
                   {!locked && (
                     <Button
@@ -260,7 +254,7 @@ function ReportEditor({ row, onClose, onSaved }) {
                   {fields.map(([key, label]) => (
                     <section key={key}>
                       <h3>{label}</h3>
-                      <p>{data.report?.[key] || 'Not recorded'}</p>
+                      <p className="whitespace-pre-wrap">{data.report?.[key] || 'Not recorded'}</p>
                     </section>
                   ))}
                   <ServicePhotos jobId={row.jobId} disabled={saving||uncertain} onLockedChange={setPhotosLocked}/>

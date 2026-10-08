@@ -1,3 +1,4 @@
+import {registerReturnRoutes} from './return-visits.mjs';
 import { getServiceProgress } from './service-progress.mjs';
 import { assertBookingNotExpired } from './order-expiry.mjs';
 import {
@@ -1290,6 +1291,7 @@ export async function transferOwner(pool, actor, targetUserId) {
 
 export function createAdminOperationsRouter(pool, { origin } = {}) {
   const router = express.Router();
+  registerReturnRoutes(router,pool,'admin');
   router.get('/bookings', async (req, res) =>
     res.json(await listAdminBookings(pool, req.query)),
   );

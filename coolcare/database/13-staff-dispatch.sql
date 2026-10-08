@@ -31,7 +31,7 @@ INSERT INTO technician_capacity_lock(lock_id) VALUES (1) ON DUPLICATE KEY UPDATE
 
 -- Rejected is distinct from a customer cancellation. Normalized times retain
 -- the original preferred_time_slot text for compatible API responses.
-ALTER TABLE booking MODIFY booking_status ENUM('Submitted','Confirmed','Assigned','On The Way','In Progress','Completed','Rejected','Cancelled','Expired') NOT NULL DEFAULT 'Submitted';
+ALTER TABLE booking MODIFY booking_status ENUM('Submitted','Confirmed','Assigned','On The Way','In Progress','Completed','Rejected','Cancelled','Expired','Awaiting return arrangement','Return visit') NOT NULL DEFAULT 'Submitted';
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='booking' AND column_name='slot_start')=0,
  'ALTER TABLE booking ADD COLUMN slot_start TIME NULL AFTER preferred_time_slot, ADD COLUMN slot_end TIME NULL AFTER slot_start', 'SELECT 1');
 PREPARE cc_stmt FROM @ddl; EXECUTE cc_stmt; DEALLOCATE PREPARE cc_stmt;

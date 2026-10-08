@@ -587,21 +587,10 @@ test('service extensions reserve actual time, reject conflicts and retain a sing
  assert.equal((await getServiceProgress(db,a.jobId)).events.length,after.events.length);
 }));
 
-test('return visits stay in one report with part notes, scheduling, start and completion history',()=>fixture(async(db,c,a)=>{
+test('technicians cannot schedule return visits directly',()=>fixture(async(db,c,a)=>{
  await c.execute("UPDATE work_order SET current_status='Completed' WHERE job_id=?",[a.jobId]);
- const before=await getReport(db,a.userId,a.jobId);
- let p=await getServiceProgress(db,a.jobId);
- const update=async(extra)=>{const result=await updateServiceProgress(db,a.userId,a.jobId,{requestId:randomUUID(),expectedVersion:p.version,notes:'Return visit work details recorded.',...extra});p=await getServiceProgress(db,a.jobId);return result;};
- const required=await update({action:'require-return',reason:'Part unavailable',partNotes:'Replacement fan motor, quantity 1; awaiting stock.'});
- await assert.rejects(update({action:'complete-return',partNotes:'Motor installed'}),e=>e.status===409);
- await assert.rejects(update({action:'schedule-return',date:'2035-02-04',start:'09:00',durationMinutes:60}),e=>e.status===400);
- await update({action:'schedule-return',date:'2035-02-06',start:'09:00',durationMinutes:60});
- assert.equal(p.followUpStatus,'Scheduled');assert.equal(p.followUpEnd,'10:00:00');
- const {activeReservationCount}=await import('../server/scheduling.mjs');
- assert.ok(await activeReservationCount(db,{date:'2035-02-06',start:'09:00:00',end:'10:00:00'})>=1);
- await update({action:'start-return'});await update({action:'extend',minutes:15,reason:'Additional checks'});assert.equal(p.followUpEnd,'10:15:00');await update({action:'complete-return',partNotes:'Installed fan motor, quantity 1; retested cooling.'});
- assert.equal(p.followUpStatus,'Completed');assert.equal(new Set(p.events.slice(0,5).map(e=>e.reportId)).size,1);assert.equal(p.events[0].reportId,required.reportId);
- const after=await getReport(db,a.userId,a.jobId);assert.equal(after.report.completedAt,before.report?.completedAt??null);assert.equal(after.status,'Completed');
+ const p=await getServiceProgress(db,a.jobId);
+ await assert.rejects(updateServiceProgress(db,a.userId,a.jobId,{requestId:randomUUID(),expectedVersion:p.version,action:'schedule-return',date:'2035-02-06',start:'09:00',durationMinutes:60,notes:'Trying to bypass admin confirmation.'}),e=>e.status===409);
 }));
 
 test('technician repair quotes are audited without customer approval, and require own repair job and CSRF',()=>fixture(async(db,c,a)=>{

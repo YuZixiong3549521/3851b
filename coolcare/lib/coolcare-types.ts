@@ -220,6 +220,7 @@ export type BookingInput = {
 };
 
 export type ServiceProgress = {
+  visits?: Array<{id:number;startedAt:string|null;endedAt:string;outcome:string;snapshot:{checklist_result?:string;problem_found?:string}}>;
   version: number;
   extensionMinutes: number;
   expectedEndTime: string | null;

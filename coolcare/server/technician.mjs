@@ -1,3 +1,4 @@
+import {snapshotVisit} from './return-visits.mjs';
 import {registerTechnicianPages} from './technician-pages.mjs';
 import {getServiceProgress,updateServiceProgress} from './service-progress.mjs';
 import express from 'express';
@@ -130,14 +131,14 @@ export async function getTechnicianJobDetails(pool, technicianId, jobId) {
   return {job:{...job,serviceProgress,report:report?{...attach(report),serviceProgress}:null,inventory:inventory.filter(t=>t.jobId===jobId),cleaningAssessment:cleaningAssessment??null},addressHistory:addressHistory.map(attach),packageHistory:packageHistory.map(attach),packages,annualHistory:annualHistory.map(attach),cleaningAssessmentHistory};
 }
 
-const statusTransition={Assigned:'On The Way','On The Way':'In Progress','In Progress':'Completed'};
+const statusTransition={Assigned:'On The Way','On The Way':'In Progress','In Progress':'Completed','Return visit':'In Progress'};
 export const serviceReportSchema = z.object({
  workPerformed: z.string().trim().min(5).max(5000),
  problemFound: z.string().trim().max(5000).default(''),
  solutionApplied: z.string().trim().max(5000).default(''),
  checklist: z.string().trim().min(3).max(5000),
 }).strict();
-export const statusUpdateSchema = z.object({requestId:z.uuid(),expectedStatus:z.enum(['Assigned','On The Way','In Progress']),status:z.enum(['On The Way','In Progress','Completed']),report:serviceReportSchema.optional()}).strict().superRefine((data,ctx)=>{
+export const statusUpdateSchema = z.object({requestId:z.uuid(),expectedStatus:z.enum(['Assigned','On The Way','In Progress','Return visit']),status:z.enum(['On The Way','In Progress','Completed']),report:serviceReportSchema.optional()}).strict().superRefine((data,ctx)=>{
 
  if(data.status!=='Completed'&&data.report)ctx.addIssue({code:'custom',path:['report'],message:'Submit the report when completing the job.'});
 });
@@ -164,6 +165,10 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
     if(work.current_status!==data.expectedStatus||!(statusTransition[work.current_status]===data.status || (work.current_status==='Assigned' && data.status==='In Progress'))) {
       throw new AppError('Reload this work order and complete each status step in order.',409);
     }
+    if(work.current_status==='Return visit'){
+      await connection.execute("UPDATE service_progress SET follow_up_status='In Progress',revision=revision+1 WHERE job_id=?",[jobId]);
+      await connection.execute("UPDATE service_report SET started_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR),completed_at=NULL WHERE job_id=?",[jobId]);
+    }
     if(data.status==='In Progress'){
       await connection.execute(`INSERT INTO service_report(job_id,work_performed,started_at)
         VALUES (?,'',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))
@@ -178,6 +183,10 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
       await connection.execute(`INSERT INTO service_report(job_id,work_performed,problem_found,solution_applied,checklist_result,submitted_time,completed_at)
         VALUES (?,?,?,?,?,CURRENT_TIMESTAMP,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))
         ON DUPLICATE KEY UPDATE work_performed=VALUES(work_performed),problem_found=VALUES(problem_found),solution_applied=VALUES(solution_applied),checklist_result=VALUES(checklist_result),submitted_time=VALUES(submitted_time),completed_at=VALUES(completed_at)`,[jobId,r.workPerformed,r.problemFound,r.solutionApplied,r.checklist]);
+    }
+    if(data.status==='Completed'){
+      await snapshotVisit(connection,jobId,'Completed');
+      await connection.execute("UPDATE service_progress SET follow_up_status=IF(follow_up_status='In Progress','Completed',follow_up_status),revision=revision+1 WHERE job_id=?",[jobId]);
     }
     await connection.execute('UPDATE work_order SET current_status=? WHERE job_id=?',[data.status,jobId]);
     await connection.execute('UPDATE booking SET booking_status=? WHERE booking_id=?',[data.status,work.booking_id]);

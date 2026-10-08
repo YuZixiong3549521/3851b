@@ -54,3 +54,5 @@
 .service-photos{display:grid;gap:12px;margin:0}.photo-draft{display:grid;gap:10px;border:1px solid #dfe6ed;padding:12px;border-radius:10px}.photo-draft img{max-height:200px;width:100%;object-fit:contain}.photo-draft label{display:grid;gap:6px}.service-photos figure img{height:160px;width:100%;object-fit:cover}
 
 .dashboard-stats{grid-template-columns:repeat(4,minmax(0,1fr))}@media(max-width:900px){.dashboard-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.report-check-list{display:grid;gap:0;border:1px solid #e5eaf1;border-radius:10px;padding:6px 14px}.portal-form label.report-check-row{display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:9px;padding:9px 0;margin:0}.portal-form .report-check-row input[type="checkbox"]{width:16px;height:16px;min-width:16px;flex:0 0 16px;margin:0;padding:0}.report-check-row span{line-height:1.4;text-align:left}

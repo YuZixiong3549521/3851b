@@ -32,6 +32,8 @@ export function ServiceProgressSummary({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {!!progress.visits?.length && <details><summary>Visit records ({progress.visits.length})</summary>{progress.visits.map((v,i)=><section key={v.id} className="border rounded-lg p-3 my-2"><h4>Visit {i+1} · {v.outcome}</h4><p>{v.startedAt ? String(v.startedAt).replace('T',' ').slice(0,19) : 'Start not recorded'} – {String(v.endedAt).replace('T',' ').slice(0,19)}</p><p className="whitespace-pre-wrap">{v.snapshot.checklist_result || 'No checklist recorded.'}</p><p>{v.snapshot.problem_found}</p></section>)}</details>}
+
         {progress.extensionMinutes > 0 && (
           <div className="rounded-xl bg-primary/5 p-4">
             <p className="flex items-center gap-2 font-semibold">
@@ -55,7 +57,7 @@ export function ServiceProgressSummary({
             <p className="mt-1 text-sm text-amber-900">
               {progress.followUpDate
                 ? formatDate(progress.followUpDate)
-                : 'The technician will arrange a return appointment.'}
+                : 'The administrator will review the request and invite you to choose a time.'}
               {progress.followUpStart && progress.followUpEnd
                 ? ' · ' +
                   formatTimeSlot(

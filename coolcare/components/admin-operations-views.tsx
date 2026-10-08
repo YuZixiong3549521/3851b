@@ -1,4 +1,5 @@
 'use client';
+import {ReturnVisitsPanel} from '@/components/return-visits-panel';
 import { ServicePhotoGallery } from '@/components/service-photo-gallery';
 import { SignatureImage } from '@/components/signature-image';
 
@@ -177,6 +178,7 @@ export function OrdersPage({
   const data = resource.data;
   return (
     <>
+      <ReturnVisitsPanel role="admin"/>
       <Heading
         eyebrow={mode === 'review' ? 'ORDERS / REVIEW' : 'ORDERS / DISPATCH'}
         title={mode === 'review' ? 'Booking review' : 'Dispatch queue'}

@@ -1,3 +1,4 @@
+import {registerReturnRoutes} from '../return-visits.mjs';
 import express from 'express';
 import { sessionUser,changePublicBooking } from '../public-site.mjs';
 import { ZodError } from 'zod';
@@ -27,6 +28,7 @@ app.get('/health', asyncRoute(async (request, response) => {
 }));
 
 app.use(async (req,_res,next)=>{req.customerUser=await sessionUser(pool,req,'Customer');next();});
+registerReturnRoutes(app,pool,'customer');
 registerBookingNotifications(app,pool);
 
 app.get('/customer-context', asyncRoute(async (request, response) => {
