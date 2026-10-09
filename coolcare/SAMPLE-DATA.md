@@ -29,7 +29,7 @@ npm start
 - `--plan` lists the business tables and row counts without changing data.
 - `--dry-run` builds and validates the replacement, then rolls the transaction back. MySQL auto-increment IDs may still advance.
 - `--as-of` selects the Singapore calendar date for the scenarios. Omit it to use today's Singapore date. Use the same date on each machine for matching schedules; generated IDs and request UUIDs need not match.
-- The loader replaces bookings, addresses, equipment, annual series, work orders, reports, inventory movements and associated old business records, including assistant drafts, email outbox, legacy subscriptions, promotions and loyalty records.
+- The loader replaces bookings, addresses, equipment, annual series, work orders, reports, return-visit records, inventory movements and associated old business records, including assistant drafts, email outbox, legacy subscriptions, promotions and loyalty records.
 - Existing accounts, password hashes, customer profiles, roles, catalogue configuration and part definitions remain. Existing customers outside the six scenario accounts remain able to log in, with no seeded bookings or addresses. Missing scenario accounts are added; existing passwords are never reset.
 - It only runs against the local CoolCare database, verifies that the Docker backup and writer use the same MySQL server, checks foreign-key dependencies, serializes concurrent loads and applies business changes in one transaction. It never disables foreign keys or deletes Docker volumes.
 

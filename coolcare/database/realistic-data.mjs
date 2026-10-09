@@ -99,13 +99,15 @@ export async function seedRealisticData(connection,{asOf}={}) {
   function single(key,address,serviceCode,date,status,notes,extra={}) {
     const plan={key,address,serviceCode,date,status,notes,window:'morning',...extra};plans.push(plan);return plan;
   }
-  async function annual(key,address,firstDate,statuses,techs) {
+  async function annual(key,address,propertyType,firstDate,statuses,techs) {
     const requestId=randomUUID(),createdAt=sqlUtc(firstDate>asOf?dates.past(7):previousWeekday(addCalendarDays(firstDate,-28)));
-    const selection=await resolveBookingSelection(connection,address.customerId,{packageId:bundle.packageId,requestId},address.unitIds.length);
+    const selection=await resolveBookingSelection(connection,address.customerId,{packageId:bundle.packageId,propertyType,requestId},address.unitIds.length);
     if(selection.totalAmount<0||!Number.isFinite(selection.totalAmount))throw new Error('Invalid annual catalogue price.');
     const schedule=annualVisitSchedule(firstDate,selection.totalAmount);
-    const [inserted]=await connection.execute(`INSERT INTO annual_booking_series(customer_id,address_id,package_id,package_name,first_service_date,unit_count,total_amount,request_id,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?)`,[address.customerId,address.addressId,bundle.packageId,bundle.name,firstDate,address.unitIds.length,selection.totalAmount,requestId,createdAt]);
+    const [inserted]=await connection.execute(`INSERT INTO annual_booking_series(customer_id,address_id,package_id,package_name,first_service_date,unit_count,total_amount,request_id,created_at,
+      property_type,property_label,included_units,base_annual_price,additional_unit_price) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [address.customerId,address.addressId,bundle.packageId,bundle.name,firstDate,address.unitIds.length,selection.totalAmount,requestId,createdAt,
+      selection.package.propertyType,selection.package.propertyLabel,selection.package.includedUnits,selection.package.price,selection.package.additionalUnitPrice]);
     const row={key,seriesId:inserted.insertId,customerId:address.customerId,addressId:address.addressId,totalAmount:selection.totalAmount,createdAt,requestId,visits:[]};series.push(row);
     for(const visit of schedule) {
       const index=visit.visitNumber-1;
@@ -116,8 +118,8 @@ export async function seedRealisticData(connection,{asOf}={}) {
         solution:'Completed routine cleaning, confirmed steady drainage and measured return/supply air temperatures of 27°C / 16°C after stabilisation.'});
     }
   }
-  await annual('alice-annual',aliceHome,dates.aliceAnnual,['Completed','Completed','Assigned','Confirmed'],[chris,farah,chris,null]);
-  await annual('ben-annual',benHome,dates.benAnnual,['Assigned','Confirmed','Submitted','Submitted'],[daniel,null,null,null]);
+  await annual('alice-annual',aliceHome,'hdb-4',dates.aliceAnnual,['Completed','Completed','Assigned','Confirmed'],[chris,farah,chris,null]);
+  await annual('ben-annual',benHome,'hdb-5-executive',dates.benAnnual,['Assigned','Confirmed','Submitted','Submitted'],[daniel,null,null,null]);
   single('alice-cleaning',aliceOffice,'cleaning',dates.past(66),'Completed','Routine cleaning for both office units. The study has slightly reduced airflow.',
     {tech:chris,window:'afternoon',duration:85,work:'Washed filters, cleaned blower outlets and drain pans, flushed the drainage line and checked cooling across both office units.',
       findings:'Uneven dust build-up on the study filter; no abnormal compressor noise.',solution:'Routine cleaning restored even airflow. Supply temperatures stabilised between 15°C and 17°C.'});

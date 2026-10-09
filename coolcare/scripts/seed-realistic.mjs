@@ -4,6 +4,7 @@ import { mkdir,writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { isCalendarDate,singaporeToday } from '../server/customer/booking-schedule.mjs';
+import { sampleDataDeletionOrder, sampleDataTables } from './sample-data-schema.mjs';
 
 const root=resolve(import.meta.dirname,'..');
 const args=process.argv.slice(2);
@@ -18,17 +19,7 @@ const asOf=args.find(arg=>arg.startsWith('--as-of='))?.slice(8)||singaporeToday(
 if(!isCalendarDate(asOf)||asOf<'2001-01-01'||asOf>'2098-12-31')throw new Error('Use a valid as-of date between 2001 and 2098.');
 if(!['127.0.0.1','localhost','::1'].includes(process.env.DB_HOST)||process.env.DB_NAME!=='coolcare_service_app')throw new Error('This sample-data tool only supports the local CoolCare database.');
 if(!process.env.MYSQL_ROOT_PASSWORD)throw new Error('The local MYSQL_ROOT_PASSWORD from setup is required.');
-const clearTables=[
- 'booking_admin_operation','technician_work_operation','service_report_revision','report_signature','service_photo_upload',
- 'service_progress_event','service_progress','customer_booking_notice',
- 'assistant_booking_draft','work_order_cleaning_assessment_revision','work_order_cleaning_assessment',
- 'inventory_transaction_revision','inventory_web_operation','inventory_transaction',
- 'photo','technician_performance_score','service_report','work_order','assignment',
- 'booking_email_outbox','web_booking_details','booking_service','booking_package','annual_booking_visit',
- 'booking_aircon_unit','booking_promotion','booking_change_request','booking_status_history','loyalty_transaction',
- 'booking','annual_booking_series','customer_subscription','loyalty_account','package_promotion','promotion',
- 'aircon_unit','service_address','chatbot_message','chatbot_conversation','web_legacy_import',
-];
+const clearTables=sampleDataTables;
 async function apiIsRunning(){return new Promise(resolve=>{
  const socket=createConnection({host:'127.0.0.1',port:Number(process.env.API_PORT||3001)});
  socket.setTimeout(1000);socket.once('connect',()=>{socket.destroy();resolve(true);});
@@ -53,13 +44,7 @@ try{
  for(const table of clearTables)if(!available.has(table))throw new Error('Run npm run db:up first; required table is missing: '+table);
  const counts={};for(const table of clearTables){const [[row]]=await db.query('SELECT COUNT(*) n FROM ??',[table]);counts[table]=row.n;}
  const [edges]=await db.execute('SELECT TABLE_NAME child,REFERENCED_TABLE_NAME parent FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=? AND REFERENCED_TABLE_NAME IS NOT NULL',[process.env.DB_NAME]);
- const pending=new Set(clearTables),order=[];
- for(const edge of edges)if(pending.has(edge.parent)&&!pending.has(edge.child))throw new Error('A retained table references replaced business data: '+edge.child+'. Review before replacing.');
- while(pending.size){
-  const next=[...pending].find(table=>!edges.some(edge=>edge.parent===table&&edge.child!==table&&pending.has(edge.child)));
-  if(!next)throw new Error('Unexpected cyclic business relationship. No data was changed.');
-  order.push(next);pending.delete(next);
- }
+ const order=sampleDataDeletionOrder(edges);
  console.log(JSON.stringify({asOf,replace:args.includes('--replace'),businessRows:counts,preserves:'Accounts, passwords, roles, service/package/part configuration and schema'},null,2));
  if(!args.includes('--plan')){
   if(!args.includes('--replace')&&Object.values(counts).some(n=>n>0))throw new Error('Business data already exists. Use --plan to review it; explicit --replace is required to replace it.');
