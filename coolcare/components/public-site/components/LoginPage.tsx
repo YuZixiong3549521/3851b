@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { SiteIcon } from '@/components/ui/site-icon';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { apiFetch as fetch } from '../api';
+import { apiFetch as fetch, loginErrorMessage } from '../api';
 import React, { useState, useEffect } from 'react';
 import { PageRoute, User } from '../types';
 
@@ -75,18 +75,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => null);
 
-    if (!response.ok || !data.success) {
-      setErrorMessage(
-        data.message || 'Invalid email or password. Please try again.'
-      );
+    if (!response.ok || !data?.success) {
+      setErrorMessage(loginErrorMessage(response.status, data));
       return;
     }
 
     const loggedInUser: User = {
       id: String(data.user.id),
-      name: data.user.fullName,
+      name: data.user.name,
       email: data.user.email,
       phone: data.user.phone || '', role: data.user.role,
     };
@@ -171,7 +169,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
           {/* Error Alert */}
           {errorMessage && (
-            <div className="mb-4 p-3.5 rounded-lg bg-ac-error-container text-ac-on-error-container text-sm flex items-start gap-2 animate-in fade-in">
+            <div role="alert" className="mb-4 p-3.5 rounded-lg bg-ac-error-container text-ac-on-error-container text-sm flex items-start gap-2 animate-in fade-in">
               <SiteIcon className=" text-[20px] shrink-0 mt-0.5 text-ac-error">error</SiteIcon>
               <span className="flex-grow">{errorMessage}</span>
             </div>

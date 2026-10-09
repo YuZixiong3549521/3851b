@@ -20,7 +20,7 @@ function stop(code = 0) {
 }
 for (const args of [
   ['--env-file=.env.local', 'server/index.mjs'],
-  ['node_modules/vinext/dist/cli.js', 'dev'],
+  ['--dns-result-order=ipv4first', 'node_modules/vinext/dist/cli.js', 'dev'],
 ]) {
   const child = spawn(process.execPath, args, {
     cwd,

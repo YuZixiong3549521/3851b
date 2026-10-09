@@ -138,17 +138,29 @@ export function createApp({
 }) {
   if (!secret || secret.length < 32)
     throw new Error('Set a strong local SESSION_SECRET.');
+  const localHosts = ['localhost', '127.0.0.1', '[::1]'];
+  const trustedOrigins = new Set([origin]);
+  const configuredOrigin = new URL(origin);
+  // These names reach the same local website. Keep its protocol and port exact;
+  // do not trust arbitrary localhost ports, remote origins or request headers.
+  if (localHosts.includes(configuredOrigin.hostname)) {
+    for (const hostname of localHosts) {
+      const alias = new URL(configuredOrigin);
+      alias.hostname = hostname;
+      trustedOrigins.add(alias.origin);
+    }
+  }
   const app = express();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
-    if (!['localhost', '127.0.0.1', '[::1]'].includes(req.hostname))
+    if (!localHosts.includes(req.hostname))
       return res.status(403).json({ error: 'Only localhost is allowed.' });
     res.set({
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'same-origin',
     });
-    if (req.headers.origin && req.headers.origin !== origin)
+    if (req.headers.origin && !trustedOrigins.has(req.headers.origin))
       return res.status(403).json({ error: 'Untrusted request origin.' });
     next();
   });

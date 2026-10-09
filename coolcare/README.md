@@ -20,6 +20,12 @@
 
 `scripts/import-accare.mjs` 仅用于可选的旧 SQLite 资料迁移；必须显式提供本机源文件路径，不随 GitHub 分发旧数据库。查看用法：`node scripts/import-accare.mjs --help`。
 
+## Local sign-in addresses
+
+Both `http://localhost:3000` and `http://127.0.0.1:3000` can be used to sign in, even if `.env.local` names the other address in `WEB_ORIGIN`. The API trusts only the configured origin and its exact loopback aliases (`localhost`, `127.0.0.1`, `[::1]`) with the same protocol and port. Other origins are rejected; session cookies, CSRF checks and role permissions still apply. Cookies belong to each hostname, so changing addresses requires signing in again.
+
+The unified `npm start` command prefers IPv4 when resolving the frontend's local address, including on Windows machines that cannot connect to IPv6 loopback. No machine-wide DNS setting is changed. Login displays the API's actual error and distinguishes rejected requests, expired sessions and unavailable services from incorrect credentials. If an older tab still shows the previous generic error, refresh it once after updating and restarting the app; no password or database reset is needed.
+
 ## Unified portal account navigation
 
 All portals and the homepage share the upper-right account menu: **Home**, the current role's portal, relevant profile links and **Sign out**. Admins use the same public login page as customers and technicians. Protected deep links return to their permitted page after login; opening another role's portal redirects to the signed-in account's portal without changing its permissions.
