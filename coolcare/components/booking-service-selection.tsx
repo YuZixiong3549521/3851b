@@ -42,15 +42,13 @@ export function getBookingSelection(options: BookingOptions | null, selection: B
   };
 }
 
-export function BookingServiceSelection({ options, value, onChange, units = 1, disabled = false }: {
+export function BookingServiceSelection({ options, value, onChange, disabled = false }: {
   options: BookingOptions;
   value: BookingSelection;
   onChange: (value: BookingSelection) => void;
-  units?: number;
   disabled?: boolean;
 }) {
   const propertyId=useId();
-  const summary = getBookingSelection(options, value, units);
   const services = options.services.filter(service => service.code === 'cleaning' || service.code === 'repair');
   const bundle = options.bundles.find(item => item.code === 'annual-cleaning');
   return <div className="space-y-4">
@@ -72,6 +70,5 @@ export function BookingServiceSelection({ options, value, onChange, units = 1, d
       {services.length === 0 && !bundle && <p className="text-sm">No services are currently available. Please try again later.</p>}
     </div>
     <p className="rounded-xl bg-muted/65 p-3 text-xs leading-5 text-muted-foreground">{cleaningMethodNotice}</p>
-    {summary.valid && <div className="space-y-1 text-sm font-medium text-primary" aria-live="polite"><p>{summary.isAnnual ? 'Annual estimate: ' : 'Visit estimate: '}{formatMoney(summary.estimate)} for {units} unit(s).</p><p>Estimated service time: {summary.durationMinutes} minutes per visit.</p>{summary.isAnnual && <p className="text-xs font-normal text-muted-foreground">{summary.pricingNote}</p>}</div>}
   </div>;
 }

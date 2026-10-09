@@ -507,7 +507,6 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                       options={options}
                       value={selection}
                       onChange={setSelection}
-                      units={unitsCount}
                       disabled={submitting || retryLocked || !pricesReady}
                     />
                   )}

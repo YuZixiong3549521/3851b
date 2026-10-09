@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { coolcareApi } from '@/lib/coolcare-api';
+import { bookingServiceChanged, createDefaultCustomerBookingForm, type CustomerBookingForm } from '@/lib/customer-booking-form';
 import { formatDate, formatMoney, formatServiceWindow } from '@/lib/format';
 import { annualVisitDates,assertBookingConfirmation } from '@/lib/annual-booking';
 import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
@@ -29,24 +30,12 @@ import type { Address, BookingInput, BookingOptions, CreatedBooking, CustomerCon
 const steps = ['Service', 'Address', 'Schedule', 'Review'];
 const timeSlots: BookingInput['timeSlot'][] = ['09:00 - 11:00', '11:00 - 13:00', '14:00 - 16:00', '16:00 - 18:00'];
 
-type FormState = {
-  serviceAddress: string;
-  postalCode: string;
-  specialNotes: string;
-  numberOfUnits: number;
-  preferredDate: string;
-  timeSlot: BookingInput['timeSlot'] | '';
-  problemDescription: string;
-};
-
-const initialForm: FormState = { serviceAddress: '', postalCode: '', specialNotes: '', numberOfUnits: 1, preferredDate: '', timeSlot: '', problemDescription: '' };
-
 export default function BookServicePage() {
   const [step, setStep] = useState(1);
   const [context, setContext] = useState<CustomerContext | null>(null);
   const [options, setOptions] = useState<BookingOptions | null>(null);
   const [selection, setSelection] = useState<BookingSelection>(emptyBookingSelection);
-  const [form, setForm] = useState<FormState>(() => ({ ...initialForm, preferredDate: earliestBookingDate() }));
+  const [form, setForm] = useState<CustomerBookingForm>(() => createDefaultCustomerBookingForm([], earliestBookingDate()));
   const [error, setError] = useState('');
   const [fieldError, setFieldError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -63,8 +52,7 @@ export default function BookServicePage() {
       .then(async ([nextContext, nextOptions]) => {
         setContext(nextContext);
         setOptions(nextOptions);
-        const address=nextContext.addresses.find(item=>item.isDefault) ?? nextContext.addresses[0];
-        setForm(current=>({...current,serviceAddress:address?.addressLine ?? '',postalCode:address?.postalCode ?? ''}));
+        setForm(createDefaultCustomerBookingForm(nextContext.addresses, earliestBookingDate()));
         const rebook=Number(new URLSearchParams(window.location.search).get('rebook'));
         if(Number.isSafeInteger(rebook)&&rebook>0){
           const previous=await coolcareApi.getBooking(rebook);
@@ -111,7 +99,7 @@ export default function BookServicePage() {
       const rejected = reason instanceof Error && 'status' in reason && Number(reason.status) >= 400 && Number(reason.status) < 500;
       if (rejected) pendingRequest.current = null;
       if (reason instanceof Error && reason.message.includes('signed-in account changed')) {
-        setContext(null); setOptions(null); setSelection(emptyBookingSelection); setForm(initialForm); setError(reason.message);
+        setContext(null); setOptions(null); setSelection(emptyBookingSelection); setForm(createDefaultCustomerBookingForm([], earliestBookingDate())); setError(reason.message);
       }
       setRetryLocked(!rejected);
       setFieldError(`${reason instanceof Error ? reason.message : 'Unable to create the booking.'}${rejected ? '' : ' Retry confirmation with the same details to safely check or complete this request.'}`);
@@ -210,13 +198,21 @@ export default function BookServicePage() {
     setFieldError('');
   }
 
+  function handleServiceChange(nextSelection: BookingSelection) {
+    const changed = bookingServiceChanged(selection, nextSelection);
+    setSelection(nextSelection);
+    if (!changed) return;
+    setForm(createDefaultCustomerBookingForm(context?.addresses, earliestBookingDate()));
+    setFieldError('');
+  }
+
   function startAnotherBooking() {
     pendingRequest.current = null;
     requestId.current = crypto.randomUUID();
     setSelection(emptyBookingSelection);
     setRetryLocked(false);
     coolcareApi.getBookingOptions().then(setOptions).catch(() => setError('Unable to refresh booking options. Please reload before booking again.'));
-    setForm({ ...initialForm, preferredDate: earliestBookingDate(), serviceAddress: context?.addresses.find((address) => address.isDefault)?.addressLine ?? context?.addresses[0]?.addressLine ?? '' });
+    setForm(createDefaultCustomerBookingForm(context?.addresses, earliestBookingDate()));
     setStep(1);
     setCreated(null);
     setFieldError('');
@@ -243,7 +239,7 @@ export default function BookServicePage() {
             <Card className="border-border/80 shadow-sm"><CardContent className="p-5 sm:p-8">
               {step === 1 && (
                 <FieldSet><FieldLegend className="text-xl font-bold">How would you like to book?</FieldLegend>
-                  <BookingServiceSelection options={options} value={selection} onChange={setSelection} units={Math.max(1, form.numberOfUnits)} />
+                  <BookingServiceSelection options={options} value={selection} onChange={handleServiceChange} />
                 </FieldSet>
               )}
 
