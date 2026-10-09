@@ -108,13 +108,18 @@ test('admin/customer return workflow retains job/report, enforces roles and date
     await assert.rejects(
       change('customer', customer.user_id, { action: 'invite' }),
     );
-    await change('admin', admin.user_id, { action: 'invite' });
-    assert.equal(
-      (await listReturns(db, 'customer', customer.user_id)).rows.find(
-        (r) => r.jobId === a.jobId,
-      ).status,
-      'Awaiting customer',
-    );
+    const customerMessage =
+      'The replacement fan motor is being arranged. Please choose a new weekday appointment.';
+    await change('admin', admin.user_id, {
+      action: 'invite',
+      customerMessage,
+    });
+    const customerReturn = (
+      await listReturns(db, 'customer', customer.user_id)
+    ).rows.find((r) => r.jobId === a.jobId);
+    assert.equal(customerReturn.status, 'Awaiting customer');
+    assert.equal(customerReturn.customerMessage, customerMessage);
+    assert.equal(customerReturn.travelBufferMinutes, 30);
     await assert.rejects(change('customer', 4294967295, choose));
     await assert.rejects(
       change('customer', customer.user_id, { ...choose, date: '2020-01-01' }),

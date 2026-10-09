@@ -11,6 +11,14 @@ export function postalProximity(destination, origin) {
   return { rank: 2, label: 'Different postal sector', basis: 'postal-sector' };
 }
 
+export function travelLaborCost(bufferMinutes, hourlyLaborCost) {
+  if (hourlyLaborCost == null || hourlyLaborCost === '') return null;
+  const minutes = Number(bufferMinutes ?? 30),
+    hourly = Number(hourlyLaborCost);
+  if (!Number.isFinite(hourly) || hourly < 0) return null;
+  return Math.round((hourly * minutes * 100) / 60) / 100;
+}
+
 export async function addDispatchProximity(connection, booking, technicians) {
   const [[destination]] = await connection.execute(
     'SELECT postal_code FROM service_address WHERE address_id=?',
@@ -39,13 +47,29 @@ export async function addDispatchProximity(connection, booking, technicians) {
           : 'Not recorded',
       previousBookingId: previous?.postalCode ? previous.bookingId : null,
     };
+    technician.travelPlan = {
+      bufferMinutes: Number(booking.travel_buffer_minutes ?? 30),
+      trafficNote: booking.traffic_note || null,
+      hourlyLaborCost:
+        technician.hourlyLaborCost == null
+          ? null
+          : Number(technician.hourlyLaborCost),
+      estimatedLaborCost: travelLaborCost(
+        booking.travel_buffer_minutes,
+        technician.hourlyLaborCost,
+      ),
+    };
   }
   return technicians;
 }
 
 export function compareDispatchCandidates(a, b) {
+  const aCost = a.travelPlan?.estimatedLaborCost,
+    bCost = b.travelPlan?.estimatedLaborCost;
   return (
     (a.proximity?.rank ?? 3) - (b.proximity?.rank ?? 3) ||
+    Number(aCost == null) - Number(bCost == null) ||
+    (aCost ?? 0) - (bCost ?? 0) ||
     Number(a.dailyJobs || 0) - Number(b.dailyJobs || 0) ||
     String(a.lastAssignedAt || '').localeCompare(
       String(b.lastAssignedAt || ''),

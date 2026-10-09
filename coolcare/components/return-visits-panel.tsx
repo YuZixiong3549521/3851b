@@ -1,7 +1,9 @@
 'use client';
-import { useEffect, useState, useRef } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { NativeSelect } from '@/components/ui/native-select';
+import { Textarea } from '@/components/ui/textarea';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { earliestBookingDate, bookingDateError } from '@/lib/booking-schedule';
 type Row = {
@@ -12,6 +14,9 @@ type Row = {
   status: string;
   reason: string;
   parts: string;
+  customerMessage: string | null;
+  travelBufferMinutes: number;
+  trafficNote: string | null;
   date: string | null;
   start: string | null;
   end: string | null;
@@ -30,35 +35,56 @@ async function request(path: string, body?: unknown) {
     headers,
     body: body ? JSON.stringify(body) : undefined,
   });
-  const d: any = await r.json();
+  const d: unknown = await r.json();
   if (!r.ok)
-    throw Object.assign(new Error(d.error || 'Request failed.'), {
+    throw Object.assign(new Error(errorMessage(d)), {
       status: r.status,
     });
   return d;
 }
+function errorMessage(value: unknown) {
+  return value &&
+    typeof value === 'object' &&
+    'error' in value &&
+    typeof value.error === 'string'
+    ? value.error
+    : 'Request failed.';
+}
+function rowsFrom(value: unknown): Row[] {
+  if (
+    value &&
+    typeof value === 'object' &&
+    'rows' in value &&
+    Array.isArray(value.rows)
+  )
+    return value.rows as Row[];
+  return [];
+}
 export function ReturnVisitsPanel({
-  role,
+  viewerRole,
   noticeOnly = false,
 }: {
-  role: 'admin' | 'customer';
+  viewerRole: 'admin' | 'customer';
   noticeOnly?: boolean;
 }) {
   const [rows, setRows] = useState<Row[]>([]),
     [error, setError] = useState('');
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
-      setRows((await request(`/api/${role}/return-visits`)).rows);
+      setRows(rowsFrom(await request(`/api/${viewerRole}/return-visits`)));
       setError('');
     } catch (e) {
       setError((e as Error).message);
     }
-  };
+  }, [viewerRole]);
   useEffect(() => {
-    void load();
+    const initial = window.setTimeout(() => void load(), 0);
     const timer = setInterval(load, 30000);
-    return () => clearInterval(timer);
-  }, [role]);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(timer);
+    };
+  }, [load]);
   if (noticeOnly) {
     const waiting = rows.filter(
       (r) => r.status === 'Awaiting customer' || r.status === 'Scheduled',
@@ -66,9 +92,9 @@ export function ReturnVisitsPanel({
     return waiting.length ? (
       <aside className="m-4 rounded-xl border bg-blue-50 p-4">
         Return visit update: {waiting.length} appointment(s).{' '}
-        <a className="underline" href="/customer/bookings">
+        <Link className="underline" href="/customer/bookings">
           View notification and arrange your visit
-        </a>
+        </Link>
       </aside>
     ) : null;
   }
@@ -86,7 +112,7 @@ export function ReturnVisitsPanel({
         <ReturnCard
           key={row.jobId + ':' + row.version}
           row={row}
-          role={role}
+          viewerRole={viewerRole}
           onSaved={load}
         />
       ))}
@@ -95,16 +121,20 @@ export function ReturnVisitsPanel({
 }
 function ReturnCard({
   row,
-  role,
+  viewerRole,
   onSaved,
 }: {
   row: Row;
-  role: 'admin' | 'customer';
+  viewerRole: 'admin' | 'customer';
   onSaved: () => Promise<void>;
 }) {
   const [date, setDate] = useState(''),
     [slot, setSlot] = useState(''),
-    [tech, setTech] = useState('');
+    [tech, setTech] = useState(''),
+    [customerMessage, setCustomerMessage] = useState(
+      row.customerMessage ||
+        'A return visit is required. Please choose a new weekday appointment at least 14 days ahead.',
+    );
   const [slots, setSlots] = useState<
       { code: string; label: string; available: boolean }[]
     >([]),
@@ -119,24 +149,46 @@ function ReturnCard({
   const [busy, setBusy] = useState(false),
     [uncertain, setUncertain] = useState(false),
     [error, setError] = useState('');
-  const pending = useRef<any>(null),
+  const pending = useRef<{
+      requestId: string;
+      expectedVersion: number;
+      action: string;
+      date?: string;
+      timeSlot?: string;
+      customerMessage?: string;
+      technicianId?: number;
+    } | null>(null),
     inFlight = useRef(false);
   useEffect(() => {
-    if (role !== 'admin') return;
+    if (viewerRole !== 'admin') return;
     request('/api/admin/technicians')
-      .then((d) => setStaff(Array.isArray(d) ? d : d.rows))
+      .then((value) => {
+        if (Array.isArray(value)) setStaff(value as typeof staff);
+        else if (
+          value &&
+          typeof value === 'object' &&
+          'rows' in value &&
+          Array.isArray(value.rows)
+        )
+          setStaff(value.rows as typeof staff);
+      })
       .catch((e) => setError(e.message));
-  }, [role]);
+  }, [viewerRole]);
   useEffect(() => {
-    if (!date || role !== 'customer') return;
+    if (!date || viewerRole !== 'customer') return;
     let active = true;
-    setSlots([]);
-    setSlot('');
     request(
       `/api/customer/return-visits/${row.jobId}/availability?date=${date}`,
     )
-      .then((d) => {
-        if (active) setSlots(d.slots);
+      .then((value) => {
+        if (
+          active &&
+          value &&
+          typeof value === 'object' &&
+          'slots' in value &&
+          Array.isArray(value.slots)
+        )
+          setSlots(value.slots as typeof slots);
       })
       .catch((e) => {
         if (active) setError(e.message);
@@ -144,7 +196,7 @@ function ReturnCard({
     return () => {
       active = false;
     };
-  }, [date, role, row.jobId]);
+  }, [date, viewerRole, row.jobId]);
   async function save(action: string) {
     if (inFlight.current) return;
     inFlight.current = true;
@@ -156,12 +208,20 @@ function ReturnCard({
         expectedVersion: row.version,
         action,
         ...(action === 'choose' ? { date, timeSlot: slot } : {}),
+        ...(action === 'invite'
+          ? { customerMessage: customerMessage.trim() }
+          : {}),
         ...(action === 'dispatch' ? { technicianId: Number(tech) } : {}),
       };
-      await request(`/api/${role}/return-visits/${row.jobId}`, pending.current);
+      await request(
+        `/api/${viewerRole}/return-visits/${row.jobId}`,
+        pending.current,
+      );
       pending.current = null;
       setUncertain(false);
       await onSaved();
+      if (viewerRole === 'admin')
+        window.dispatchEvent(new Event('coolcare:admin-actions-updated'));
     } catch (e) {
       const err = e as Error & { status?: number };
       setError(err.message);
@@ -181,6 +241,15 @@ function ReturnCard({
       <p>{row.status}</p>
       <p>Reason: {row.reason}</p>
       {row.parts && <p>Parts needed: {row.parts}</p>}
+      <p>
+        Planned travel time: {row.travelBufferMinutes ?? 30} minutes
+        {row.trafficNote ? ` · ${row.trafficNote}` : ''}
+      </p>
+      {viewerRole === 'admin' && row.customerMessage && (
+        <p className="rounded-lg bg-blue-50 p-3 text-sm">
+          <strong>Administrator message:</strong> {row.customerMessage}
+        </p>
+      )}
       {row.date && (
         <p>
           Requested appointment: {row.date} · {row.start} – {row.end}
@@ -194,30 +263,65 @@ function ReturnCard({
       {uncertain ? (
         <Button
           disabled={busy}
-          onClick={() => void save(pending.current.action)}
+          onClick={() => {
+            if (pending.current) void save(pending.current.action);
+          }}
         >
           Retry same request
         </Button>
       ) : (
         <fieldset disabled={busy} className="space-y-3">
-          {role === 'admin' &&
+          {viewerRole === 'admin' &&
             ['Required', 'Awaiting confirmation'].includes(row.status) && (
-              <Button variant="outline" onClick={() => void save('invite')}>
-                {row.status === 'Required'
-                  ? 'Approve & notify customer to choose time'
-                  : 'Ask customer to choose a new time'}
-              </Button>
+              <div className="space-y-3">
+                <label
+                  htmlFor={`return-message-${row.jobId}`}
+                  className="block text-sm font-semibold"
+                >
+                  Message to customer
+                  <Textarea
+                    id={`return-message-${row.jobId}`}
+                    className="mt-2 min-h-24"
+                    value={customerMessage}
+                    maxLength={1000}
+                    onChange={(event) => setCustomerMessage(event.target.value)}
+                    placeholder="Explain why another visit is needed and what the customer should do next."
+                  />
+                </label>
+                <p className="text-sm text-muted-foreground">
+                  This message is saved in the service history and shown in the
+                  customer&apos;s return-visit notice.
+                </p>
+                <Button
+                  variant="outline"
+                  disabled={customerMessage.trim().length < 10}
+                  onClick={() => void save('invite')}
+                >
+                  {row.status === 'Required'
+                    ? 'Approve & notify customer to choose time'
+                    : 'Ask customer to choose a new time'}
+                </Button>
+              </div>
             )}
-          {role === 'customer' && row.status === 'Awaiting customer' && (
+          {viewerRole === 'customer' && row.status === 'Awaiting customer' && (
             <>
               <p>
                 The administrator has approved your return visit. Choose a
                 weekday at least 14 days ahead. Your time requires administrator
                 confirmation.
               </p>
+              {row.customerMessage && (
+                <p className="rounded-lg bg-blue-50 p-3 text-sm">
+                  {row.customerMessage}
+                </p>
+              )}
               <EnglishDatePicker
                 value={date}
-                onChange={setDate}
+                onChange={(value) => {
+                  setDate(value);
+                  setSlots([]);
+                  setSlot('');
+                }}
                 min={earliestBookingDate()}
                 label="Return visit date"
               />
@@ -242,7 +346,7 @@ function ReturnCard({
               </Button>
             </>
           )}
-          {role === 'admin' && row.status === 'Awaiting confirmation' && (
+          {viewerRole === 'admin' && row.status === 'Awaiting confirmation' && (
             <>
               <NativeSelect
                 aria-label="Return visit technician"

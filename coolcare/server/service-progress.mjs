@@ -1,4 +1,4 @@
-import {snapshotVisit} from './return-visits.mjs';
+import { snapshotVisit } from './return-visits.mjs';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { AppError } from './inventory.mjs';
@@ -99,9 +99,16 @@ export async function getServiceProgress(c, jobId) {
   FROM service_progress_event e JOIN user_account u ON u.user_id=e.actor_user_id WHERE e.job_id=? ORDER BY e.revision DESC`,
     [jobId],
   );
-  const [visits] = await c.execute('SELECT visit_id AS id,technician_id AS technicianId,started_at AS startedAt,ended_at AS endedAt,outcome,report_snapshot AS snapshot FROM service_visit_record WHERE job_id=? ORDER BY visit_id',[jobId]);
+  const [visits] = await c.execute(
+    'SELECT visit_id AS id,technician_id AS technicianId,started_at AS startedAt,ended_at AS endedAt,outcome,report_snapshot AS snapshot FROM service_visit_record WHERE job_id=? ORDER BY visit_id',
+    [jobId],
+  );
   return {
-    visits: visits.map(v=>({...v,snapshot:typeof v.snapshot==='string'?JSON.parse(v.snapshot):v.snapshot})),
+    visits: visits.map((v) => ({
+      ...v,
+      snapshot:
+        typeof v.snapshot === 'string' ? JSON.parse(v.snapshot) : v.snapshot,
+    })),
     ...(row ?? {
       version: 0,
       extensionMinutes: 0,
@@ -136,13 +143,15 @@ async function assertTechnicianFree(c, technicianId, jobId, date, start, end) {
   const [conflicts] = await c.execute(
     `SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
   JOIN booking b ON b.booking_id=w.booking_id WHERE a.technician_id=? AND w.job_id<>? AND a.assignment_status NOT IN ('Completed','Cancelled','Declined','Reassigned')
-  AND w.current_status IN ('Assigned','On The Way','In Progress') AND DATE(w.appointment_date)=? AND b.slot_start<? AND b.slot_end>? FOR UPDATE`,
+  AND w.current_status IN ('Assigned','On The Way','In Progress') AND DATE(w.appointment_date)=?
+  AND SUBTIME(b.slot_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60))<? AND b.slot_end>? FOR UPDATE`,
     [technicianId, jobId, date, end, start],
   );
   const [returns] = await c.execute(
-    `SELECT p.job_id FROM service_progress p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
+    `SELECT p.job_id FROM service_progress p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN booking b ON b.booking_id=w.booking_id
   WHERE a.technician_id=? AND p.job_id<>? AND a.assignment_status NOT IN ('Cancelled','Declined','Reassigned')
-  AND p.follow_up_status IN ('Scheduled','In Progress') AND p.follow_up_date=? AND p.follow_up_start<? AND p.follow_up_end>? FOR UPDATE`,
+  AND p.follow_up_status IN ('Scheduled','In Progress') AND p.follow_up_date=?
+  AND SUBTIME(p.follow_up_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60))<? AND p.follow_up_end>? FOR UPDATE`,
     [technicianId, jobId, date, end, start],
   );
   if (conflicts.length || returns.length)
@@ -216,7 +225,13 @@ async function saveServiceProgress(pool, userId, jobId, raw) {
         replayed: true,
       };
     }
-    if (['schedule-return','start-return','complete-return'].includes(d.action)) throw new AppError('Return visits must be arranged by the administrator after the customer chooses a date. Use My Jobs to start or end the visit.',409);
+    if (
+      ['schedule-return', 'start-return', 'complete-return'].includes(d.action)
+    )
+      throw new AppError(
+        'Return visits must be arranged by the administrator after the customer chooses a date. Use My Jobs to start or end the visit.',
+        409,
+      );
     if (!['In Progress', 'Completed'].includes(w.current_status))
       throw new AppError(
         'Start the service before recording a service update.',
@@ -288,7 +303,11 @@ async function saveServiceProgress(pool, userId, jobId, raw) {
         [minutes, end, jobId],
       );
     } else if (d.action === 'require-return') {
-      if(w.current_status!=='In Progress')throw new AppError('Start service before requesting a return visit.',409);
+      if (w.current_status !== 'In Progress')
+        throw new AppError(
+          'Start service before requesting a return visit.',
+          409,
+        );
       if (!['None', 'Completed', 'In Progress'].includes(p.follow_up_status))
         throw new AppError(
           'A return visit is already open. Update that visit first.',
@@ -300,19 +319,38 @@ async function saveServiceProgress(pool, userId, jobId, raw) {
           400,
         );
       kind = 'Return required';
-      await c.execute("INSERT INTO service_report(job_id,work_performed) VALUES (?,'') ON DUPLICATE KEY UPDATE job_id=VALUES(job_id)",[jobId]);
-      await snapshotVisit(c,jobId,'Return required');
-      await c.execute("UPDATE work_order SET current_status='Awaiting return arrangement' WHERE job_id=?",[jobId]);
-      await c.execute("UPDATE booking SET booking_status='Awaiting return arrangement' WHERE booking_id=?",[w.booking_id]);
-      await c.execute("UPDATE assignment SET assignment_status='Completed' WHERE assignment_id=?",[w.assignment_id]);
-      await c.execute("INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note) VALUES (?,'In Progress','Awaiting return arrangement',?,?)",[w.booking_id,userId,d.reason]);
+      await c.execute(
+        "INSERT INTO service_report(job_id,work_performed) VALUES (?,'') ON DUPLICATE KEY UPDATE job_id=VALUES(job_id)",
+        [jobId],
+      );
+      await snapshotVisit(c, jobId, 'Return required');
+      await c.execute(
+        "UPDATE work_order SET current_status='Awaiting return arrangement' WHERE job_id=?",
+        [jobId],
+      );
+      await c.execute(
+        "UPDATE booking SET booking_status='Awaiting return arrangement' WHERE booking_id=?",
+        [w.booking_id],
+      );
+      await c.execute(
+        "UPDATE assignment SET assignment_status='Completed' WHERE assignment_id=?",
+        [w.assignment_id],
+      );
+      await c.execute(
+        "INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note) VALUES (?,'In Progress','Awaiting return arrangement',?,?)",
+        [w.booking_id, userId, d.reason],
+      );
 
       await c.execute(
         "UPDATE service_progress SET follow_up_status='Required',follow_up_date=NULL,follow_up_start=NULL,follow_up_end=NULL WHERE job_id=?",
         [jobId],
       );
     } else if (d.action === 'schedule-return') {
-      if(['Unavailable','On Leave'].includes(w.availability_status))throw new AppError('Update your availability or contact the administrator before scheduling a return visit.',409);
+      if (['Unavailable', 'On Leave'].includes(w.availability_status))
+        throw new AppError(
+          'Update your availability or contact the administrator before scheduling a return visit.',
+          409,
+        );
       if (!['Required', 'Scheduled'].includes(p.follow_up_status))
         throw new AppError('Record why a return visit is required first.', 409);
       if (w.current_status !== 'Completed')

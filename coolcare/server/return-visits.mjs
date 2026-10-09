@@ -9,9 +9,16 @@ import {
   lockServiceDates,
   lockTechnicianRoster,
 } from './scheduling.mjs';
+import { travelStartTime } from './travel-planning.mjs';
 const base = { requestId: z.uuid(), expectedVersion: z.number().int().min(0) };
 export const returnRequestSchema = z.discriminatedUnion('action', [
-  z.object({ ...base, action: z.literal('invite') }).strict(),
+  z
+    .object({
+      ...base,
+      action: z.literal('invite'),
+      customerMessage: z.string().trim().min(10).max(1000).optional(),
+    })
+    .strict(),
   z
     .object({
       ...base,
@@ -50,8 +57,12 @@ export async function listReturns(pool, role, userId) {
   const [rows] = await pool.execute(
     `SELECT w.job_id AS jobId,b.booking_id AS bookingId,u.full_name AS customer,p.revision AS version,p.follow_up_status AS status,
  DATE_FORMAT(p.follow_up_date,'%Y-%m-%d') AS date,p.follow_up_start AS start,p.follow_up_end AS end,
+ b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,
  (SELECT e.reason FROM service_progress_event e WHERE e.job_id=w.job_id AND e.kind='Return required' ORDER BY e.revision DESC LIMIT 1) AS reason,
- (SELECT e.part_notes FROM service_progress_event e WHERE e.job_id=w.job_id AND e.kind='Return required' ORDER BY e.revision DESC LIMIT 1) AS parts
+ (SELECT e.part_notes FROM service_progress_event e WHERE e.job_id=w.job_id AND e.kind='Return required' ORDER BY e.revision DESC LIMIT 1) AS parts,
+ (SELECT e.notes FROM service_progress_event e WHERE e.job_id=w.job_id AND e.kind='Return invited'
+   AND e.revision>(SELECT COALESCE(MAX(required_event.revision),0) FROM service_progress_event required_event WHERE required_event.job_id=w.job_id AND required_event.kind='Return required')
+   ORDER BY e.revision DESC LIMIT 1) AS customerMessage
  FROM service_progress p JOIN work_order w ON w.job_id=p.job_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN user_account u ON u.user_id=cu.user_id
  WHERE p.follow_up_status NOT IN ('None','Completed') ${role === 'customer' ? 'AND cu.user_id=?' : ''} ORDER BY w.job_id DESC`,
     role === 'customer' ? [userId] : [],
@@ -111,7 +122,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       [hint.booking_id],
     );
     const [[w]] = await c.execute(
-      `SELECT w.*,b.booking_status,b.estimated_duration_minutes,cu.user_id AS customerUser FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id WHERE w.job_id=? FOR UPDATE`,
+      `SELECT w.*,b.booking_status,b.estimated_duration_minutes,b.travel_buffer_minutes,b.traffic_note,cu.user_id AS customerUser FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id WHERE w.job_id=? FOR UPDATE`,
       [jobId],
     );
     if (role === 'customer' && w.customerUser !== userId)
@@ -145,6 +156,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       );
     let state,
       kind,
+      notes,
       date = null,
       start = null,
       end = null;
@@ -153,6 +165,9 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
         throw new AppError('This return visit is not awaiting review.', 409);
       state = 'Awaiting customer';
       kind = 'Return invited';
+      notes =
+        d.customerMessage ||
+        'A return visit is required. Please choose a new weekday appointment at least 14 days ahead.';
     } else if (d.action === 'choose') {
       if (p.follow_up_status !== 'Awaiting customer')
         throw new AppError(
@@ -169,12 +184,14 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       });
       state = 'Awaiting confirmation';
       kind = 'Return requested';
+      notes = 'Customer submitted a preferred return appointment.';
     } else {
       if (p.follow_up_status !== 'Awaiting confirmation')
         throw new AppError('Wait for the customer to choose a time.', 409);
       date = String(p.follow_up_date).slice(0, 10);
       start = p.follow_up_start;
       end = p.follow_up_end;
+      const travelStart = travelStartTime(start, w.travel_buffer_minutes);
       assertBookableDate(date);
       await lockServiceDates(c, [date]);
       await lockTechnicianRoster(c);
@@ -188,12 +205,12 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       if (!tech)
         throw new AppError('Select an active available technician.', 409);
       const [conflicts] = await c.execute(
-        `SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id JOIN booking b ON b.booking_id=w.booking_id WHERE a.technician_id=? AND w.job_id<>? AND w.current_status IN ('Assigned','On The Way','In Progress','Return visit') AND DATE(w.appointment_date)=? AND b.slot_start<? AND b.slot_end>? FOR UPDATE`,
-        [d.technicianId, jobId, date, end, start],
+        `SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id JOIN booking b ON b.booking_id=w.booking_id WHERE a.technician_id=? AND w.job_id<>? AND w.current_status IN ('Assigned','On The Way','In Progress','Return visit') AND DATE(w.appointment_date)=? AND SUBTIME(b.slot_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60))<? AND b.slot_end>? FOR UPDATE`,
+        [d.technicianId, jobId, date, end, travelStart],
       );
       const [legacyConflicts] = await c.execute(
-        `SELECT p.job_id FROM service_progress p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id WHERE a.technician_id=? AND p.job_id<>? AND p.follow_up_status IN ('Scheduled','In Progress') AND p.follow_up_date=? AND p.follow_up_start<? AND p.follow_up_end>? FOR UPDATE`,
-        [d.technicianId, jobId, date, end, start],
+        `SELECT p.job_id FROM service_progress p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id JOIN booking b ON b.booking_id=w.booking_id WHERE a.technician_id=? AND p.job_id<>? AND p.follow_up_status IN ('Scheduled','In Progress') AND p.follow_up_date=? AND SUBTIME(p.follow_up_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60))<? AND p.follow_up_end>? FOR UPDATE`,
+        [d.technicianId, jobId, date, end, travelStart],
       );
       if (conflicts.length || legacyConflicts.length)
         throw new AppError(
@@ -228,6 +245,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       );
       state = 'Scheduled';
       kind = 'Return scheduled';
+      notes = 'Return visit confirmed and assigned by the administrator.';
     }
     const version = p.revision + 1;
     await c.execute(
@@ -251,7 +269,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
         version,
         kind,
         kind,
-        kind,
+        notes,
         date,
         start,
         end,

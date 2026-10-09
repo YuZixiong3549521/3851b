@@ -10,6 +10,8 @@ import {
 } from '../server/customer/booking-schedule.mjs';
 import {
   approveBooking,
+  editTravelPlan,
+  getAdminActionSummary,
   getAdminBooking,
   dispatchBooking,
   listDispatchOptions,
@@ -228,6 +230,12 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       "UPDATE technician SET availability_status='Available',last_assigned_at=CASE technician_id WHEN ? THEN '2025-01-01 00:00:00' ELSE '2026-01-01 00:00:00' END",
       [technicians[0].technicianId],
     );
+    await connection.execute(
+      'UPDATE technician SET hourly_labor_cost=40 WHERE technician_id IN (' +
+        technicians.map(() => '?').join(',') +
+        ')',
+      technicians.map((row) => row.technicianId),
+    );
     const date = nextWeekday(addCalendarDays(minimumBookingDate(), 365)),
       address = `Dispatch QA ${randomUUID()}, Singapore`;
     const create = (serviceAddress = address) =>
@@ -241,8 +249,36 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       });
 
     const first = await create(),
-      rescheduledDate = nextWeekday(addCalendarDays(date, 3)),
+      rescheduledDate = nextWeekday(addCalendarDays(date, 7)),
       rescheduleRequest = randomUUID();
+    assert.ok((await getAdminActionSummary(db)).submitted >= 1);
+    assert.equal(
+      (await getAdminBooking(db, first.bookingId)).travelBufferMinutes,
+      30,
+    );
+    const travelRequest = randomUUID();
+    assert.deepEqual(
+      await editTravelPlan(db, owner, first.bookingId, {
+        requestId: travelRequest,
+        travelBufferMinutes: 45,
+        trafficNote: 'Peak-hour traffic and visitor parking.',
+      }),
+      {
+        bookingId: first.bookingId,
+        travelBufferMinutes: 45,
+        trafficNote: 'Peak-hour traffic and visitor parking.',
+      },
+    );
+    assert.equal(
+      (
+        await editTravelPlan(db, owner, first.bookingId, {
+          requestId: travelRequest,
+          travelBufferMinutes: 45,
+          trafficNote: 'Peak-hour traffic and visitor parking.',
+        })
+      ).replayed,
+      true,
+    );
     const rescheduled = await rescheduleAdminBooking(
       db,
       owner,
@@ -327,10 +363,15 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       timeZone: 'UTC',
     }).format(new Date(`${rescheduledDate}T00:00:00Z`));
     assert.match(dispatchMail.body_text, new RegExp(emailDate));
-    assert.match(dispatchMail.body_text, /Service time: 14:00 - 14:45 \(Singapore time\)/);
     assert.match(
       dispatchMail.body_text,
-      new RegExp(technicians[0].fullName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      /Service time: 14:00 - 14:45 \(Singapore time\)/,
+    );
+    assert.match(
+      dispatchMail.body_text,
+      new RegExp(
+        technicians[0].fullName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      ),
     );
     const [[technicianMailCount]] = await connection.execute(
       `SELECT COUNT(*) AS count FROM booking_email_outbox
@@ -452,15 +493,28 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
         requestId: randomUUID(),
         expectedStatus: 'In Progress',
         status: 'Completed',
-          report: {workPerformed:'Cleaned and inspected the unit.',problemFound:'Dirty filters',solutionApplied:'Cleaned filters',checklist:'Cooling and drainage checked'},
+        report: {
+          workPerformed: 'Cleaned and inspected the unit.',
+          problemFound: 'Dirty filters',
+          solutionApplied: 'Cleaned filters',
+          checklist: 'Cooling and drainage checked',
+        },
       },
     );
-    const [[savedReport]]=await connection.execute('SELECT * FROM service_report WHERE job_id=?',[firstDispatch.jobId]);
-    assert.equal(savedReport.work_performed,'Cleaned and inspected the unit.');
-    assert.ok(savedReport.started_at);assert.ok(savedReport.completed_at);assert.ok(savedReport.submitted_time);
-    assert.ok(savedReport.completed_at>=savedReport.started_at);
-    const adminDetail=await getAdminBooking(db,first.bookingId);
-    assert.equal(adminDetail.reports[0].workPerformed,savedReport.work_performed);
+    const [[savedReport]] = await connection.execute(
+      'SELECT * FROM service_report WHERE job_id=?',
+      [firstDispatch.jobId],
+    );
+    assert.equal(savedReport.work_performed, 'Cleaned and inspected the unit.');
+    assert.ok(savedReport.started_at);
+    assert.ok(savedReport.completed_at);
+    assert.ok(savedReport.submitted_time);
+    assert.ok(savedReport.completed_at >= savedReport.started_at);
+    const adminDetail = await getAdminBooking(db, first.bookingId);
+    assert.equal(
+      adminDetail.reports[0].workPerformed,
+      savedReport.work_performed,
+    );
     const [[completed]] = await connection.execute(
       `SELECT b.booking_status,w.current_status,a.assignment_status FROM booking b
     JOIN work_order w ON w.booking_id=b.booking_id JOIN assignment a ON a.assignment_id=w.assignment_id WHERE b.booking_id=?`,
@@ -497,7 +551,9 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       updateTechnician(db, secondDispatch.technician.technicianId, {
         availability: 'On Leave',
       }),
-      (error) => error.status === 409 && /active service|work orders|return visits/.test(error.message),
+      (error) =>
+        error.status === 409 &&
+        /active service|work orders|return visits/.test(error.message),
     );
   }));
 
@@ -661,7 +717,8 @@ void test('manual dispatch lists every technician, enforces eligibility, support
         },
         { redispatch: true },
       ),
-      (error) => error.status === 409 && /different technician/i.test(error.message),
+      (error) =>
+        error.status === 409 && /different technician/i.test(error.message),
     );
     const redispatchRequest = randomUUID();
     const reassigned = await dispatchBooking(
@@ -714,11 +771,7 @@ void test('manual dispatch lists every technician, enforces eligibility, support
     const [[technicianMail]] = await connection.execute(
       `SELECT COUNT(*) AS count FROM booking_email_outbox
       WHERE booking_id=? AND recipient IN (?,?)`,
-      [
-        first.bookingId,
-        manuallySelected.email,
-        automaticFirst.email,
-      ],
+      [first.bookingId, manuallySelected.email, automaticFirst.email],
     );
     assert.equal(Number(technicianMail.count), 0);
     const [[failedDispatchMail]] = await connection.execute(

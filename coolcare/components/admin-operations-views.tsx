@@ -1,5 +1,5 @@
 'use client';
-import {ReturnVisitsPanel} from '@/components/return-visits-panel';
+import { ReturnVisitsPanel } from '@/components/return-visits-panel';
 import { ServicePhotoGallery } from '@/components/service-photo-gallery';
 import { SignatureImage } from '@/components/signature-image';
 
@@ -160,7 +160,7 @@ export function OrdersPage({
   mode: 'review' | 'dispatch';
   params: URLSearchParams;
 }) {
-  const { go, version, refresh } = useInventory(),
+  const { go, version, refresh, actionSummary } = useInventory(),
     status =
       mode === 'review'
         ? ['Submitted', 'Rejected', 'Expired'].includes(
@@ -178,7 +178,6 @@ export function OrdersPage({
   const data = resource.data;
   return (
     <>
-      <ReturnVisitsPanel role="admin"/>
       <Heading
         eyebrow={mode === 'review' ? 'ORDERS / REVIEW' : 'ORDERS / DISPATCH'}
         title={mode === 'review' ? 'Booking review' : 'Dispatch queue'}
@@ -195,10 +194,71 @@ export function OrdersPage({
         }
       />
       {mode === 'review' && (
+        <section className="mb-6" aria-labelledby="admin-action-centre-title">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h2
+                id="admin-action-centre-title"
+                className="text-xl font-semibold"
+              >
+                Action centre
+              </h2>
+              <p className="text-sm muted">
+                Counts remain visible until the work is completed.
+              </p>
+            </div>
+            <strong className="rounded-full bg-red-600 px-3 py-1 text-sm text-white">
+              {actionSummary.totalRequiringAction} total
+            </strong>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <button
+              type="button"
+              className="rounded-xl border bg-white p-4 text-left shadow-sm"
+              onClick={() => go('/admin/orders?status=Submitted')}
+            >
+              <span className="text-sm muted">Awaiting confirmation</span>
+              <strong className="mt-2 block text-2xl">
+                {actionSummary.submitted}
+              </strong>
+            </button>
+            <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
+              <span className="text-sm text-orange-800">
+                Due within 12 hours
+              </span>
+              <strong className="mt-2 block text-2xl text-orange-900">
+                {actionSummary.expiringSoon}
+              </strong>
+            </div>
+            <div className="rounded-xl border bg-white p-4 shadow-sm">
+              <span className="text-sm muted">Return visits needing Admin</span>
+              <strong className="mt-2 block text-2xl">
+                {actionSummary.returnVisits}
+              </strong>
+            </div>
+            <button
+              type="button"
+              className="rounded-xl border bg-white p-4 text-left shadow-sm"
+              onClick={() => go('/admin/dispatch')}
+            >
+              <span className="text-sm muted">Awaiting dispatch</span>
+              <strong className="mt-2 block text-2xl">
+                {actionSummary.awaitingDispatch}
+              </strong>
+            </button>
+          </div>
+        </section>
+      )}
+      <ReturnVisitsPanel viewerRole="admin" />
+      {mode === 'review' && (
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <label className="text-sm font-semibold">
+          <label
+            htmlFor="order-status-filter"
+            className="text-sm font-semibold"
+          >
             Order status
             <NativeSelect
+              id="order-status-filter"
               className="mt-1"
               value={status}
               onChange={(event) =>
@@ -586,6 +646,11 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       preferredDate: string;
       timeSlot: string;
     } | null>(null),
+    [travelDraft, setTravelDraft] = useState<{
+      bookingId: number;
+      travelBufferMinutes: string;
+      trafficNote: string;
+    } | null>(null),
     [dispatchMode, setDispatchMode] = useState<'automatic' | 'manual'>(
       'automatic',
     ),
@@ -616,6 +681,32 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
     scheduleError = schedule.preferredDate
       ? bookingDateError(schedule.preferredDate)
       : 'Choose a service date.';
+  const travel =
+      travelDraft?.bookingId === bookingId
+        ? travelDraft
+        : {
+            bookingId,
+            travelBufferMinutes: String(booking?.travelBufferMinutes ?? 30),
+            trafficNote: booking?.trafficNote ?? '',
+          },
+    canEditTravel = Boolean(
+      booking &&
+      ['Submitted', 'Confirmed', 'Awaiting return arrangement'].includes(
+        booking.status,
+      ),
+    ),
+    travelMinutes = Number(travel.travelBufferMinutes),
+    travelError =
+      !Number.isInteger(travelMinutes) ||
+      travelMinutes < 0 ||
+      travelMinutes > 180
+        ? 'Enter a whole number from 0 to 180 minutes.'
+        : '',
+    travelDirty = Boolean(
+      booking &&
+      (travelMinutes !== Number(booking.travelBufferMinutes ?? 30) ||
+        travel.trafficNote !== (booking.trafficNote ?? '')),
+    );
   const dispatchAction =
     booking?.status === 'Confirmed'
       ? 'dispatch'
@@ -633,16 +724,23 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
   useEffect(() => {
     setDirty(
       scheduleDirty ||
+        travelDirty ||
         (reasonDraft !== null && reasonDraft !== booking?.rejectionReason),
     );
     return () => setDirty(false);
-  }, [scheduleDirty, reasonDraft, booking?.rejectionReason, setDirty]);
+  }, [
+    scheduleDirty,
+    travelDirty,
+    reasonDraft,
+    booking?.rejectionReason,
+    setDirty,
+  ]);
   async function action(
     type: 'approve' | 'reject' | 'dispatch' | 'redispatch',
   ) {
-    if (scheduleDirty) {
+    if (scheduleDirty || travelDirty) {
       setError(
-        'Save or discard the appointment changes before reviewing or dispatching this booking.',
+        'Save or discard the appointment and travel-plan changes before reviewing or dispatching this booking.',
       );
       return;
     }
@@ -756,6 +854,32 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       setScheduleDraft(null);
       setDirty(false);
       notify('Appointment updated. No customer email was sent.');
+      refresh();
+    } catch (cause) {
+      setError(errorText(cause));
+      if (cause instanceof ApiError && cause.status < 500)
+        pending.current = null;
+    } finally {
+      setBusy('');
+    }
+  }
+  async function saveTravelPlan() {
+    if (!canEditTravel || !travelDirty || travelError) return;
+    const requestType = `travel-plan:${travelMinutes}:${travel.trafficNote}`;
+    setBusy('travel-plan');
+    setError('');
+    if (pending.current?.type !== requestType)
+      pending.current = { type: requestType, requestId: crypto.randomUUID() };
+    try {
+      await api(`/admin/bookings/${bookingId}/travel-plan`, 'PATCH', {
+        requestId: pending.current.requestId,
+        travelBufferMinutes: travelMinutes,
+        trafficNote: travel.trafficNote.trim(),
+      });
+      pending.current = null;
+      setTravelDraft(null);
+      setDirty(false);
+      notify('Travel plan updated and recorded in the booking timeline.');
       refresh();
     } catch (cause) {
       setError(errorText(cause));
@@ -969,11 +1093,108 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </div>
                 )}
               </div>
+              <div className="admin-schedule-editor mt-5">
+                <div>
+                  <h3 className="font-semibold">Travel and traffic plan</h3>
+                  <p className="mt-1 text-sm muted">
+                    Every booking starts with a 30-minute travel allowance.
+                    Adjust it for expected traffic, parking or building access
+                    before dispatch. This time blocks adjacent technician work.
+                  </p>
+                </div>
+                <div className="admin-schedule-fields">
+                  <label
+                    htmlFor={`travel-buffer-${bookingId}`}
+                    className="block text-sm font-semibold"
+                  >
+                    Travel buffer (minutes)
+                    <Input
+                      id={`travel-buffer-${bookingId}`}
+                      className="mt-2 h-12"
+                      type="number"
+                      min={0}
+                      max={180}
+                      step={5}
+                      value={travel.travelBufferMinutes}
+                      disabled={!canEditTravel || Boolean(busy)}
+                      aria-invalid={Boolean(travelDirty && travelError)}
+                      onChange={(event) => {
+                        setTravelDraft({
+                          ...travel,
+                          travelBufferMinutes: event.target.value,
+                        });
+                        setError('');
+                      }}
+                    />
+                  </label>
+                  <label
+                    htmlFor={`traffic-note-${bookingId}`}
+                    className="block text-sm font-semibold"
+                  >
+                    Traffic and access note
+                    <Textarea
+                      id={`traffic-note-${bookingId}`}
+                      className="mt-2 min-h-20"
+                      maxLength={500}
+                      value={travel.trafficNote}
+                      disabled={!canEditTravel || Boolean(busy)}
+                      onChange={(event) => {
+                        setTravelDraft({
+                          ...travel,
+                          trafficNote: event.target.value,
+                        });
+                        setError('');
+                      }}
+                      placeholder="e.g. Peak-hour traffic; allow time for visitor parking."
+                    />
+                  </label>
+                </div>
+                {canEditTravel ? (
+                  <div className="actions">
+                    <Button
+                      variant="outline"
+                      disabled={
+                        Boolean(busy) || !travelDirty || Boolean(travelError)
+                      }
+                      onClick={saveTravelPlan}
+                    >
+                      {busy === 'travel-plan'
+                        ? 'Saving travel plan…'
+                        : 'Save travel plan'}
+                    </Button>
+                    {travelDirty && (
+                      <Button
+                        variant="ghost"
+                        disabled={Boolean(busy)}
+                        onClick={() => {
+                          setTravelDraft(null);
+                          setError('');
+                        }}
+                      >
+                        Discard changes
+                      </Button>
+                    )}
+                    {travelDirty && travelError && (
+                      <p
+                        className="basis-full text-sm text-red-700"
+                        role="alert"
+                      >
+                        {travelError}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm muted">
+                    The recorded travel plan is locked after dispatch or
+                    closure.
+                  </p>
+                )}
+              </div>
               {booking.status === 'Submitted' && (
                 <div className="mt-6 space-y-3">
                   <div className="actions">
                     <Button
-                      disabled={Boolean(busy) || scheduleDirty}
+                      disabled={Boolean(busy) || scheduleDirty || travelDirty}
                       onClick={() => action('approve')}
                     >
                       <CheckCircle2 />
@@ -997,7 +1218,10 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   <Button
                     variant="destructive"
                     disabled={
-                      Boolean(busy) || scheduleDirty || reason.trim().length < 3
+                      Boolean(busy) ||
+                      scheduleDirty ||
+                      travelDirty ||
+                      reason.trim().length < 3
                     }
                     onClick={() => action('reject')}
                   >
@@ -1008,9 +1232,13 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
               )}
               {booking.status === 'Rejected' && (
                 <div className="mt-6 space-y-3">
-                  <label className="block text-sm font-semibold">
+                  <label
+                    htmlFor={`rejection-reason-${bookingId}`}
+                    className="block text-sm font-semibold"
+                  >
                     Rejection reason
                     <Textarea
+                      id={`rejection-reason-${bookingId}`}
                       className="mt-2 min-h-24"
                       value={reasonDraft ?? booking.rejectionReason ?? ''}
                       maxLength={500}
@@ -1051,9 +1279,16 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </h3>
                   <p className="mt-1 text-sm muted">
                     Choose postal-area assignment or manually select an eligible
-                    technician. The customer email is queued only after the
-                    assignment succeeds.
+                    technician. The {booking.travelBufferMinutes ?? 30}-minute
+                    travel allowance blocks adjacent work. The customer email is
+                    queued only after the assignment succeeds.
                   </p>
+                  {booking.trafficNote && (
+                    <p className="mt-3 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">
+                      <strong>Traffic/access note:</strong>{' '}
+                      {booking.trafficNote}
+                    </p>
+                  )}
                   <fieldset className="dispatch-mode-switch mt-4">
                     <legend className="sr-only">Dispatch method</legend>
                     <Button
@@ -1090,13 +1325,14 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   {dispatchMode === 'automatic' ? (
                     <div className="mt-3 rounded-lg border bg-white p-3 text-sm">
                       <p className="font-medium">
-                        Available technicians are ranked by postal area, then
-                        workload.
+                        Available technicians are ranked by postal area, known
+                        travel labour cost, then workload.
                       </p>
                       <p className="muted">
-                        Uses the previous visit that day, or the technician's
-                        base postal code. Postal-sector matching is an area
-                        estimate, not travel distance or live GPS.
+                        Uses the previous visit that day, or the
+                        technician&apos;s base postal code. Postal-sector
+                        matching is an area estimate, not travel distance or
+                        live GPS.
                       </p>
                       <LoadState {...dispatchOptions} />
                       {dispatchOptions.data?.technicians
@@ -1112,6 +1348,13 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                               {tech.proximity?.originPostalCode
                                 ? ' · ' + tech.proximity.originPostalCode
                                 : ''}
+                            </small>
+                            <small className="block muted">
+                              {tech.travelPlan?.bufferMinutes ?? 30} min planned
+                              travel ·{' '}
+                              {tech.travelPlan?.estimatedLaborCost == null
+                                ? 'Labour rate not recorded'
+                                : `${money(tech.travelPlan.estimatedLaborCost)} travel labour`}
                             </small>
                           </p>
                         ))}
@@ -1169,6 +1412,15 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                                           technician.proximity.originPostalCode
                                         : ''}
                                     </small>
+                                    <small>
+                                      {technician.travelPlan?.bufferMinutes ??
+                                        30}{' '}
+                                      min planned travel ·{' '}
+                                      {technician.travelPlan
+                                        ?.estimatedLaborCost == null
+                                        ? 'Labour rate not recorded'
+                                        : `${money(technician.travelPlan.estimatedLaborCost)} travel labour`}
+                                    </small>
                                     {!technician.eligible && (
                                       <small className="manual-dispatch-reason">
                                         {technician.reason}
@@ -1191,6 +1443,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                     disabled={
                       Boolean(busy) ||
                       scheduleDirty ||
+                      travelDirty ||
                       (dispatchMode === 'manual' &&
                         (!selectedTechnician?.eligible ||
                           dispatchOptions.loading))
@@ -1368,6 +1621,9 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
     [busy, setBusy] = useState(false),
     [rowBusy, setRowBusy] = useState(''),
     [postalDrafts, setPostalDrafts] = useState<Record<number, string>>({}),
+    [laborCostDrafts, setLaborCostDrafts] = useState<Record<number, string>>(
+      {},
+    ),
     [error, setError] = useState('');
   async function invite(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1394,6 +1650,7 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
       availability?: string;
       accountStatus?: string;
       basePostalCode?: string;
+      hourlyLaborCost?: number | null;
     },
   ) {
     const key = `update-${member.userId}`;
@@ -1408,6 +1665,11 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
         patch,
       );
       setPostalDrafts((current) => {
+        const next = { ...current };
+        delete next[member.userId];
+        return next;
+      });
+      setLaborCostDrafts((current) => {
         const next = { ...current };
         delete next[member.userId];
         return next;
@@ -1575,9 +1837,13 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
                           )}
                           {role === 'Technician' && (
                             <div className="mt-2 flex flex-wrap items-center gap-2">
-                              <label className="text-xs muted">
+                              <label
+                                htmlFor={`base-postal-${member.userId}`}
+                                className="text-xs muted"
+                              >
                                 Base postal code
                                 <Input
+                                  id={`base-postal-${member.userId}`}
                                   className="mt-1 w-32"
                                   inputMode="numeric"
                                   maxLength={6}
@@ -1616,6 +1882,64 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
                                 }
                               >
                                 Save location
+                              </Button>
+                              <label
+                                htmlFor={`labor-cost-${member.userId}`}
+                                className="text-xs muted"
+                              >
+                                Travel labour rate (SGD/hour)
+                                <Input
+                                  id={`labor-cost-${member.userId}`}
+                                  className="mt-1 w-36"
+                                  type="number"
+                                  min={0}
+                                  max={1000}
+                                  step="0.50"
+                                  placeholder="Not recorded"
+                                  value={
+                                    laborCostDrafts[member.userId] ??
+                                    member.hourlyLaborCost ??
+                                    ''
+                                  }
+                                  disabled={
+                                    disabled || member.status === 'Inactive'
+                                  }
+                                  onChange={(event) =>
+                                    setLaborCostDrafts({
+                                      ...laborCostDrafts,
+                                      [member.userId]: event.target.value,
+                                    })
+                                  }
+                                />
+                              </label>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={
+                                  disabled ||
+                                  laborCostDrafts[member.userId] ===
+                                    undefined ||
+                                  (laborCostDrafts[member.userId] !== '' &&
+                                    (!Number.isFinite(
+                                      Number(laborCostDrafts[member.userId]),
+                                    ) ||
+                                      Number(laborCostDrafts[member.userId]) <
+                                        0 ||
+                                      Number(laborCostDrafts[member.userId]) >
+                                        1000))
+                                }
+                                onClick={() =>
+                                  void updateMember(member, {
+                                    hourlyLaborCost:
+                                      laborCostDrafts[member.userId] === ''
+                                        ? null
+                                        : Number(
+                                            laborCostDrafts[member.userId],
+                                          ),
+                                  })
+                                }
+                              >
+                                Save labour rate
                               </Button>
                             </div>
                           )}
