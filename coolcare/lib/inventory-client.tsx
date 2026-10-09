@@ -49,6 +49,8 @@ export type AdminBooking = {
   slotStart?: string | null;
   slotEnd?: string | null;
   estimatedDurationMinutes?: number | null;
+  travelBufferMinutes?: number;
+  trafficNote?: string | null;
   totalAmount: number | null;
   createdAt: string;
   customerName: string;
@@ -139,6 +141,12 @@ export type DispatchTechnicianOption = {
     origin: string;
     previousBookingId: number | null;
   };
+  travelPlan?: {
+    bufferMinutes: number;
+    trafficNote: string | null;
+    hourlyLaborCost: number | null;
+    estimatedLaborCost: number | null;
+  };
   current: boolean;
   eligible: boolean;
   reason: string | null;
@@ -151,6 +159,8 @@ export type DispatchOptions = {
   slotStart?: string | null;
   slotEnd?: string | null;
   estimatedDurationMinutes?: number | null;
+  travelBufferMinutes: number;
+  trafficNote: string | null;
   technicians: DispatchTechnicianOption[];
 };
 export type StaffMember = {
@@ -170,6 +180,15 @@ export type StaffMember = {
   invitationRevokedAt?: string | null;
   futureWorkOrders?: number;
   basePostalCode?: string | null;
+  hourlyLaborCost?: number | null;
+};
+export type AdminActionSummary = {
+  submitted: number;
+  expiringSoon: number;
+  returnVisits: number;
+  awaitingDispatch: number;
+  ordersRequiringAction: number;
+  totalRequiringAction: number;
 };
 export type Options = {
   parts: Part[];
@@ -184,6 +203,8 @@ export const AppContext = createContext<{
   version: number;
   threshold: number;
   refresh: () => void;
+  actionSummary: AdminActionSummary;
+  reloadActionSummary: () => void;
 } | null>(null);
 export function useInventory() {
   const context = useContext(AppContext);

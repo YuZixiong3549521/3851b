@@ -1,4 +1,4 @@
-import {registerReturnRoutes} from './return-visits.mjs';
+import { registerReturnRoutes } from './return-visits.mjs';
 import { getServiceProgress } from './service-progress.mjs';
 import { assertBookingNotExpired } from './order-expiry.mjs';
 import {
@@ -30,6 +30,7 @@ import {
   bookingServiceSlot,
   peakConcurrentReservations,
 } from './scheduling.mjs';
+import { travelStartTime } from './travel-planning.mjs';
 
 const requestSchema = z.object({ requestId: z.uuid() }).strict();
 const dispatchSchema = z.union([
@@ -47,6 +48,12 @@ const rescheduleSchema = requestSchema
       .string()
       .refine(isCalendarDate, 'Choose a valid service date.'),
     timeSlot: z.string().trim().min(1).max(50),
+  })
+  .strict();
+const travelPlanSchema = requestSchema
+  .extend({
+    travelBufferMinutes: z.number().int().min(0).max(180),
+    trafficNote: z.string().trim().max(500).default(''),
   })
   .strict();
 const scheduleQuerySchema = z
@@ -314,12 +321,107 @@ export async function editRejectionReason(pool, actor, bookingId, raw) {
   }
 }
 
+export async function editTravelPlan(pool, actor, bookingId, raw) {
+  const data = travelPlanSchema.parse(raw),
+    connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const operation = await beginOperation(connection, {
+      requestId: data.requestId,
+      bookingId,
+      actorUserId: actor.userId,
+      type: 'Edit travel plan',
+      payload: data,
+    });
+    if (operation.replayed) {
+      await connection.commit();
+      return { ...operation.result, replayed: true };
+    }
+    const booking = await lockedBooking(connection, bookingId);
+    await assertBookingNotExpired(connection, booking);
+    if (
+      !['Submitted', 'Confirmed', 'Awaiting return arrangement'].includes(
+        booking.booking_status,
+      )
+    )
+      throw new AppError(
+        'Travel planning is locked after dispatch or closure.',
+        409,
+      );
+    await connection.execute(
+      'UPDATE booking SET travel_buffer_minutes=?,traffic_note=? WHERE booking_id=?',
+      [data.travelBufferMinutes, data.trafficNote || null, bookingId],
+    );
+    const note = `Travel plan updated: ${data.travelBufferMinutes} minute buffer${data.trafficNote ? `; ${data.trafficNote}` : ''}.`;
+    await connection.execute(
+      `INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)
+      VALUES (?,?,?,?,?)`,
+      [
+        bookingId,
+        booking.booking_status,
+        booking.booking_status,
+        actor.userId,
+        note,
+      ],
+    );
+    const result = {
+      bookingId,
+      travelBufferMinutes: data.travelBufferMinutes,
+      trafficNote: data.trafficNote || null,
+    };
+    await finishOperation(connection, {
+      requestId: data.requestId,
+      bookingId,
+      actorUserId: actor.userId,
+      type: 'Edit travel plan',
+      hash: operation.hash,
+      result,
+    });
+    await connection.commit();
+    return result;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function getAdminActionSummary(pool) {
+  const [[bookings]] = await pool.execute(
+    `SELECT
+      SUM(booking_status='Submitted' AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())) AS submitted,
+      SUM(booking_status='Submitted' AND expires_at>UTC_TIMESTAMP() AND expires_at<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 12 HOUR)) AS expiringSoon,
+      SUM(booking_status='Confirmed') AS awaitingDispatch
+    FROM booking`,
+  );
+  const [[returns]] = await pool.execute(
+    `SELECT COUNT(*) AS awaitingAdmin FROM service_progress
+    WHERE follow_up_status IN ('Required','Awaiting confirmation')`,
+  );
+  const submitted = Number(bookings.submitted || 0),
+    returnVisits = Number(returns.awaitingAdmin || 0),
+    awaitingDispatch = Number(bookings.awaitingDispatch || 0);
+  return {
+    submitted,
+    expiringSoon: Number(bookings.expiringSoon || 0),
+    returnVisits,
+    awaitingDispatch,
+    ordersRequiringAction: submitted + returnVisits,
+    totalRequiringAction: submitted + returnVisits + awaitingDispatch,
+  };
+}
+
 async function chooseTechnician(
   connection,
   booking,
   { excludeTechnicianId = 0 } = {},
 ) {
-  const date = String(booking.preferred_service_date).slice(0, 10);
+  const date = String(booking.preferred_service_date).slice(0, 10),
+    travelStart = travelStartTime(
+      booking.slot_start,
+      booking.travel_buffer_minutes,
+    );
   await lockTechnicianRoster(connection);
   const [eligible] = await connection.execute(
     `SELECT t.technician_id FROM technician t JOIN user_account u ON u.user_id=t.user_id
@@ -339,7 +441,7 @@ async function chooseTechnician(
   );
   const [rows] = await connection.execute(
     `SELECT t.technician_id AS technicianId,t.user_id AS userId,u.full_name AS fullName,
-    t.last_assigned_at AS lastAssignedAt,t.base_postal_code AS basePostalCode,
+    t.last_assigned_at AS lastAssignedAt,t.base_postal_code AS basePostalCode,t.hourly_labor_cost AS hourlyLaborCost,
     (SELECT COUNT(*) FROM assignment daily_assignment JOIN work_order daily_work ON daily_work.assignment_id=daily_assignment.assignment_id
       WHERE daily_assignment.technician_id=t.technician_id AND DATE(daily_work.appointment_date)=?
       AND daily_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
@@ -355,14 +457,17 @@ async function chooseTechnician(
       AND occupied_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
       AND occupied_work.current_status NOT IN ('Completed','Cancelled')
       AND occupied_booking.preferred_service_date=?
-      AND occupied_booking.slot_start<? AND occupied_booking.slot_end>?
+      AND SUBTIME(occupied_booking.slot_start,SEC_TO_TIME(COALESCE(occupied_booking.travel_buffer_minutes,30)*60))<?
+      AND occupied_booking.slot_end>?
     )
 
     AND NOT EXISTS (SELECT 1 FROM service_progress fp JOIN work_order fw ON fw.job_id=fp.job_id
       JOIN assignment fa ON fa.assignment_id=fw.assignment_id
+      JOIN booking fb ON fb.booking_id=fw.booking_id
       WHERE fa.technician_id=t.technician_id AND fa.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
       AND fp.follow_up_status IN ('Scheduled','In Progress') AND fp.follow_up_date=?
-      AND fp.follow_up_start<? AND fp.follow_up_end>?)
+      AND SUBTIME(fp.follow_up_start,SEC_TO_TIME(COALESCE(fb.travel_buffer_minutes,30)*60))<?
+      AND fp.follow_up_end>?)
     ORDER BY dailyJobs ASC,(t.last_assigned_at IS NULL) DESC,t.last_assigned_at ASC,t.technician_id ASC
     `,
     [
@@ -370,10 +475,10 @@ async function chooseTechnician(
       excludeTechnicianId,
       date,
       booking.slot_end,
-      booking.slot_start,
+      travelStart,
       date,
       booking.slot_end,
-      booking.slot_start,
+      travelStart,
     ],
   );
   if (!rows.length)
@@ -400,7 +505,8 @@ async function chooseManualTechnician(
     throw new AppError('The selected technician was not found.', 409);
   const [[technician]] = await connection.execute(
     `SELECT t.technician_id AS technicianId,t.user_id AS userId,u.full_name AS fullName,
-    u.status AS accountStatus,t.availability_status AS availability,t.last_assigned_at AS lastAssignedAt
+    u.status AS accountStatus,t.availability_status AS availability,t.last_assigned_at AS lastAssignedAt,
+    t.hourly_labor_cost AS hourlyLaborCost
     FROM technician t JOIN user_account u ON u.user_id=t.user_id
     JOIN role r ON r.role_id=u.role_id
     WHERE t.technician_id=? AND r.role_name='Technician'`,
@@ -423,7 +529,11 @@ async function chooseManualTechnician(
       `The selected technician is ${technician.availability.toLowerCase()}.`,
       409,
     );
-  const date = String(booking.preferred_service_date).slice(0, 10);
+  const date = String(booking.preferred_service_date).slice(0, 10),
+    travelStart = travelStartTime(
+      booking.slot_start,
+      booking.travel_buffer_minutes,
+    );
   const [[conflict]] = await connection.execute(
     `SELECT COUNT(*) AS count FROM assignment occupied_assignment
     JOIN work_order occupied_work ON occupied_work.assignment_id=occupied_assignment.assignment_id
@@ -432,8 +542,9 @@ async function chooseManualTechnician(
     AND occupied_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
     AND occupied_work.current_status NOT IN ('Completed','Cancelled')
     AND occupied_booking.preferred_service_date=?
-    AND occupied_booking.slot_start<? AND occupied_booking.slot_end>?`,
-    [technicianId, date, booking.slot_end, booking.slot_start],
+    AND SUBTIME(occupied_booking.slot_start,SEC_TO_TIME(COALESCE(occupied_booking.travel_buffer_minutes,30)*60))<?
+    AND occupied_booking.slot_end>?`,
+    [technicianId, date, booking.slot_end, travelStart],
   );
   if (Number(conflict.count) > 0)
     throw new AppError(
@@ -443,10 +554,12 @@ async function chooseManualTechnician(
   const [[followUp]] = await connection.execute(
     `SELECT COUNT(*) AS count FROM service_progress fp
     JOIN work_order fw ON fw.job_id=fp.job_id JOIN assignment fa ON fa.assignment_id=fw.assignment_id
+    JOIN booking fb ON fb.booking_id=fw.booking_id
     WHERE fa.technician_id=? AND fa.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
     AND fp.follow_up_status IN ('Scheduled','In Progress') AND fp.follow_up_date=?
-    AND fp.follow_up_start<? AND fp.follow_up_end>?`,
-    [technicianId, date, booking.slot_end, booking.slot_start],
+    AND SUBTIME(fp.follow_up_start,SEC_TO_TIME(COALESCE(fb.travel_buffer_minutes,30)*60))<?
+    AND fp.follow_up_end>?`,
+    [technicianId, date, booking.slot_end, travelStart],
   );
   if (Number(followUp.count) > 0)
     throw new AppError(
@@ -464,14 +577,14 @@ function dispatchOptionReason(option, currentTechnicianId) {
   if (option.availability === 'Unavailable') return 'Marked unavailable.';
   if (option.availability === 'On Leave') return 'Currently on leave.';
   if (Number(option.hasConflict) > 0 || Number(option.followUpConflict) > 0)
-    return 'Overlapping work order at this time.';
+    return 'Overlapping service or planned travel time.';
   return null;
 }
 
 export async function listDispatchOptions(pool, bookingId) {
   const [[booking]] = await pool.execute(
     `SELECT b.booking_id,b.booking_status,b.preferred_service_date,b.preferred_time_slot,
-    b.slot_start,b.slot_end,b.estimated_duration_minutes,b.address_id FROM booking b WHERE b.booking_id=?`,
+    b.slot_start,b.slot_end,b.estimated_duration_minutes,b.travel_buffer_minutes,b.traffic_note,b.address_id FROM booking b WHERE b.booking_id=?`,
     [bookingId],
   );
   if (!booking) throw new AppError('Booking not found.', 404);
@@ -501,10 +614,14 @@ export async function listDispatchOptions(pool, bookingId) {
       );
     currentTechnicianId = current.technicianId;
   }
-  const date = String(booking.preferred_service_date).slice(0, 10);
+  const date = String(booking.preferred_service_date).slice(0, 10),
+    travelStart = travelStartTime(
+      booking.slot_start,
+      booking.travel_buffer_minutes,
+    );
   const [rows] = await pool.execute(
     `SELECT t.technician_id AS technicianId,t.user_id AS userId,u.full_name AS fullName,u.email,
-    u.status AS accountStatus,t.availability_status AS availability,t.last_assigned_at AS lastAssignedAt,t.base_postal_code AS basePostalCode,
+    u.status AS accountStatus,t.availability_status AS availability,t.last_assigned_at AS lastAssignedAt,t.base_postal_code AS basePostalCode,t.hourly_labor_cost AS hourlyLaborCost,
     (SELECT COUNT(*) FROM assignment daily_assignment
       JOIN work_order daily_work ON daily_work.assignment_id=daily_assignment.assignment_id
       WHERE daily_assignment.technician_id=t.technician_id AND DATE(daily_work.appointment_date)=?
@@ -517,10 +634,13 @@ export async function listDispatchOptions(pool, bookingId) {
       AND occupied_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
       AND occupied_work.current_status NOT IN ('Completed','Cancelled')
       AND occupied_booking.preferred_service_date=?
-      AND occupied_booking.slot_start<? AND occupied_booking.slot_end>?) AS hasConflict,
+      AND SUBTIME(occupied_booking.slot_start,SEC_TO_TIME(COALESCE(occupied_booking.travel_buffer_minutes,30)*60))<?
+      AND occupied_booking.slot_end>?) AS hasConflict,
     (SELECT COUNT(*) FROM service_progress fp JOIN work_order fw ON fw.job_id=fp.job_id JOIN assignment fa ON fa.assignment_id=fw.assignment_id
+      JOIN booking fb ON fb.booking_id=fw.booking_id
       WHERE fa.technician_id=t.technician_id AND fa.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
-      AND fp.follow_up_status IN ('Scheduled','In Progress') AND fp.follow_up_date=? AND fp.follow_up_start<? AND fp.follow_up_end>?) AS followUpConflict
+      AND fp.follow_up_status IN ('Scheduled','In Progress') AND fp.follow_up_date=?
+      AND SUBTIME(fp.follow_up_start,SEC_TO_TIME(COALESCE(fb.travel_buffer_minutes,30)*60))<? AND fp.follow_up_end>?) AS followUpConflict
     FROM technician t JOIN user_account u ON u.user_id=t.user_id
     JOIN role r ON r.role_id=u.role_id WHERE r.role_name='Technician'
     ORDER BY u.status='Active' DESC,u.full_name,t.technician_id`,
@@ -528,10 +648,10 @@ export async function listDispatchOptions(pool, bookingId) {
       date,
       date,
       booking.slot_end,
-      booking.slot_start,
+      travelStart,
       date,
       booking.slot_end,
-      booking.slot_start,
+      travelStart,
     ],
   );
   await addDispatchProximity(pool, booking, rows);
@@ -549,6 +669,8 @@ export async function listDispatchOptions(pool, bookingId) {
     slotStart: booking.slot_start,
     slotEnd: booking.slot_end,
     estimatedDurationMinutes: booking.estimated_duration_minutes,
+    travelBufferMinutes: Number(booking.travel_buffer_minutes ?? 30),
+    trafficNote: booking.traffic_note || null,
     technicians: rows.map((row) => {
       const reason = dispatchOptionReason(row, currentTechnicianId);
       return {
@@ -559,6 +681,7 @@ export async function listDispatchOptions(pool, bookingId) {
         availability: row.availability,
         dailyJobs: Number(row.dailyJobs),
         proximity: row.proximity,
+        travelPlan: row.travelPlan,
         current: row.technicianId === currentTechnicianId,
         eligible: reason === null,
         reason,
@@ -924,7 +1047,7 @@ export async function listAdminBookings(pool, query) {
   );
   const [rows] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS preferredDate,
-    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,u.full_name AS customerName,u.email,
+    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,u.full_name AS customerName,u.email,
     sa.address_line AS addressLine,COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
     (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
     (SELECT technician_user.full_name FROM assignment latest_assignment JOIN technician latest_technician ON latest_technician.technician_id=latest_assignment.technician_id
@@ -945,7 +1068,7 @@ export async function listAdminSchedule(pool, query) {
   const data = scheduleQuerySchema.parse(query);
   const [rows] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,
-    b.preferred_service_date AS preferredDate,b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,
+    b.preferred_service_date AS preferredDate,b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,
     b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,u.full_name AS customerName,u.email,
     sa.address_line AS addressLine,
     COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
@@ -973,7 +1096,7 @@ export async function listAdminSchedule(pool, query) {
 export async function getAdminBooking(pool, bookingId) {
   const [[booking]] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS preferredDate,
-    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.problem_description AS problemDescription,b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,b.rejection_reason AS rejectionReason,b.rejection_version AS rejectionVersion,
+    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.problem_description AS problemDescription,b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,b.rejection_reason AS rejectionReason,b.rejection_version AS rejectionVersion,
     (SELECT details.special_notes FROM web_booking_details details WHERE details.booking_id=b.booking_id) AS otherRemarks,
     u.full_name AS customerName,u.email,u.phone,sa.address_line AS addressLine,sa.postal_code AS postalCode,
     COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
@@ -1028,7 +1151,7 @@ export async function listStaff(pool, roleName) {
   const extra =
     roleName === 'Admin'
       ? 'p.access_level AS accessLevel'
-      : `p.technician_id AS technicianId,p.availability_status AS availability,p.last_assigned_at AS lastAssignedAt,p.base_postal_code AS basePostalCode,
+      : `p.technician_id AS technicianId,p.availability_status AS availability,p.last_assigned_at AS lastAssignedAt,p.base_postal_code AS basePostalCode,p.hourly_labor_cost AS hourlyLaborCost,
     (SELECT COUNT(*) FROM assignment future_assignment JOIN work_order future_work ON future_work.assignment_id=future_assignment.assignment_id
       WHERE future_assignment.technician_id=p.technician_id AND future_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
       AND future_work.current_status NOT IN ('Completed','Cancelled') AND future_work.appointment_date>=CURRENT_DATE) AS futureWorkOrders`;
@@ -1103,14 +1226,16 @@ export async function updateTechnician(pool, technicianId, raw) {
           z.literal(''),
         ])
         .optional(),
+      hourlyLaborCost: z.number().min(0).max(1000).nullable().optional(),
     })
     .strict()
     .refine(
       (value) =>
         value.accountStatus ||
         value.availability ||
-        value.basePostalCode !== undefined,
-      'Choose an account status, availability or base postal code.',
+        value.basePostalCode !== undefined ||
+        value.hourlyLaborCost !== undefined,
+      'Choose an account status, availability, base postal code or labour rate.',
     )
     .parse(raw);
   const connection = await pool.getConnection();
@@ -1153,6 +1278,11 @@ export async function updateTechnician(pool, technicianId, raw) {
         'UPDATE technician SET base_postal_code=? WHERE technician_id=?',
         [data.basePostalCode || null, technicianId],
       );
+    if (data.hourlyLaborCost !== undefined)
+      await connection.execute(
+        'UPDATE technician SET hourly_labor_cost=? WHERE technician_id=?',
+        [data.hourlyLaborCost, technicianId],
+      );
     await connection.commit();
     return {
       technicianId,
@@ -1160,6 +1290,10 @@ export async function updateTechnician(pool, technicianId, raw) {
         data.basePostalCode !== undefined
           ? data.basePostalCode || null
           : technician.base_postal_code,
+      hourlyLaborCost:
+        data.hourlyLaborCost !== undefined
+          ? data.hourlyLaborCost
+          : technician.hourly_labor_cost,
       accountStatus: nextStatus,
       availability: nextAvailability,
     };
@@ -1291,7 +1425,10 @@ export async function transferOwner(pool, actor, targetUserId) {
 
 export function createAdminOperationsRouter(pool, { origin } = {}) {
   const router = express.Router();
-  registerReturnRoutes(router,pool,'admin');
+  registerReturnRoutes(router, pool, 'admin');
+  router.get('/action-summary', async (_req, res) =>
+    res.json(await getAdminActionSummary(pool)),
+  );
   router.get('/bookings', async (req, res) =>
     res.json(await listAdminBookings(pool, req.query)),
   );
@@ -1336,6 +1473,16 @@ export function createAdminOperationsRouter(pool, { origin } = {}) {
   router.patch('/bookings/:id/reschedule', async (req, res) =>
     res.json(
       await rescheduleAdminBooking(
+        pool,
+        req.adminUser,
+        idSchema.parse(req.params.id),
+        req.body,
+      ),
+    ),
+  );
+  router.patch('/bookings/:id/travel-plan', async (req, res) =>
+    res.json(
+      await editTravelPlan(
         pool,
         req.adminUser,
         idSchema.parse(req.params.id),

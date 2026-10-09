@@ -26,7 +26,7 @@ export default function MyBookingsPage() {
     {!bookings && !error && <PageLoading />}
     {error && <div className="mb-4"><PageError message={error} /></div>}
     <div className="mb-4 flex justify-end"><Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={refreshing}><RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? 'Refreshing' : 'Refresh'}</Button></div>
-    <ReturnVisitsPanel role="customer"/>
+    <ReturnVisitsPanel viewerRole="customer"/>
     {bookings && <Tabs defaultValue="active"><TabsList className="mb-6 h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:w-fit"><TabsTrigger value="active" className="px-4">Active ({active.length})</TabsTrigger><TabsTrigger value="upcoming" className="px-4">Upcoming ({upcoming.length})</TabsTrigger></TabsList><TabsContent value="active"><BookingList bookings={active} /></TabsContent><TabsContent value="upcoming"><BookingList bookings={upcoming} /></TabsContent></Tabs>}
   </div></CoolCareShell>;
 }

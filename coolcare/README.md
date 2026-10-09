@@ -16,6 +16,14 @@
 客户、Admin、Technician 和库存 API 共用 `server/app.mjs` 及同一 MySQL 连接池。公开注册只创建 Customer；员工通过邀请链接激活。首次没有 Owner 时可在 `coolcare/` 运行 `npm run staff:bootstrap-owner -- --email <email>`，脚本会提示输入其他资料和密码。
 数据库环境文件由 setup 自动生成，已加入 Git 忽略。
 
+## Admin planning and action centre (2026-10-09)
+
+Run `npm run db:up` once to apply migration `24-admin-planning-and-action-centre.sql`; existing records are preserved. Every booking receives a 30-minute travel allowance by default. Before dispatch, Admin can change it to 0–180 minutes and save an optional traffic/access note. Planned travel time participates in original-visit, return-visit and service-extension conflict checks, so adjacent work cannot consume that allowance.
+
+Orders now starts with a live action centre for Submitted requests, deadlines within 12 hours, return visits requiring Admin and Confirmed bookings awaiting dispatch. The sidebar badges refresh every 30 seconds, on focus and after relevant actions; counts clear only when the underlying work is completed. Expired bookings remain immutable and cannot be restored.
+
+Technician management can record an optional hourly labour rate. Automatic dispatch retains the existing postal-area logic and then compares known planned travel labour cost before workload/rotation; the interface clearly labels postal matching as an estimate rather than live traffic or GPS distance. Return-visit invitations require an Admin message, save it in the append-only service event history and show it to the customer in My Bookings. They do not send external email. Successful dispatch remains the only customer assignment email, and technicians still receive no dispatch email.
+
 启动和构建不依赖仓库外或旧上传项目中的文件。数据库结构、迁移、种子数据、共享 UI 和技师源码均保存在本目录。
 
 `scripts/import-accare.mjs` 仅用于可选的旧 SQLite 资料迁移；必须显式提供本机源文件路径，不随 GitHub 分发旧数据库。查看用法：`node scripts/import-accare.mjs --help`。

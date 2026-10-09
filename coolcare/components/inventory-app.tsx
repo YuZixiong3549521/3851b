@@ -43,9 +43,15 @@ import {
   ROOT,
   api,
   setCsrf,
+  type AdminActionSummary,
   type User,
 } from '@/lib/inventory-client';
-import { DispatchCalendarPage,OrdersPage,OrderDetails,StaffPage } from '@/components/admin-operations-views';
+import {
+  DispatchCalendarPage,
+  OrdersPage,
+  OrderDetails,
+  StaffPage,
+} from '@/components/admin-operations-views';
 import {
   Overview,
   PartsPage,
@@ -58,9 +64,21 @@ import { useWebTools } from '@/lib/inventory-webmcp';
 
 export default function InventoryApp() {
   const session = usePortalSession('Admin');
-  if (!session.ready || !session.user) return <main className="mx-auto max-w-xl p-8">
-    {session.error ? <div role="alert" className="space-y-4"><p>{session.error}</p><Button variant="outline" onClick={session.retry}>Retry session check</Button></div> : <p role="status">Checking your session…</p>}
-  </main>;
+  if (!session.ready || !session.user)
+    return (
+      <main className="mx-auto max-w-xl p-8">
+        {session.error ? (
+          <div role="alert" className="space-y-4">
+            <p>{session.error}</p>
+            <Button variant="outline" onClick={session.retry}>
+              Retry session check
+            </Button>
+          </div>
+        ) : (
+          <p role="status">Checking your session…</p>
+        )}
+      </main>
+    );
   return <AdminPortal key={session.user.id} sessionUser={session.user} />;
 }
 
@@ -69,6 +87,14 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
     [user, setUser] = useState<User | null>(null),
     [ready, setReady] = useState(false),
     [sessionError, setSessionError] = useState('');
+  const [actionSummary, setActionSummary] = useState<AdminActionSummary>({
+    submitted: 0,
+    expiringSoon: 0,
+    returnVisits: 0,
+    awaitingDispatch: 0,
+    ordersRequiringAction: 0,
+    totalRequiringAction: 0,
+  });
   const [pending, setPending] = useState<string | null>(null),
     [message, setMessage] = useState(''),
     [version, setVersion] = useState(0),
@@ -78,10 +104,23 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
   const setDirty = useCallback((value: boolean) => {
     dirtyRef.current = value;
   }, []);
-  const refresh = useCallback(() => setVersion((v) => v + 1), []);
+  const loadActionSummary = useCallback(async () => {
+    try {
+      setActionSummary(await api<AdminActionSummary>('/admin/action-summary'));
+    } catch {
+      // Page-level requests still surface connection and authorization errors.
+    }
+  }, []);
+  const refresh = useCallback(() => {
+    setVersion((v) => v + 1);
+    void loadActionSummary();
+  }, [loadActionSummary]);
   const notify = useCallback((text: string) => setMessage(text), []);
   const navigate = useCallback((target: string) => {
-    if (!target.startsWith('/admin/')) { window.location.assign(target); return; }
+    if (!target.startsWith('/admin/')) {
+      window.location.assign(target);
+      return;
+    }
     routeRef.current = target;
     window.history.pushState({}, '', target);
     setUrl(target);
@@ -107,7 +146,10 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
         csrf: string;
         low_stock_threshold: number;
       }>('/session');
-      if (!session.user) { await redirectToSessionPortal('Admin'); throw new Error('Please sign in again.'); }
+      if (!session.user) {
+        await redirectToSessionPortal('Admin');
+        throw new Error('Please sign in again.');
+      }
       setUser(session.user);
       setCsrf(session.csrf);
       setThreshold(session.low_stock_threshold);
@@ -158,14 +200,44 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
       window.removeEventListener('coolcare:unauthorized', unauthorized);
     };
   }, [setDirty]);
+  useEffect(() => {
+    if (!user) return;
+    const update = () => void loadActionSummary();
+    update();
+    const timer = window.setInterval(update, 30000);
+    const visible = () => {
+      if (document.visibilityState === 'visible') update();
+    };
+    window.addEventListener('focus', update);
+    window.addEventListener('coolcare:admin-actions-updated', update);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', update);
+      window.removeEventListener('coolcare:admin-actions-updated', update);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [user, loadActionSummary]);
   useWebTools(user, go, refresh);
   const pathname = url.split('?')[0],
     params = new URLSearchParams(url.split('?')[1] || '');
   const operationsNav = [
-    { Icon: ClipboardCheck, label: 'Orders', path: '/admin/orders' },
-    { Icon: Send, label: 'Dispatch', path: '/admin/dispatch' },
-    { Icon: Users, label: 'Technicians', path: '/admin/technicians' },
-    ...(user?.access_level==='Owner'?[{ Icon: UserCog, label: 'Admins', path: '/admin/admins' }]:[]),
+    {
+      Icon: ClipboardCheck,
+      label: 'Orders',
+      path: '/admin/orders',
+      count: actionSummary.ordersRequiringAction,
+    },
+    {
+      Icon: Send,
+      label: 'Dispatch',
+      path: '/admin/dispatch',
+      count: actionSummary.awaitingDispatch,
+    },
+    { Icon: Users, label: 'Technicians', path: '/admin/technicians', count: 0 },
+    ...(user?.access_level === 'Owner'
+      ? [{ Icon: UserCog, label: 'Admins', path: '/admin/admins', count: 0 }]
+      : []),
   ];
   const inventoryNav = [
     { Icon: LayoutDashboard, label: 'Inventory', path: ROOT },
@@ -185,14 +257,17 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
         : pathname.startsWith('/admin/admins')
           ? 'Admins'
           : pathname.includes('/parts')
-    ? 'Parts'
-    : pathname.includes('/transactions')
-      ? 'Transactions'
-      : 'Inventory';
+            ? 'Parts'
+            : pathname.includes('/transactions')
+              ? 'Transactions'
+              : 'Inventory';
   const detailMatch = pathname.match(/\/parts\/(\d+)(\/edit)?$/);
-  const orderMatch=pathname.match(/^\/admin\/orders\/(\d+)$/);
+  const orderMatch = pathname.match(/^\/admin\/orders\/(\d+)$/);
   const accountNavigate = (target: string) => {
-    if (dirtyRef.current) { setPending(target); return; }
+    if (dirtyRef.current) {
+      setPending(target);
+      return;
+    }
     navigate(target);
   };
   return (
@@ -207,7 +282,30 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
         <SidebarContent className="side-content">
           <p className="eyebrow">OPERATIONS</p>
           <SidebarMenu>
-            {operationsNav.map(({ Icon, label, path }) => (
+            {operationsNav.map(({ Icon, label, path, count }) => (
+              <SidebarMenuItem key={label}>
+                <SidebarMenuButton
+                  size="lg"
+                  isActive={active === label}
+                  onClick={() => go(path)}
+                >
+                  <Icon />
+                  <span>{label}</span>
+                  {Boolean(count) && (
+                    <span
+                      className="ml-auto min-w-6 rounded-full bg-red-600 px-1.5 py-0.5 text-center text-xs font-semibold text-white"
+                      aria-label={`${count} ${label.toLowerCase()} item${count === 1 ? '' : 's'} require action`}
+                    >
+                      {count > 99 ? '99+' : count}
+                    </span>
+                  )}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+          <p className="eyebrow mt-7">INVENTORY</p>
+          <SidebarMenu>
+            {inventoryNav.map(({ Icon, label, path }) => (
               <SidebarMenuItem key={label}>
                 <SidebarMenuButton
                   size="lg"
@@ -217,14 +315,6 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
                   <Icon />
                   <span>{label}</span>
                 </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-          <p className="eyebrow mt-7">INVENTORY</p>
-          <SidebarMenu>
-            {inventoryNav.map(({ Icon, label, path }) => (
-              <SidebarMenuItem key={label}>
-                <SidebarMenuButton size="lg" isActive={active===label} onClick={()=>go(path)}><Icon/><span>{label}</span></SidebarMenuButton>
               </SidebarMenuItem>
             ))}
           </SidebarMenu>
@@ -242,7 +332,13 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
           <span>
             Admin Console <span className="muted">/ {active}</span>
           </span>
-          <div className="ml-auto shrink-0"><PortalAccountMenu user={sessionUser} onNavigate={accountNavigate} beforeSignOut={() => !dirtyRef.current} /></div>
+          <div className="ml-auto shrink-0">
+            <PortalAccountMenu
+              user={sessionUser}
+              onNavigate={accountNavigate}
+              beforeSignOut={() => !dirtyRef.current}
+            />
+          </div>
         </header>
         <div className="page-content">
           {message && (
@@ -262,7 +358,14 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
           {!ready ? (
             <p className="notice">Connecting to your local inventory…</p>
           ) : !user ? (
-            <div role="alert" className="space-y-4"><p>{sessionError || 'Unable to load your account. Please retry.'}</p><Button variant="outline" onClick={() => void loadSession()}>Retry session check</Button></div>
+            <div role="alert" className="space-y-4">
+              <p>
+                {sessionError || 'Unable to load your account. Please retry.'}
+              </p>
+              <Button variant="outline" onClick={() => void loadSession()}>
+                Retry session check
+              </Button>
+            </div>
           ) : (
             <AppContext.Provider
               value={{
@@ -274,18 +377,21 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
                 version,
                 threshold,
                 refresh,
+                actionSummary,
+                reloadActionSummary: loadActionSummary,
               }}
             >
               {pathname === '/admin/orders' ? (
-                <OrdersPage mode="review" params={params}/>
+                <OrdersPage mode="review" params={params} />
               ) : pathname === '/admin/dispatch' ? (
-                <DispatchCalendarPage params={params}/>
+                <DispatchCalendarPage params={params} />
               ) : orderMatch ? (
-                <OrderDetails bookingId={Number(orderMatch[1])}/>
+                <OrderDetails bookingId={Number(orderMatch[1])} />
               ) : pathname === '/admin/technicians' ? (
-                <StaffPage role="Technician"/>
-              ) : pathname === '/admin/admins' && user.access_level==='Owner' ? (
-                <StaffPage role="Admin"/>
+                <StaffPage role="Technician" />
+              ) : pathname === '/admin/admins' &&
+                user.access_level === 'Owner' ? (
+                <StaffPage role="Admin" />
               ) : pathname === ROOT ? (
                 <Overview />
               ) : pathname === ROOT + '/parts' ? (
@@ -307,7 +413,9 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
               ) : (
                 <section className="panel">
                   <h1>Page not found</h1>
-                  <Button onClick={() => go('/admin/orders')}>Back to Orders</Button>
+                  <Button onClick={() => go('/admin/orders')}>
+                    Back to Orders
+                  </Button>
                 </section>
               )}
             </AppContext.Provider>
