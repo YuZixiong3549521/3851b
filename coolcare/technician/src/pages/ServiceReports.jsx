@@ -2,7 +2,6 @@ import {VisitReports} from '@/components/visit-reports';
 import ReportChecks from '../components/ReportChecks.jsx';
 import { parseChecks, summarizeChecks } from '../utils/reportChecks.js';
 import ServicePhotos from '../components/ServicePhotos.jsx';
-import ServiceProgress from '../components/ServiceProgress.jsx';
 import SignaturePad from '../components/SignaturePad.jsx';
 import { SignatureImage } from '@/components/signature-image';
 import { useEffect, useState, useRef } from 'react';
@@ -36,7 +35,7 @@ function ReportEditor({ row, onClose, onSaved }) {
     [error, setError] = useState(''),
     [saving, setSaving] = useState(false),
     [uncertain, setUncertain] = useState(false);
-  const [photosLocked,setPhotosLocked]=useState(false),[progressLocked,setProgressLocked]=useState(false);
+  const [photosLocked,setPhotosLocked]=useState(false);
   const [checks, setChecks] = useState([]);
   const pending = useRef(null);
   const [signatureReset, setSignatureReset] = useState(0);
@@ -131,7 +130,7 @@ function ReportEditor({ row, onClose, onSaved }) {
       setSaving(false);
     }
   }
-  const locked = saving || uncertain || photosLocked || progressLocked;
+  const locked = saving || uncertain || photosLocked;
   return (
     <Dialog
       open
@@ -162,7 +161,6 @@ function ReportEditor({ row, onClose, onSaved }) {
               <span>Started: {moment(data.report?.startedAt)}</span>
               <span>Completed: {moment(data.report?.completedAt)}</span>
             </div>
-            <ServiceProgress jobId={row.jobId} status={data.status} repairEligible={data.repairEligible} progress={data.serviceProgress} disabled={saving||uncertain||photosLocked} onLockedChange={setProgressLocked} onSaved={async()=>{const fresh=await technicianRequest('/reports/'+row.jobId);setData(current=>({...current,serviceProgress:fresh.serviceProgress,status:fresh.status,repairEligible:fresh.repairEligible}));onSaved();}}/>
             <VisitReports reports={data.serviceProgress?.visitReports}/>
             {edit ? (
               <form onSubmit={submit} className="portal-form">
