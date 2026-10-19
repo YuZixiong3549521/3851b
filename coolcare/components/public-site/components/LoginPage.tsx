@@ -284,6 +284,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               >
                 Chris Lim (Technician)
               </Button>
+                <Button variant="ghost"
+                  type="button"
+                  onClick={() => handleQuickLogin('Norshida', 'norshida@coolcare.demo')}
+                  className="col-span-2 py-2 px-2 bg-ac-surface-container-low hover:bg-ac-primary-fixed/40 text-ac-primary border border-ac-outline-variant/40 rounded-lg text-xs font-semibold transition-colors text-center cursor-pointer"
+                >
+                  Norshida (Admin)
+                </Button>
             </div>
           </div>
 
