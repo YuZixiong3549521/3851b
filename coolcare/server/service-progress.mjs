@@ -105,8 +105,14 @@ export async function getServiceProgress(c, jobId) {
   );
   const [reports] = await c.execute(`SELECT report_id AS reportId,job_id IS NOT NULL AS isCurrent,work_performed AS workPerformed,problem_found AS remarks,solution_applied AS solution,checklist_result AS checklist,customer_signature_url AS customerSignatureUrl,technician_signature_url AS technicianSignatureUrl,submitted_time AS submittedAt,started_at AS startedAt,completed_at AS completedAt FROM service_report WHERE job_id=? OR archived_job_id=? ORDER BY report_id`,[jobId,jobId]);
   const [photos] = await c.execute('SELECT photo_id AS photoId,report_id AS reportId,description,captured_time AS uploadedAt FROM photo WHERE job_id=? ORDER BY captured_time,photo_id',[jobId]);
+  // Before migration 25, return visits reused the current report. Keep the
+  // recorded first-visit snapshot visible without manufacturing a new report.
+  const legacyFirstVisit = reports.length === 1 && events.some(e => e.kind === 'Return scheduled')
+    ? visits.find(v => v.outcome === 'Return required') : null;
+  const legacySnapshot = legacyFirstVisit && (typeof legacyFirstVisit.snapshot === 'string' ? JSON.parse(legacyFirstVisit.snapshot) : legacyFirstVisit.snapshot);
+  const priorReports = legacySnapshot ? [{reportId: legacySnapshot.report_id, visitNumber:1, isCurrent:false, legacySnapshot:true, workPerformed:legacySnapshot.work_performed, remarks:legacySnapshot.problem_found, solution:legacySnapshot.solution_applied, checklist:legacySnapshot.checklist_result, submittedAt:legacySnapshot.submitted_time, startedAt:legacyFirstVisit.startedAt, completedAt:legacyFirstVisit.endedAt, customerSignatureUrl:legacySnapshot.customer_signature_url, technicianSignatureUrl:legacySnapshot.technician_signature_url, photos:[]}] : [];
   return {
-    visitReports: reports.map((r,index)=>({...r,visitNumber:index+1,photos:photos.filter(p=>p.reportId===r.reportId).map(p=>({...p,url:'/api/service-photos/'+p.photoId}))})),
+    visitReports: [...priorReports,...reports.map((r,index)=>({...r,visitNumber:index+1+priorReports.length,photos:photos.filter(p=>p.reportId===r.reportId).map(p=>({...p,url:'/api/service-photos/'+p.photoId}))}))],
     visits: visits.map((v) => ({
       ...v,
       snapshot:
