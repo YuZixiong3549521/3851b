@@ -1,3 +1,4 @@
+import { parseChecks } from '../utils/reportChecks.js';
 import {SignatureImage} from '@/components/signature-image';
 import ServiceProgress from './ServiceProgress.jsx';
 import { useEffect, useRef, useState } from 'react';
@@ -30,13 +31,16 @@ function InventoryUsed({ items = [] }) {
   );
 }
 function Report({ report,includeProgress=false }) {
+  const checklist = report.checklist?.startsWith('[Service checklist]')
+    ? parseChecks(report.checklist.replace(/\r\n/g, '\n')).filter(item => item.done).map(item => `[Completed] ${item.name}`).join('; ') || 'No completed checks'
+    : report.checklist || 'Not recorded';
   return (
     <div className="tech-report">
       <p>
         <strong>Work performed:</strong> {report.workPerformed}
       </p>
       <p>
-        <strong>Checklist:</strong> {report.checklist || 'Not recorded'}
+        <strong>Checklist:</strong> {checklist}
       </p>
       <p>
         <strong>Cleaning method:</strong>{' '}
