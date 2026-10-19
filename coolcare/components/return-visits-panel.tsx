@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { earliestBookingDate, bookingDateError } from '@/lib/booking-schedule';
 type Row = {
+  earliestReturnDate: string;
   jobId: number;
   bookingId: number;
   version: number;
@@ -133,7 +134,7 @@ function ReturnCard({
     [tech, setTech] = useState(''),
     [customerMessage, setCustomerMessage] = useState(
       row.customerMessage ||
-        'A return visit is required. Please choose a new weekday appointment at least 14 days ahead.',
+        'A return visit is required. Please choose a new weekday appointment at least 14 days after the original service date and at least 14 days from today.',
     );
   const [slots, setSlots] = useState<
       { code: string; label: string; available: boolean }[]
@@ -307,7 +308,7 @@ function ReturnCard({
             <>
               <p>
                 The administrator has approved your return visit. Choose a
-                weekday at least 14 days ahead. Your time requires administrator
+                weekday at least 14 days after the original service date and at least 14 days from today. Your time requires administrator
                 confirmation.
               </p>
               {row.customerMessage && (
@@ -322,7 +323,7 @@ function ReturnCard({
                   setSlots([]);
                   setSlot('');
                 }}
-                min={earliestBookingDate()}
+                min={[earliestBookingDate(), row.earliestReturnDate].sort().at(-1)}
                 label="Return visit date"
               />
               <NativeSelect
@@ -339,7 +340,7 @@ function ReturnCard({
                 ))}
               </NativeSelect>
               <Button
-                disabled={!date || !slot || Boolean(bookingDateError(date))}
+                disabled={!date || !slot || Boolean(bookingDateError(date)) || date < row.earliestReturnDate}
                 onClick={() => void save('choose')}
               >
                 Submit preferred return time

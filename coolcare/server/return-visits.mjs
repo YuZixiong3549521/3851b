@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { AppError } from './inventory.mjs';
-import { assertBookableDate } from './customer/booking-schedule.mjs';
+import { assertBookableDate, assertReturnDate, minimumReturnDate } from './customer/booking-schedule.mjs';
 import {
   BOOKING_TIME_SLOTS,
   bookingServiceSlot,
@@ -55,7 +55,7 @@ export async function snapshotVisit(c, jobId, outcome) {
 }
 export async function listReturns(pool, role, userId) {
   const [rows] = await pool.execute(
-    `SELECT w.job_id AS jobId,b.booking_id AS bookingId,u.full_name AS customer,p.revision AS version,p.follow_up_status AS status,
+    `SELECT w.job_id AS jobId,b.booking_id AS bookingId,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,u.full_name AS customer,p.revision AS version,p.follow_up_status AS status,
  DATE_FORMAT(p.follow_up_date,'%Y-%m-%d') AS date,p.follow_up_start AS start,p.follow_up_end AS end,
  b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,
  (SELECT e.reason FROM service_progress_event e WHERE e.job_id=w.job_id AND e.kind='Return required' ORDER BY e.revision DESC LIMIT 1) AS reason,
@@ -67,7 +67,7 @@ export async function listReturns(pool, role, userId) {
  WHERE p.follow_up_status NOT IN ('None','Completed') ${role === 'customer' ? 'AND cu.user_id=?' : ''} ORDER BY w.job_id DESC`,
     role === 'customer' ? [userId] : [],
   );
-  return { rows };
+  return { rows: rows.map(row => ({...row, earliestReturnDate: minimumReturnDate(row.serviceDate)})) };
 }
 export async function returnAvailability(pool, userId, jobId, date) {
   assertBookableDate(date);
@@ -75,11 +75,12 @@ export async function returnAvailability(pool, userId, jobId, date) {
   try {
     await c.beginTransaction();
     const [[w]] = await c.execute(
-      `SELECT w.booking_id,b.estimated_duration_minutes FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN service_progress p ON p.job_id=w.job_id WHERE w.job_id=? AND cu.user_id=? AND p.follow_up_status='Awaiting customer'`,
+      `SELECT w.booking_id,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,b.estimated_duration_minutes FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN service_progress p ON p.job_id=w.job_id WHERE w.job_id=? AND cu.user_id=? AND p.follow_up_status='Awaiting customer'`,
       [jobId, userId],
     );
     if (!w)
       throw new AppError('Return visit not available for selection.', 404);
+    assertReturnDate(date, w.serviceDate);
     const slots = [];
     for (const s of BOOKING_TIME_SLOTS) {
       try {
@@ -122,7 +123,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       [hint.booking_id],
     );
     const [[w]] = await c.execute(
-      `SELECT w.*,b.booking_status,b.estimated_duration_minutes,b.travel_buffer_minutes,b.traffic_note,cu.user_id AS customerUser FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id WHERE w.job_id=? FOR UPDATE`,
+      `SELECT w.*,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,b.booking_status,b.estimated_duration_minutes,b.travel_buffer_minutes,b.traffic_note,cu.user_id AS customerUser FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id WHERE w.job_id=? FOR UPDATE`,
       [jobId],
     );
     if (role === 'customer' && w.customerUser !== userId)
@@ -167,14 +168,14 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       kind = 'Return invited';
       notes =
         d.customerMessage ||
-        'A return visit is required. Please choose a new weekday appointment at least 14 days ahead.';
+        'A return visit is required. Please choose a new weekday appointment at least 14 days after the original service date and at least 14 days from today.';
     } else if (d.action === 'choose') {
       if (p.follow_up_status !== 'Awaiting customer')
         throw new AppError(
           'Wait for the administrator to invite you to choose a time.',
           409,
         );
-      assertBookableDate(d.date);
+      assertReturnDate(d.date, w.serviceDate);
       const slot = bookingServiceSlot(d.timeSlot, w.estimated_duration_minutes);
       date = d.date;
       start = slot.start;
@@ -192,7 +193,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       start = p.follow_up_start;
       end = p.follow_up_end;
       const travelStart = travelStartTime(start, w.travel_buffer_minutes);
-      assertBookableDate(date);
+      assertReturnDate(date, w.serviceDate);
       await lockServiceDates(c, [date]);
       await lockTechnicianRoster(c);
       await assertTeamCapacity(c, [{ date, start, end }], {

@@ -60,3 +60,15 @@ export function assertRescheduleDate(date,time,now=new Date()) {
   if(!isWeekday(date))throw new HttpError(400,'We are closed on Saturdays and Sundays. Choose a weekday.');
   if(!canChangeAppointment(date,time,now))throw new HttpError(400,'Choose a new appointment at least 3 days (72 hours) from now.');
 }
+
+export function minimumReturnDate(serviceDate, now = new Date()) {
+  const original = String(serviceDate).slice(0, 10);
+  if (!isCalendarDate(original)) throw new HttpError(400, 'The original service date is unavailable. Contact the administrator.');
+  return nextWeekday([addCalendarDays(original, 14), minimumBookingDate(now)].sort().at(-1));
+}
+
+export function assertReturnDate(value, serviceDate, now = new Date()) {
+  assertBookableDate(value, now);
+  const earliest = minimumReturnDate(serviceDate, now);
+  if (value < earliest) throw new HttpError(400, `The return visit must be at least 14 days after the original service date and at least 14 days from today. The earliest date is ${earliest}.`);
+}
