@@ -36,12 +36,6 @@ function Report({ report,includeProgress=false }) {
         <strong>Work performed:</strong> {report.workPerformed}
       </p>
       <p>
-        <strong>Problem found:</strong> {report.problemFound || 'Not recorded'}
-      </p>
-      <p>
-        <strong>Solution:</strong> {report.solutionApplied || 'Not recorded'}
-      </p>
-      <p>
         <strong>Checklist:</strong> {report.checklist || 'Not recorded'}
       </p>
       <p>
