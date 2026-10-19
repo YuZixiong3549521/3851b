@@ -163,52 +163,11 @@ async function lockedBooking(connection, bookingId) {
 }
 
 export async function approveBooking(pool, actor, bookingId, raw) {
-  const data = requestSchema.parse(raw),
-    connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-    const operation = await beginOperation(connection, {
-      requestId: data.requestId,
-      bookingId,
-      actorUserId: actor.userId,
-      type: 'Approve',
-      payload: data,
-    });
-    if (operation.replayed) {
-      await connection.commit();
-      return { ...operation.result, replayed: true };
-    }
-    const booking = await lockedBooking(connection, bookingId);
-    await assertBookingNotExpired(connection, booking);
-    if (booking.booking_status !== 'Submitted')
-      throw new AppError('Only submitted bookings can be approved.', 409);
-    await lockServiceDates(connection, [booking.preferred_service_date]);
-    await connection.execute(
-      "UPDATE booking SET booking_status='Confirmed' WHERE booking_id=?",
-      [bookingId],
-    );
-    await connection.execute(
-      `INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)
-      VALUES (?,'Submitted','Confirmed',?,'Booking request reviewed and approved by the service team.')`,
-      [bookingId, actor.userId],
-    );
-    const result = { bookingId, status: 'Confirmed' };
-    await finishOperation(connection, {
-      requestId: data.requestId,
-      bookingId,
-      actorUserId: actor.userId,
-      type: 'Approve',
-      hash: operation.hash,
-      result,
-    });
-    await connection.commit();
-    return result;
-  } catch (error) {
-    await connection.rollback();
-    throw error;
-  } finally {
-    connection.release();
-  }
+  const data = requestSchema.parse(raw);
+  return dispatchBooking(pool, actor, bookingId, {
+    requestId: data.requestId,
+    mode: 'automatic',
+  });
 }
 
 export async function rejectBooking(pool, actor, bookingId, raw) {
@@ -431,7 +390,7 @@ async function chooseTechnician(
   );
   if (!eligible.length)
     throw new AppError(
-      'No technician is available for this confirmed time. Review technician availability and try again.',
+      'No technician is available for this appointment. Change the appointment or technician availability, or reject the request.',
       409,
     );
   const eligibleIds = eligible.map((row) => row.technician_id);
@@ -483,7 +442,7 @@ async function chooseTechnician(
   );
   if (!rows.length)
     throw new AppError(
-      'No technician is available for this confirmed time. Review technician availability and try again.',
+      'No technician is available for this appointment. Change the appointment or technician availability, or reject the request.',
       409,
     );
   await addDispatchProximity(connection, booking, rows);
@@ -588,9 +547,9 @@ export async function listDispatchOptions(pool, bookingId) {
     [bookingId],
   );
   if (!booking) throw new AppError('Booking not found.', 404);
-  if (!['Confirmed', 'Assigned'].includes(booking.booking_status))
+  if (!['Submitted', 'Confirmed', 'Assigned'].includes(booking.booking_status))
     throw new AppError(
-      'Dispatch options are available only for confirmed or assigned bookings.',
+      'Dispatch options are available only for bookings awaiting confirmation, dispatch or reassignment.',
       409,
     );
   if (!booking.slot_start || !booking.slot_end) {
@@ -756,15 +715,17 @@ export async function dispatchBooking(
     if (
       redispatch
         ? booking.booking_status !== 'Assigned'
-        : booking.booking_status !== 'Confirmed'
+        : !['Submitted', 'Confirmed'].includes(booking.booking_status)
     ) {
       throw new AppError(
         redispatch
           ? 'Only assigned bookings can be redispatched.'
-          : 'Approve this booking before dispatching it.',
+          : 'Only bookings awaiting confirmation or dispatch can be assigned.',
         409,
       );
     }
+    if (booking.booking_status === 'Submitted')
+      await assertBookingNotExpired(connection, booking);
     await lockServiceDates(connection, [booking.preferred_service_date]);
     let previous = null;
     if (redispatch) {
@@ -810,11 +771,18 @@ export async function dispatchBooking(
       technician,
       data.requestId,
     );
-    if (!redispatch)
+    if (!redispatch) {
       await connection.execute(
         "UPDATE booking SET booking_status='Assigned' WHERE booking_id=?",
         [bookingId],
       );
+      if (booking.booking_status === 'Submitted')
+        await connection.execute(
+          `INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)
+          VALUES (?,'Submitted','Confirmed',?,'Booking request confirmed after technician availability was verified.')`,
+          [bookingId, actor.userId],
+        );
+    }
     const note =
       mode === 'manual'
         ? redispatch
@@ -1057,7 +1025,11 @@ export async function listAdminBookings(pool, query) {
     JOIN service_address sa ON sa.address_id=b.address_id JOIN service_catalog sc ON sc.service_id=b.service_id
     LEFT JOIN booking_service bs ON bs.booking_id=b.booking_id${clause}
     GROUP BY b.booking_id,b.booking_status,b.preferred_service_date,b.preferred_time_slot,b.total_amount,b.created_at,u.full_name,u.email,sa.address_line,sc.service_name
-    ORDER BY FIELD(b.booking_status,'Submitted','Confirmed','Assigned','On The Way','In Progress','Completed','Rejected','Cancelled','Expired'),b.preferred_service_date,b.booking_id
+    ORDER BY FIELD(b.booking_status,'Submitted','Confirmed','Assigned','On The Way','In Progress','Completed','Rejected','Cancelled','Expired'),
+      CASE WHEN b.booking_status='Submitted' THEN b.created_at END ASC,
+      CASE WHEN b.booking_status='Submitted' THEN b.booking_id END ASC,
+      CASE WHEN b.booking_status<>'Submitted' THEN b.preferred_service_date END ASC,
+      CASE WHEN b.booking_status<>'Submitted' THEN b.booking_id END ASC
     LIMIT ? OFFSET ?`,
     [...values, data.pageSize, (page - 1) * data.pageSize],
   );

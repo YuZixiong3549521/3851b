@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import mysql from 'mysql2/promise';
 import { createPublicBooking } from '../server/public-site.mjs';
-import { approveBooking, dispatchBooking } from '../server/admin-operations.mjs';
+import { dispatchBooking } from '../server/admin-operations.mjs';
 import { deliverPendingBookingEmails } from '../server/booking-email.mjs';
 import {
   addCalendarDays,
@@ -30,7 +30,6 @@ test('only successful dispatch queues customer mail, which retries with the same
    const repeat=await createPublicBooking(db,user,input);assert.equal(repeat.id,created.id);
    const [[beforeDispatch]]=await c.execute('SELECT COUNT(*) AS count FROM booking_email_outbox WHERE booking_id=?',[created.id]);
    assert.equal(Number(beforeDispatch.count),0);
-   await approveBooking(db,owner,created.id,{requestId:randomUUID()});
    const dispatchRequest=randomUUID();
    await dispatchBooking(db,owner,created.id,{requestId:dispatchRequest});
    await dispatchBooking(db,owner,created.id,{requestId:dispatchRequest});

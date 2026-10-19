@@ -183,7 +183,7 @@ export function OrdersPage({
         title={mode === 'review' ? 'Booking review' : 'Dispatch queue'}
         description={
           mode === 'review'
-            ? 'Approve or reject submitted customer requests before dispatch.'
+            ? 'Review requests in placement order, then confirm and assign an available technician together.'
             : 'Assign confirmed visits to an available technician automatically or manually.'
         }
         actions={
@@ -273,7 +273,8 @@ export function OrdersPage({
           {status === 'Submitted' && (
             <p className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm font-medium text-red-800">
               <AlertCircle className="size-4" />
-              Unconfirmed requests need review before their deadline.
+              Oldest requests appear first. Confirmation requires a successful
+              technician assignment.
             </p>
           )}
         </div>
@@ -287,6 +288,7 @@ export function OrdersPage({
                 <TableRow>
                   <TableHead>Booking</TableHead>
                   <TableHead>Customer</TableHead>
+                  <TableHead>Placed</TableHead>
                   <TableHead>Service</TableHead>
                   <TableHead>Schedule</TableHead>
                   <TableHead>Status</TableHead>
@@ -312,6 +314,9 @@ export function OrdersPage({
                     <TableCell data-label="Customer">
                       <strong>{row.customerName}</strong>
                       <small className="block muted">{row.email}</small>
+                    </TableCell>
+                    <TableCell data-label="Placed">
+                      {displayExpiry(row.createdAt)}
                     </TableCell>
                     <TableCell data-label="Service">
                       {row.serviceName}
@@ -708,7 +713,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
         travel.trafficNote !== (booking.trafficNote ?? '')),
     );
   const dispatchAction =
-    booking?.status === 'Confirmed'
+    booking?.status === 'Submitted' || booking?.status === 'Confirmed'
       ? 'dispatch'
       : booking?.status === 'Assigned' &&
           booking.assignments[0]?.workStatus === 'Assigned'
@@ -719,8 +724,13 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
     version,
   );
   const selectedTechnician = dispatchOptions.data?.technicians.find(
-    (technician) => technician.technicianId === selectedTechnicianId,
-  );
+      (technician) => technician.technicianId === selectedTechnicianId,
+    ),
+    hasEligibleTechnician = Boolean(
+      dispatchOptions.data?.technicians.some(
+        (technician) => technician.eligible,
+      ),
+    );
   useEffect(() => {
     setDirty(
       scheduleDirty ||
@@ -735,9 +745,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
     booking?.rejectionReason,
     setDirty,
   ]);
-  async function action(
-    type: 'approve' | 'reject' | 'dispatch' | 'redispatch',
-  ) {
+  async function action(type: 'reject' | 'dispatch' | 'redispatch') {
     if (scheduleDirty || travelDirty) {
       setError(
         'Save or discard the appointment and travel-plan changes before reviewing or dispatching this booking.',
@@ -786,8 +794,8 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       setSelectedTechnicianId(null);
       notify(
         type === 'dispatch' || type === 'redispatch'
-          ? `Assigned to ${result.technician?.fullName}. Customer email queued.`
-          : `Booking ${type === 'approve' ? 'approved' : 'rejected'}. No customer email was sent.`,
+          ? `${booking?.status === 'Submitted' ? 'Booking confirmed and assigned' : 'Assigned'} to ${result.technician?.fullName}. Customer email queued.`
+          : 'Booking rejected. No customer email was sent.',
       );
       refresh();
     } catch (cause) {
@@ -931,6 +939,10 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                 </p>
               )}
               <dl className="data-list">
+                <div>
+                  <dt>Placed at</dt>
+                  <dd>{displayExpiry(booking.createdAt)}</dd>
+                </div>
                 <div>
                   <dt>Customer</dt>
                   <dd>
@@ -1192,15 +1204,6 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
               </div>
               {booking.status === 'Submitted' && (
                 <div className="mt-6 space-y-3">
-                  <div className="actions">
-                    <Button
-                      disabled={Boolean(busy) || scheduleDirty || travelDirty}
-                      onClick={() => action('approve')}
-                    >
-                      <CheckCircle2 />
-                      {busy === 'approve' ? 'Approving…' : 'Approve booking'}
-                    </Button>
-                  </div>
                   <label
                     htmlFor="booking-rejection-reason"
                     className="block text-sm font-semibold"
@@ -1273,15 +1276,19 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
               {dispatchAction && (
                 <div className="dispatch-control mt-6 rounded-xl border border-primary/20 bg-primary/5 p-4">
                   <h3 className="font-semibold">
-                    {dispatchAction === 'redispatch'
-                      ? 'Reassign technician'
-                      : 'Dispatch technician'}
+                    {booking.status === 'Submitted'
+                      ? 'Confirm and assign technician'
+                      : dispatchAction === 'redispatch'
+                        ? 'Reassign technician'
+                        : 'Dispatch technician'}
                   </h3>
                   <p className="mt-1 text-sm muted">
-                    Choose postal-area assignment or manually select an eligible
-                    technician. The {booking.travelBufferMinutes ?? 30}-minute
-                    travel allowance blocks adjacent work. The customer email is
-                    queued only after the assignment succeeds.
+                    {booking.status === 'Submitted'
+                      ? 'Confirmation and assignment are saved together. If no technician is available, this request remains unconfirmed so you can change the appointment, update technician availability or reject it. '
+                      : 'Choose postal-area assignment or manually select an eligible technician. '}
+                    The {booking.travelBufferMinutes ?? 30}-minute travel
+                    allowance blocks adjacent work. The customer email is queued
+                    only after the assignment succeeds.
                   </p>
                   {booking.trafficNote && (
                     <p className="mt-3 rounded-lg border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900">
@@ -1438,30 +1445,51 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                         ))}
                     </div>
                   )}
+                  {dispatchOptions.data && !hasEligibleTechnician && (
+                    <p className="notice error mt-3" role="alert">
+                      No technician is available for this appointment. Change
+                      the appointment, update technician availability or reject
+                      the request. The booking cannot be confirmed without an
+                      assignment.
+                    </p>
+                  )}
                   <Button
                     className="mt-4"
                     disabled={
                       Boolean(busy) ||
                       scheduleDirty ||
                       travelDirty ||
+                      dispatchOptions.loading ||
+                      !hasEligibleTechnician ||
                       (dispatchMode === 'manual' &&
-                        (!selectedTechnician?.eligible ||
-                          dispatchOptions.loading))
+                        !selectedTechnician?.eligible)
                     }
                     onClick={() => action(dispatchAction)}
                   >
-                    {dispatchAction === 'redispatch' ? <RefreshCw /> : <Send />}
+                    {booking.status === 'Submitted' ? (
+                      <CheckCircle2 />
+                    ) : dispatchAction === 'redispatch' ? (
+                      <RefreshCw />
+                    ) : (
+                      <Send />
+                    )}
                     {busy === dispatchAction
-                      ? dispatchAction === 'redispatch'
-                        ? 'Reassigning…'
-                        : 'Assigning…'
-                      : dispatchMode === 'manual'
-                        ? dispatchAction === 'redispatch'
-                          ? 'Reassign selected technician'
-                          : 'Assign selected technician'
+                      ? booking.status === 'Submitted'
+                        ? 'Confirming and assigning…'
                         : dispatchAction === 'redispatch'
-                          ? 'Automatically redispatch'
-                          : 'Automatically assign technician'}
+                          ? 'Reassigning…'
+                          : 'Assigning…'
+                      : dispatchMode === 'manual'
+                        ? booking.status === 'Submitted'
+                          ? 'Confirm and assign selected technician'
+                          : dispatchAction === 'redispatch'
+                            ? 'Reassign selected technician'
+                            : 'Assign selected technician'
+                        : booking.status === 'Submitted'
+                          ? 'Confirm and automatically assign'
+                          : dispatchAction === 'redispatch'
+                            ? 'Automatically redispatch'
+                            : 'Automatically assign technician'}
                   </Button>
                 </div>
               )}

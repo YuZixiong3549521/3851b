@@ -9,7 +9,6 @@ import {
   nextWeekday,
 } from '../server/customer/booking-schedule.mjs';
 import {
-  approveBooking,
   editTravelPlan,
   getAdminActionSummary,
   getAdminBooking,
@@ -209,7 +208,7 @@ test('staff invitations are owner-scoped, hashed, expiring, revocable and single
     );
   }));
 
-test('review and dispatch are separate, automatic dispatch rotates conflict-free technicians, and job status is sequential', async () =>
+test('confirmation and automatic dispatch are atomic, rotate conflict-free technicians, and keep job status sequential', async () =>
   rollbackFixture(async (db, connection) => {
     const { owner } = await actors(connection);
     const [[customer]] =
@@ -315,27 +314,11 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
       [first.bookingId],
     );
     assert.equal(Number(changeAudit.count), 1);
-    await assert.rejects(
-      dispatchBooking(db, owner, first.bookingId, { requestId: randomUUID() }),
-      (error) => error.status === 409 && /Approve/.test(error.message),
-    );
-    assert.equal(
-      (
-        await approveBooking(db, owner, first.bookingId, {
-          requestId: randomUUID(),
-        })
-      ).status,
-      'Confirmed',
-    );
-    const [[reviewMailCount]] = await connection.execute(
-      'SELECT COUNT(*) AS count FROM booking_email_outbox WHERE booking_id=?',
-      [first.bookingId],
-    );
-    assert.equal(Number(reviewMailCount.count), 0);
     const dispatchRequest = randomUUID(),
       firstDispatch = await dispatchBooking(db, owner, first.bookingId, {
         requestId: dispatchRequest,
       });
+    assert.equal(firstDispatch.status, 'Assigned');
     assert.equal(
       firstDispatch.technician.technicianId,
       technicians[0].technicianId,
@@ -389,9 +372,6 @@ test('review and dispatch are separate, automatic dispatch rotates conflict-free
     );
 
     const second = await create();
-    await approveBooking(db, owner, second.bookingId, {
-      requestId: randomUUID(),
-    });
     const secondDispatch = await dispatchBooking(db, owner, second.bookingId, {
       requestId: randomUUID(),
     });
@@ -592,10 +572,8 @@ void test('manual dispatch lists every technician, enforces eligibility, support
       });
 
     const first = await create('Manual dispatch QA');
-    await approveBooking(db, owner, first.bookingId, {
-      requestId: randomUUID(),
-    });
     const initialOptions = await listDispatchOptions(db, first.bookingId);
+    assert.equal(initialOptions.status, 'Submitted');
     assert.equal(initialOptions.technicians.length, technicians.length);
     assert.ok(initialOptions.technicians.every((option) => option.eligible));
 
@@ -608,6 +586,22 @@ void test('manual dispatch lists every technician, enforces eligibility, support
     assert.equal(
       assigned.technician.technicianId,
       manuallySelected.technicianId,
+    );
+    const assignedDetail = await getAdminBooking(db, first.bookingId);
+    assert.equal(assignedDetail.status, 'Assigned');
+    assert.ok(
+      assignedDetail.timeline.some(
+        (event) =>
+          event.oldStatus === 'Submitted' && event.status === 'Confirmed',
+      ),
+    );
+    assert.ok(
+      assignedDetail.timeline.some(
+        (event) =>
+          event.oldStatus === 'Confirmed' &&
+          event.status === 'Assigned' &&
+          /manually assigned/i.test(event.note),
+      ),
     );
     assert.equal(
       (
@@ -629,9 +623,6 @@ void test('manual dispatch lists every technician, enforces eligibility, support
     );
 
     const second = await create('Manual conflict QA');
-    await approveBooking(db, owner, second.bookingId, {
-      requestId: randomUUID(),
-    });
     await assert.rejects(
       dispatchBooking(db, owner, second.bookingId, {
         requestId: randomUUID(),
