@@ -103,7 +103,10 @@ export async function getServiceProgress(c, jobId) {
     'SELECT visit_id AS id,technician_id AS technicianId,started_at AS startedAt,ended_at AS endedAt,outcome,report_snapshot AS snapshot FROM service_visit_record WHERE job_id=? ORDER BY visit_id',
     [jobId],
   );
+  const [reports] = await c.execute(`SELECT report_id AS reportId,job_id IS NOT NULL AS isCurrent,work_performed AS workPerformed,problem_found AS remarks,solution_applied AS solution,checklist_result AS checklist,customer_signature_url AS customerSignatureUrl,technician_signature_url AS technicianSignatureUrl,submitted_time AS submittedAt,started_at AS startedAt,completed_at AS completedAt FROM service_report WHERE job_id=? OR archived_job_id=? ORDER BY report_id`,[jobId,jobId]);
+  const [photos] = await c.execute('SELECT photo_id AS photoId,report_id AS reportId,description,captured_time AS uploadedAt FROM photo WHERE job_id=? ORDER BY captured_time,photo_id',[jobId]);
   return {
+    visitReports: reports.map((r,index)=>({...r,visitNumber:index+1,photos:photos.filter(p=>p.reportId===r.reportId).map(p=>({...p,url:'/api/service-photos/'+p.photoId}))})),
     visits: visits.map((v) => ({
       ...v,
       snapshot:

@@ -10,6 +10,7 @@ import {
   minimumBookingDate,
   addCalendarDays,
 } from '../server/customer/booking-schedule.mjs';
+import { getReport } from '../server/technician-pages.mjs';
 import { updateReturn, listReturns } from '../server/return-visits.mjs';
 import { updateTechnicianJobStatus } from '../server/technician.mjs';
 const pool = mysql.createPool({
@@ -49,7 +50,7 @@ async function fixture(fn) {
   }
 }
 
-test('admin/customer return workflow retains job/report, enforces roles and dates, and replays dispatch', () =>
+test('return workflow retains the job, creates independent reports and photos, and replays without duplicates', () =>
   fixture(async (db, c, a) => {
     const [[w]] = await c.execute(
       'SELECT booking_id,assignment_id FROM work_order WHERE job_id=?',
@@ -152,11 +153,24 @@ test('admin/customer return workflow retains job/report, enforces roles and date
       [a.jobId],
     );
     assert.equal(assigned.current_status, 'Return visit');
-    await updateTechnicianJobStatus(db, a.userId, a.jobId, {
-      requestId: randomUUID(),
-      expectedStatus: 'Return visit',
-      status: 'In Progress',
-    });
+    await c.execute("UPDATE service_report SET work_performed='First visit work',checklist_result='First checklist',problem_found='First remarks',customer_signature_url='/api/report-signatures/11111111-1111-4111-8111-111111111111' WHERE job_id=?",[a.jobId]);
+    await c.execute("INSERT INTO photo(job_id,report_id,photo_url,description) VALUES(?,?,'first-visit.jpg','First visit photo')",[a.jobId,required.reportId]);
+    const startRequest={requestId:randomUUID(),expectedStatus:'Return visit',status:'In Progress'};
+    await updateTechnicianJobStatus(db,a.userId,a.jobId,startRequest);
+    await updateTechnicianJobStatus(db,a.userId,a.jobId,startRequest);
+    const fresh=await getReport(db,a.userId,a.jobId);
+    assert.notEqual(fresh.report.reportId,required.reportId);
+    assert.equal(fresh.report.workPerformed,'');
+    assert.equal(fresh.report.checklist,null);
+    assert.equal(fresh.report.customerSignatureUrl,null);
+    const priorReport=fresh.serviceProgress.visitReports.find(r=>r.reportId===required.reportId);
+    assert.equal(priorReport.workPerformed,'First visit work');
+    assert.equal(priorReport.checklist,'First checklist');
+    assert.equal(priorReport.photos.length,1);
+    assert.equal(fresh.serviceProgress.visitReports.find(r=>r.reportId===fresh.report.reportId).photos.length,0);
+    const [[oldReport]]=await c.execute('SELECT job_id,archived_job_id FROM service_report WHERE report_id=?',[required.reportId]);
+    assert.equal(oldReport.job_id,null);assert.equal(oldReport.archived_job_id,a.jobId);
+
     await updateTechnicianJobStatus(db, a.userId, a.jobId, {
       requestId: randomUUID(),
       expectedStatus: 'In Progress',
@@ -170,7 +184,7 @@ test('admin/customer return workflow retains job/report, enforces roles and date
       'SELECT report_id FROM service_report WHERE job_id=?',
       [a.jobId],
     );
-    assert.equal(report.report_id, required.reportId);
+    assert.notEqual(report.report_id, required.reportId);
     const [visits] = await c.execute(
       'SELECT outcome FROM service_visit_record WHERE job_id=? ORDER BY visit_id DESC LIMIT 2',
       [a.jobId],

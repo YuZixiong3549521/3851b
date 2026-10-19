@@ -51,7 +51,7 @@ export async function getReport(c, userId, jobId) {
   const [[eligibility]]=await c.execute(`SELECT (EXISTS(SELECT 1 FROM booking b JOIN simple_service_catalog ss ON ss.service_id=b.service_id WHERE b.booking_id=? AND ss.code='repair') OR EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog ss ON ss.service_id=bs.service_id WHERE bs.booking_id=? AND ss.code='repair')) AS repairEligible`,[work.booking_id,work.booking_id]);
   const [[report]] = await c.execute(reportSelect, [jobId]);
   const [history] = await c.execute(
-    'SELECT version,changed_at AS changedAt,after_json AS content FROM service_report_revision WHERE job_id=? ORDER BY version DESC',
+    'SELECT version,changed_at AS changedAt,after_json AS content FROM service_report_revision WHERE job_id=? AND report_id=(SELECT report_id FROM service_report WHERE job_id=service_report_revision.job_id) ORDER BY version DESC',
     [jobId],
   );
   return {
@@ -154,7 +154,7 @@ export async function saveReport(pool, userId, jobId, raw) {
       );
     }
     await c.execute(
-      'INSERT INTO service_report_revision(request_id,job_id,actor_user_id,version,payload_hash,before_json,after_json) VALUES(?,?,?,?,?,?,?)',
+      'INSERT INTO service_report_revision(request_id,job_id,actor_user_id,version,payload_hash,before_json,after_json,report_id) VALUES(?,?,?,?,?,?,?,(SELECT report_id FROM service_report WHERE job_id=?))',
       [
         d.requestId,
         jobId,
@@ -163,6 +163,7 @@ export async function saveReport(pool, userId, jobId, raw) {
         payloadHash,
         old ? JSON.stringify(old) : null,
         JSON.stringify(r),
+        jobId,
       ],
     );
     await c.commit();

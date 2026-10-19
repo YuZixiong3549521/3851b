@@ -167,7 +167,7 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
     }
     if(work.current_status==='Return visit'){
       await connection.execute("UPDATE service_progress SET follow_up_status='In Progress',revision=revision+1 WHERE job_id=?",[jobId]);
-      await connection.execute("UPDATE service_report SET started_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR),completed_at=NULL WHERE job_id=?",[jobId]);
+      await connection.execute("UPDATE service_report SET archived_job_id=job_id,job_id=NULL WHERE job_id=?",[jobId]);
     }
     if(data.status==='In Progress'){
       await connection.execute(`INSERT INTO service_report(job_id,work_performed,started_at)

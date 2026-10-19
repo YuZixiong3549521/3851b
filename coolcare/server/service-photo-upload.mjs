@@ -13,6 +13,7 @@ import {
 export const photoUploadSchema = z
   .object({
     requestId: z.uuid(),
+    reportId: z.number().int().positive().optional(),
     description: z
       .string()
       .trim()
@@ -65,7 +66,7 @@ export async function normalizeServicePhoto(image) {
 }
 export async function listServicePhotos(pool, jobId) {
   const [rows] = await pool.execute(
-    'SELECT photo_id AS photoId,photo_url AS storedPath,description,UNIX_TIMESTAMP(captured_time) AS uploadedAt FROM photo WHERE job_id=? ORDER BY captured_time,photo_id',
+    'SELECT photo_id AS photoId,photo_url AS storedPath,description,UNIX_TIMESTAMP(captured_time) AS uploadedAt FROM photo WHERE job_id=? AND (report_id IS NULL OR report_id=(SELECT report_id FROM service_report WHERE job_id=photo.job_id)) ORDER BY captured_time,photo_id',
     [jobId],
   );
   return Promise.all(
@@ -109,9 +110,11 @@ export async function uploadServicePhoto(pool, userId, jobId, raw) {
       await c.commit();
       return { photoId: prior.photo_id, replayed: true };
     }
+    const [[activeReport]] = await c.execute('SELECT report_id FROM service_report WHERE job_id=? FOR UPDATE',[jobId]);
+    if (!activeReport || (d.reportId && d.reportId !== activeReport.report_id)) throw new AppError('This visit has changed. Reload the report before uploading photos.',409);
     const [[count]] = await c.execute(
-      'SELECT COUNT(*) AS total FROM photo WHERE job_id=?',
-      [jobId],
+      'SELECT COUNT(*) AS total FROM photo WHERE report_id=?',
+      [activeReport.report_id],
     );
     if (count.total >= 30)
       throw new AppError('A report can contain up to 30 photos.', 400);
@@ -120,8 +123,8 @@ export async function uploadServicePhoto(pool, userId, jobId, raw) {
     path = join(reportPhotoDirectory, filename);
     await writeFile(path, image, { flag: 'wx' });
     const [p] = await c.execute(
-      'INSERT INTO photo(job_id,photo_url,description) VALUES(?,?,?)',
-      [jobId, filename, d.description],
+      'INSERT INTO photo(job_id,photo_url,description,report_id) VALUES(?,?,?,?)',
+      [jobId, filename, d.description, activeReport.report_id],
     );
     await c.execute(
       'INSERT INTO service_photo_upload(request_id,photo_id,uploaded_by_user_id,payload_hash) VALUES(?,?,?,?)',
@@ -164,7 +167,7 @@ export function registerServicePhotoMedia(app, pool) {
   app.get('/api/service-photos/:photoId', async (req, res) => {
     const user = await sessionUser(pool, req);
     const [[p]] = await pool.execute(
-      `SELECT p.photo_url,t.user_id AS technicianUserId,cu.user_id AS customerUserId,r.submitted_time FROM photo p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id LEFT JOIN service_report r ON r.job_id=w.job_id WHERE p.photo_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')`,
+      `SELECT p.photo_url,t.user_id AS technicianUserId,cu.user_id AS customerUserId,r.submitted_time FROM photo p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id LEFT JOIN service_report r ON r.report_id=p.report_id WHERE p.photo_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')`,
       [idSchema.parse(req.params.photoId)],
     );
     if (

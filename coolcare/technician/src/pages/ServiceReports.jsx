@@ -1,3 +1,4 @@
+import {VisitReports} from '@/components/visit-reports';
 import ReportChecks from '../components/ReportChecks.jsx';
 import { parseChecks, summarizeChecks } from '../utils/reportChecks.js';
 import ServicePhotos from '../components/ServicePhotos.jsx';
@@ -162,7 +163,7 @@ function ReportEditor({ row, onClose, onSaved }) {
               <span>Completed: {moment(data.report?.completedAt)}</span>
             </div>
             <ServiceProgress jobId={row.jobId} status={data.status} repairEligible={data.repairEligible} progress={data.serviceProgress} disabled={saving||uncertain||photosLocked} onLockedChange={setProgressLocked} onSaved={async()=>{const fresh=await technicianRequest('/reports/'+row.jobId);setData(current=>({...current,serviceProgress:fresh.serviceProgress,status:fresh.status,repairEligible:fresh.repairEligible}));onSaved();}}/>
-            {data.serviceProgress?.visits?.length > 0 && <details><summary>Visit records ({data.serviceProgress.visits.length})</summary>{data.serviceProgress.visits.map((visit,index)=><section key={visit.id} className="rounded-lg border p-3 my-2"><h3>Visit {index+1} · {visit.outcome}</h3><p>{moment(visit.startedAt)} – {moment(visit.endedAt)}</p><p className="whitespace-pre-wrap">{visit.snapshot.checklist_result || 'No checklist recorded for this visit.'}</p><p>{visit.snapshot.problem_found}</p></section>)}</details>}
+            <VisitReports reports={data.serviceProgress?.visitReports}/>
             {edit ? (
               <form onSubmit={submit} className="portal-form">
                 <fieldset disabled={locked}>
@@ -176,7 +177,7 @@ function ReportEditor({ row, onClose, onSaved }) {
                     setSignatureReset(n => n + 1);
                   }}/>
                 </fieldset>
-                <ServicePhotos jobId={row.jobId} disabled={saving||uncertain} onLockedChange={setPhotosLocked}/>
+                <ServicePhotos key={data.report?.reportId} reportId={data.report?.reportId} jobId={row.jobId} disabled={saving||uncertain} onLockedChange={setPhotosLocked}/>
                 <fieldset disabled={locked}>
                   {contentChanged &&
                     (data.report?.customerSignatureUrl ||
@@ -257,7 +258,7 @@ function ReportEditor({ row, onClose, onSaved }) {
                       <p className="whitespace-pre-wrap">{data.report?.[key] || 'Not recorded'}</p>
                     </section>
                   ))}
-                  <ServicePhotos jobId={row.jobId} disabled={saving||uncertain} onLockedChange={setPhotosLocked}/>
+                  <ServicePhotos key={data.report?.reportId} reportId={data.report?.reportId} jobId={row.jobId} disabled={saving||uncertain} onLockedChange={setPhotosLocked}/>
                   {['customer', 'technician'].map((who) => (
                     <section key={who}>
                       <h3>

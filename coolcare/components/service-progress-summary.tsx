@@ -1,3 +1,4 @@
+import {VisitReports} from '@/components/visit-reports';
 import { Clock3, Wrench, CalendarDays, ClipboardList } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -15,7 +16,7 @@ export function ServiceProgressSummary({
 }) {
   if (
     !progress ||
-    (!progress.events.length &&
+    (!progress.visitReports?.length && !progress.events.length &&
       !progress.extensionMinutes &&
       !progress.additionalRepairFee &&
       (!progress.followUpStatus || progress.followUpStatus === 'None'))
@@ -32,7 +33,7 @@ export function ServiceProgressSummary({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {!!progress.visits?.length && <details><summary>Visit records ({progress.visits.length})</summary>{progress.visits.map((v,i)=><section key={v.id} className="border rounded-lg p-3 my-2"><h4>Visit {i+1} · {v.outcome}</h4><p>{v.startedAt ? String(v.startedAt).replace('T',' ').slice(0,19) : 'Start not recorded'} – {String(v.endedAt).replace('T',' ').slice(0,19)}</p><p className="whitespace-pre-wrap">{v.snapshot.checklist_result || 'No checklist recorded.'}</p><p>{v.snapshot.problem_found}</p></section>)}</details>}
+        <VisitReports reports={progress.visitReports}/>
 
         {progress.extensionMinutes > 0 && (
           <div className="rounded-xl bg-primary/5 p-4">
@@ -69,8 +70,7 @@ export function ServiceProgressSummary({
                 : ''}
             </p>
             <p className="mt-2 text-xs text-amber-900">
-              The original visit and return work stay in the same service
-              report.
+              Each visit has a separate report under the same work order.
             </p>
           </div>
         )}

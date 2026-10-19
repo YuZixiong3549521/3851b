@@ -161,7 +161,7 @@ export async function resolveSignature(pool, user, id) {
     throw new AppError('Signature not found.', 404);
   const [[s]] = await pool.execute(
     `SELECT s.*,a.technician_id,t.user_id AS technicianUserId,c.user_id AS customerUserId,r.submitted_time,
- r.customer_signature_url,r.technician_signature_url FROM report_signature s JOIN work_order w ON w.job_id=s.job_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer c ON c.customer_id=b.customer_id LEFT JOIN service_report r ON r.job_id=w.job_id WHERE s.signature_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')`,
+ r.customer_signature_url,r.technician_signature_url FROM report_signature s JOIN work_order w ON w.job_id=s.job_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer c ON c.customer_id=b.customer_id LEFT JOIN service_report r ON COALESCE(r.job_id,r.archived_job_id)=w.job_id AND (r.customer_signature_url=CONCAT('/api/report-signatures/',s.signature_id) OR r.technician_signature_url=CONCAT('/api/report-signatures/',s.signature_id)) WHERE s.signature_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')`,
     [id],
   );
   const linked =

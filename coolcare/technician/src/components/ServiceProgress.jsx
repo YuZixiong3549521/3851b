@@ -117,8 +117,8 @@ export default function ServiceProgress({
     <section className="tech-cleaning-assessment space-y-4">
       <h3>Service updates and outcome</h3>
       <p>
-        All updates are retained with this work order and its original service
-        report. Customers and administrators can view them.
+        Updates stay with this work order. Each visit has its own service report,
+        photos and signatures. Customers and administrators can view them.
       </p>
       <div className="tech-guidance space-y-1">
         <p>

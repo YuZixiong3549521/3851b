@@ -238,7 +238,7 @@ export async function getBookingReport(pool, bookingId, userId) {
     `SELECT p.photo_id AS photoId, p.photo_url AS photoUrl, p.description, UNIX_TIMESTAMP(p.captured_time) AS capturedTimeEpoch
      FROM photo p
      JOIN work_order w ON w.job_id = p.job_id
-     WHERE w.booking_id = ? AND p.job_id = ?
+     WHERE w.booking_id = ? AND p.job_id = ? AND (p.report_id IS NULL OR p.report_id=(SELECT report_id FROM service_report WHERE job_id=p.job_id))
      ORDER BY p.captured_time`,
     [bookingId,rows[0].jobId],
   );

@@ -1,0 +1,10 @@
+USE coolcare_service_app;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='service_report' AND column_name='archived_job_id')=0, 'ALTER TABLE service_report ADD COLUMN archived_job_id INT UNSIGNED NULL, ADD CONSTRAINT fk_archived_report_job FOREIGN KEY (archived_job_id) REFERENCES work_order(job_id) ON DELETE CASCADE', 'SELECT 1');
+PREPARE cc_stmt FROM @ddl; EXECUTE cc_stmt; DEALLOCATE PREPARE cc_stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='photo' AND column_name='report_id')=0, 'ALTER TABLE photo ADD COLUMN report_id INT UNSIGNED NULL, ADD CONSTRAINT fk_photo_report FOREIGN KEY (report_id) REFERENCES service_report(report_id)', 'SELECT 1');
+PREPARE cc_stmt FROM @ddl; EXECUTE cc_stmt; DEALLOCATE PREPARE cc_stmt;
+SET @ddl = IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='service_report_revision' AND column_name='report_id')=0, 'ALTER TABLE service_report_revision ADD COLUMN report_id INT UNSIGNED NULL, ADD CONSTRAINT fk_revision_report FOREIGN KEY (report_id) REFERENCES service_report(report_id)', 'SELECT 1');
+PREPARE cc_stmt FROM @ddl; EXECUTE cc_stmt; DEALLOCATE PREPARE cc_stmt;
+ALTER TABLE service_report MODIFY job_id INT UNSIGNED NULL;
+UPDATE photo p JOIN service_report r ON r.job_id=p.job_id SET p.report_id=r.report_id WHERE p.report_id IS NULL;
+UPDATE service_report_revision v JOIN service_report r ON r.job_id=v.job_id SET v.report_id=r.report_id WHERE v.report_id IS NULL;

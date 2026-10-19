@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ServicePhotoGallery } from '@/components/service-photo-gallery';
 import { technicianRequest } from '../services/jobService.js';
-export default function ServicePhotos({ jobId, disabled, onLockedChange }) {
+export default function ServicePhotos({ jobId, reportId, disabled, onLockedChange }) {
   const [photos, setPhotos] = useState([]),
     [items, setItems] = useState([]),
     [error, setError] = useState(''),
@@ -87,6 +87,7 @@ export default function ServicePhotos({ jobId, disabled, onLockedChange }) {
     setBusy(true);
     pending.current ??= items.map((i) => ({
       requestId: i.id,
+      reportId,
       description: i.description.trim(),
       image: i.image,
     }));
