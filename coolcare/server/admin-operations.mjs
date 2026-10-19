@@ -1,4 +1,5 @@
 import { registerReturnRoutes } from './return-visits.mjs';
+import { registerAdminWorkspaceRoutes } from './admin-workspace.mjs';
 import { getServiceProgress } from './service-progress.mjs';
 import { assertBookingNotExpired } from './order-expiry.mjs';
 import {
@@ -33,9 +34,23 @@ import {
 import { travelStartTime } from './travel-planning.mjs';
 
 const requestSchema = z.object({ requestId: z.uuid() }).strict();
+const dispatchRequestSchema = requestSchema.extend({
+  review: z
+    .object({
+      status: z.enum(['Submitted', 'Confirmed', 'Assigned']),
+      date: z.string().refine(isCalendarDate),
+      timeSlot: z.string().max(50),
+      travelBufferMinutes: z.number().int().min(0).max(180),
+      technicianId: idSchema,
+    })
+    .strict()
+    .optional(),
+});
 const dispatchSchema = z.union([
-  requestSchema.extend({ mode: z.literal('automatic').optional() }).strict(),
-  requestSchema
+  dispatchRequestSchema
+    .extend({ mode: z.literal('automatic').optional() })
+    .strict(),
+  dispatchRequestSchema
     .extend({ mode: z.literal('manual'), technicianId: idSchema })
     .strict(),
 ]);
@@ -85,16 +100,28 @@ const pageSchema = z.object({
     ])
     .default(''),
   q: z.string().trim().max(120).default(''),
+  queue: z.enum(['', 'waiting', 'review']).default(''),
+  sort: z.enum(['placed', 'deadline']).default('placed'),
   page: z.coerce.number().int().min(1).max(1000000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
 });
 
+const canonicalPayload = (value) =>
+  Array.isArray(value)
+    ? value.map(canonicalPayload)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .map((key) => [key, canonicalPayload(value[key])]),
+        )
+      : value;
 const stableHash = (value) =>
   createHash('sha256')
-    .update(JSON.stringify(value, Object.keys(value).sort()))
+    .update(JSON.stringify(canonicalPayload(value)))
     .digest('hex');
 
-async function beginOperation(
+export async function beginOperation(
   connection,
   { requestId, bookingId, actorUserId, type, payload },
 ) {
@@ -126,7 +153,7 @@ async function beginOperation(
   return { replayed: false, hash };
 }
 
-async function finishOperation(
+export async function finishOperation(
   connection,
   { requestId, bookingId, actorUserId, type, hash, result },
 ) {
@@ -137,7 +164,7 @@ async function finishOperation(
   );
 }
 
-async function lockedBooking(connection, bookingId) {
+export async function lockedBooking(connection, bookingId) {
   const [[booking]] = await connection.execute(
     'SELECT * FROM booking WHERE booking_id=? FOR UPDATE',
     [bookingId],
@@ -349,9 +376,9 @@ export async function editTravelPlan(pool, actor, bookingId, raw) {
 export async function getAdminActionSummary(pool) {
   const [[bookings]] = await pool.execute(
     `SELECT
-      SUM(booking_status='Submitted' AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())) AS submitted,
+      SUM(booking_status='Submitted' AND admin_waiting_since IS NULL AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())) AS submitted,
       SUM(booking_status='Submitted' AND expires_at>UTC_TIMESTAMP() AND expires_at<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 12 HOUR)) AS expiringSoon,
-      SUM(booking_status='Confirmed') AS awaitingDispatch
+      SUM(booking_status='Confirmed' OR (booking_status='Submitted' AND admin_waiting_since IS NOT NULL AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()))) AS awaitingDispatch
     FROM booking`,
   );
   const [[returns]] = await pool.execute(
@@ -540,13 +567,25 @@ function dispatchOptionReason(option, currentTechnicianId) {
   return null;
 }
 
-export async function listDispatchOptions(pool, bookingId) {
+export async function listDispatchOptions(pool, bookingId, candidate = null) {
   const [[booking]] = await pool.execute(
     `SELECT b.booking_id,b.booking_status,b.preferred_service_date,b.preferred_time_slot,
     b.slot_start,b.slot_end,b.estimated_duration_minutes,b.travel_buffer_minutes,b.traffic_note,b.address_id FROM booking b WHERE b.booking_id=?`,
     [bookingId],
   );
   if (!booking) throw new AppError('Booking not found.', 404);
+  if (candidate) {
+    const slot = bookingServiceSlot(
+      candidate.timeSlot,
+      booking.estimated_duration_minutes,
+    );
+    Object.assign(booking, {
+      preferred_service_date: candidate.date,
+      preferred_time_slot: slot.code,
+      slot_start: slot.start,
+      slot_end: slot.end,
+    });
+  }
   if (!['Submitted', 'Confirmed', 'Assigned'].includes(booking.booking_status))
     throw new AppError(
       'Dispatch options are available only for bookings awaiting confirmation, dispatch or reassignment.',
@@ -726,6 +765,19 @@ export async function dispatchBooking(
     }
     if (booking.booking_status === 'Submitted')
       await assertBookingNotExpired(connection, booking);
+    if (
+      data.review &&
+      (data.review.status !== booking.booking_status ||
+        data.review.date !==
+          String(booking.preferred_service_date).slice(0, 10) ||
+        data.review.timeSlot !== booking.preferred_time_slot ||
+        data.review.travelBufferMinutes !==
+          Number(booking.travel_buffer_minutes ?? 30))
+    )
+      throw new AppError(
+        'The booking changed after review. Reload it and confirm the latest details.',
+        409,
+      );
     await lockServiceDates(connection, [booking.preferred_service_date]);
     let previous = null;
     if (redispatch) {
@@ -754,6 +806,11 @@ export async function dispatchBooking(
             selectionOptions,
           )
         : await chooseTechnician(connection, booking, selectionOptions);
+    if (data.review && data.review.technicianId !== technician.technicianId)
+      throw new AppError(
+        'The recommended technician changed. Review the refreshed recommendation and confirm again.',
+        409,
+      );
     if (previous) {
       await connection.execute(
         "UPDATE assignment SET assignment_status='Reassigned' WHERE assignment_id=?",
@@ -773,7 +830,7 @@ export async function dispatchBooking(
     );
     if (!redispatch) {
       await connection.execute(
-        "UPDATE booking SET booking_status='Assigned' WHERE booking_id=?",
+        "UPDATE booking SET booking_status='Assigned',admin_waiting_since=NULL,admin_waiting_reason=NULL WHERE booking_id=?",
         [bookingId],
       );
       if (booking.booking_status === 'Submitted')
@@ -993,10 +1050,15 @@ export async function listAdminBookings(pool, query) {
   const data = pageSchema.parse(query),
     where = [],
     values = [];
-  if (data.status) {
+  if (data.queue === 'waiting') {
+    where.push(
+      "(b.booking_status='Confirmed' OR (b.booking_status='Submitted' AND b.admin_waiting_since IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at>UTC_TIMESTAMP())))",
+    );
+  } else if (data.status) {
     where.push('b.booking_status=?');
     values.push(data.status);
   }
+  if (data.queue === 'review') where.push('b.admin_waiting_since IS NULL');
   if (data.q) {
     where.push(
       '(u.full_name LIKE ? OR u.email LIKE ? OR CAST(b.booking_id AS CHAR)=?)',
@@ -1015,7 +1077,7 @@ export async function listAdminBookings(pool, query) {
   );
   const [rows] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS preferredDate,
-    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,u.full_name AS customerName,u.email,
+    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,u.full_name AS customerName,u.email,
     sa.address_line AS addressLine,COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
     (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
     (SELECT technician_user.full_name FROM assignment latest_assignment JOIN technician latest_technician ON latest_technician.technician_id=latest_assignment.technician_id
@@ -1025,7 +1087,9 @@ export async function listAdminBookings(pool, query) {
     JOIN service_address sa ON sa.address_id=b.address_id JOIN service_catalog sc ON sc.service_id=b.service_id
     LEFT JOIN booking_service bs ON bs.booking_id=b.booking_id${clause}
     GROUP BY b.booking_id,b.booking_status,b.preferred_service_date,b.preferred_time_slot,b.total_amount,b.created_at,u.full_name,u.email,sa.address_line,sc.service_name
-    ORDER BY FIELD(b.booking_status,'Submitted','Confirmed','Assigned','On The Way','In Progress','Completed','Rejected','Cancelled','Expired'),
+    ORDER BY ${data.sort === 'deadline' ? 'b.expires_at IS NULL,b.expires_at,' : ''}
+      ${data.queue === 'waiting' ? 'b.created_at,b.booking_id,' : ''}
+      FIELD(b.booking_status,'Submitted','Confirmed','Assigned','On The Way','In Progress','Completed','Rejected','Cancelled','Expired'),
       CASE WHEN b.booking_status='Submitted' THEN b.created_at END ASC,
       CASE WHEN b.booking_status='Submitted' THEN b.booking_id END ASC,
       CASE WHEN b.booking_status<>'Submitted' THEN b.preferred_service_date END ASC,
@@ -1069,6 +1133,7 @@ export async function getAdminBooking(pool, bookingId) {
   const [[booking]] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS preferredDate,
     b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.problem_description AS problemDescription,b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,b.rejection_reason AS rejectionReason,b.rejection_version AS rejectionVersion,
+    b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,
     (SELECT details.special_notes FROM web_booking_details details WHERE details.booking_id=b.booking_id) AS otherRemarks,
     u.full_name AS customerName,u.email,u.phone,sa.address_line AS addressLine,sa.postal_code AS postalCode,
     COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
@@ -1397,6 +1462,7 @@ export async function transferOwner(pool, actor, targetUserId) {
 
 export function createAdminOperationsRouter(pool, { origin } = {}) {
   const router = express.Router();
+  registerAdminWorkspaceRoutes(router, pool);
   registerReturnRoutes(router, pool, 'admin');
   router.get('/action-summary', async (_req, res) =>
     res.json(await getAdminActionSummary(pool)),

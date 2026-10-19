@@ -12,4 +12,4 @@ SET @ddl = IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schem
  'ALTER TABLE technician ADD COLUMN hourly_labor_cost DECIMAL(10,2) NULL AFTER base_postal_code', 'SELECT 1');
 PREPARE cc_stmt FROM @ddl; EXECUTE cc_stmt; DEALLOCATE PREPARE cc_stmt;
 
-ALTER TABLE booking_admin_operation MODIFY operation_type ENUM('Approve','Reject','Dispatch','Redispatch','Reschedule','Edit rejection','Edit travel plan') NOT NULL;
+ALTER TABLE booking_admin_operation MODIFY operation_type ENUM('Approve','Reject','Dispatch','Redispatch','Reschedule','Edit rejection','Edit travel plan','Queue for dispatch','Retry customer email') NOT NULL;

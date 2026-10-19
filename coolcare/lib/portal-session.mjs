@@ -27,7 +27,7 @@ export function getSafeReturnTo(value, role) {
   if (url.origin !== 'https://coolcare.invalid' || /[%\\]/.test(url.pathname)) return null;
   const routes = {
     Customer: /^\/customer(?:\/(?:book|account|addresses|bookings(?:\/\d+)?|history(?:\/\d+)?))?\/?$/,
-    Admin: /^\/admin\/(?:orders(?:\/\d+)?|dispatch|technicians|admins|inventory(?:\/(?:parts(?:\/(?:new|\d+(?:\/edit)?))?|transactions(?:\/new)?))?)\/?$/,
+    Admin: /^\/admin\/(?:overview|audit|orders(?:\/\d+)?|dispatch|technicians|admins|inventory(?:\/(?:parts(?:\/(?:new|\d+(?:\/edit)?))?|transactions(?:\/new)?))?)\/?$/,
     Technician: /^\/technician\/index\.html$/,
   };
   if (!routes[role]?.test(url.pathname)) return null;

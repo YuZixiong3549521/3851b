@@ -12,4 +12,4 @@ UPDATE booking b SET rejection_reason=(SELECT h.change_note FROM booking_status_
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='technician' AND column_name='base_postal_code')=0,
  'ALTER TABLE technician ADD COLUMN base_postal_code CHAR(6) NULL', 'SELECT 1');
 PREPARE cc_stmt FROM @ddl; EXECUTE cc_stmt; DEALLOCATE PREPARE cc_stmt;
-ALTER TABLE booking_admin_operation MODIFY operation_type ENUM('Approve','Reject','Dispatch','Redispatch','Reschedule','Edit rejection') NOT NULL;
+ALTER TABLE booking_admin_operation MODIFY operation_type ENUM('Approve','Reject','Dispatch','Redispatch','Reschedule','Edit rejection','Edit travel plan','Queue for dispatch','Retry customer email') NOT NULL;

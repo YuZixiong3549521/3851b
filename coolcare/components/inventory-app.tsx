@@ -1,5 +1,9 @@
 'use client';
 import { PortalAccountMenu } from '@/components/portal-account-menu';
+import {
+  AdminOverviewPage,
+  AdminAuditPage,
+} from '@/components/admin-workspace';
 import { usePortalSession, type PortalUser } from '@/lib/use-portal-session';
 import { redirectToSessionPortal } from '@/lib/portal-session.mjs';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -223,6 +227,12 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
     params = new URLSearchParams(url.split('?')[1] || '');
   const operationsNav = [
     {
+      Icon: LayoutDashboard,
+      label: 'Overview',
+      path: '/admin/overview',
+      count: 0,
+    },
+    {
       Icon: ClipboardCheck,
       label: 'Orders',
       path: '/admin/orders',
@@ -235,6 +245,12 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
       count: actionSummary.awaitingDispatch,
     },
     { Icon: Users, label: 'Technicians', path: '/admin/technicians', count: 0 },
+    {
+      Icon: ClipboardCheck,
+      label: 'Operation log',
+      path: '/admin/audit',
+      count: 0,
+    },
     ...(user?.access_level === 'Owner'
       ? [{ Icon: UserCog, label: 'Admins', path: '/admin/admins', count: 0 }]
       : []),
@@ -248,19 +264,24 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
       path: ROOT + '/transactions',
     },
   ];
-  const active = pathname.startsWith('/admin/orders')
-    ? 'Orders'
-    : pathname.startsWith('/admin/dispatch')
-      ? 'Dispatch'
-      : pathname.startsWith('/admin/technicians')
-        ? 'Technicians'
-        : pathname.startsWith('/admin/admins')
-          ? 'Admins'
-          : pathname.includes('/parts')
-            ? 'Parts'
-            : pathname.includes('/transactions')
-              ? 'Transactions'
-              : 'Inventory';
+  const active =
+    pathname === '/admin/overview'
+      ? 'Overview'
+      : pathname === '/admin/audit'
+        ? 'Operation log'
+        : pathname.startsWith('/admin/orders')
+          ? 'Orders'
+          : pathname.startsWith('/admin/dispatch')
+            ? 'Dispatch'
+            : pathname.startsWith('/admin/technicians')
+              ? 'Technicians'
+              : pathname.startsWith('/admin/admins')
+                ? 'Admins'
+                : pathname.includes('/parts')
+                  ? 'Parts'
+                  : pathname.includes('/transactions')
+                    ? 'Transactions'
+                    : 'Inventory';
   const detailMatch = pathname.match(/\/parts\/(\d+)(\/edit)?$/);
   const orderMatch = pathname.match(/^\/admin\/orders\/(\d+)$/);
   const accountNavigate = (target: string) => {
@@ -381,12 +402,19 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
                 reloadActionSummary: loadActionSummary,
               }}
             >
-              {pathname === '/admin/orders' ? (
+              {pathname === '/admin/overview' ? (
+                <AdminOverviewPage />
+              ) : pathname === '/admin/audit' ? (
+                <AdminAuditPage params={params} />
+              ) : pathname === '/admin/orders' ? (
                 <OrdersPage mode="review" params={params} />
               ) : pathname === '/admin/dispatch' ? (
                 <DispatchCalendarPage params={params} />
               ) : orderMatch ? (
-                <OrderDetails bookingId={Number(orderMatch[1])} />
+                <OrderDetails
+                  key={orderMatch[1]}
+                  bookingId={Number(orderMatch[1])}
+                />
               ) : pathname === '/admin/technicians' ? (
                 <StaffPage role="Technician" />
               ) : pathname === '/admin/admins' &&

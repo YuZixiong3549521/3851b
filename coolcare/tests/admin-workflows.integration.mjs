@@ -12,6 +12,14 @@ import {
   listDispatchOptions,
 } from '../server/admin-operations.mjs';
 import { expireSubmittedBookings } from '../server/order-expiry.mjs';
+import {
+  queueBooking,
+  retryBookingEmail,
+  listBookingEmails,
+  getBookingPlanner,
+  listAdminAudit,
+  getOperationsOverview,
+} from '../server/admin-workspace.mjs';
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -24,6 +32,205 @@ const pool = mysql.createPool({
   connectionLimit: 3,
 });
 after(() => pool.end());
+
+test('waiting dispatch preserves deadlines and customer status, is idempotent, and clears on dispatch', () =>
+  fixture(async ({ c, db, actor, create }) => {
+    const id = await create('Submitted', '2090-01-01 00:00:00');
+    const input = {
+      requestId: randomUUID(),
+      reason: 'Waiting for suitable technician capacity',
+    };
+    assert.equal((await queueBooking(db, actor, id, input)).queued, true);
+    assert.equal((await queueBooking(db, actor, id, input)).replayed, true);
+    await assert.rejects(
+      queueBooking(db, actor, id, { ...input, reason: 'A different reason' }),
+      (e) => e.status === 409,
+    );
+    let detail = await getAdminBooking(db, id);
+    assert.equal(detail.status, 'Submitted');
+    assert.equal(detail.expiresAt, '2090-01-01 00:00:00');
+    assert.ok(detail.waitingSince);
+    assert.equal(detail.timeline.length, 1);
+    assert.equal((await listBookingEmails(db, id)).rows.length, 0);
+    assert.equal(
+      (await listAdminBookings(db, { queue: 'waiting', q: String(id) })).rows[0]
+        .bookingId,
+      id,
+    );
+    assert.equal(
+      (await listAdminBookings(db, { queue: 'review', q: String(id) })).rows
+        .length,
+      0,
+    );
+    await dispatchBooking(db, actor, id, { requestId: randomUUID() });
+    detail = await getAdminBooking(db, id);
+    assert.equal(detail.status, 'Assigned');
+    assert.equal(detail.waitingSince, null);
+    assert.equal(
+      (await listAdminBookings(db, { queue: 'waiting', q: String(id) })).rows
+        .length,
+      0,
+    );
+    assert.equal((await listBookingEmails(db, id)).rows.length, 1);
+    assert.equal((await listAdminAudit(db, { bookingId: id })).total, 2);
+    assert.ok((await getOperationsOverview(db)).counts.waiting >= 0);
+  }));
+
+test('expired queued requests leave the active queue and cannot be queued again', () =>
+  fixture(async ({ c, db, actor, create }) => {
+    const id = await create();
+    await queueBooking(db, actor, id, {
+      requestId: randomUUID(),
+      reason: 'Capacity unavailable',
+    });
+    await c.execute(
+      "UPDATE booking SET expires_at='2000-01-01 00:00:00' WHERE booking_id=?",
+      [id],
+    );
+    assert.equal(
+      (await listAdminBookings(db, { queue: 'waiting', q: String(id) })).total,
+      0,
+    );
+    await expireSubmittedBookings(db);
+    await assert.rejects(
+      queueBooking(db, actor, id, {
+        requestId: randomUUID(),
+        reason: 'Capacity unavailable',
+      }),
+      (e) => e.status === 409,
+    );
+    assert.equal((await getAdminBooking(db, id)).status, 'Expired');
+    assert.equal((await listBookingEmails(db, id)).rows.length, 0);
+  }));
+
+test('final dispatch review rejects stale details and changed recommendations without side effects', () =>
+  fixture(async ({ c, db, actor, create }) => {
+    const id = await create();
+    const options = await listDispatchOptions(db, id),
+      tech = options.technicians.find((t) => t.eligible);
+    assert.ok(tech);
+    const review = {
+      status: 'Submitted',
+      date: options.preferredDate,
+      timeSlot: options.timeSlot,
+      travelBufferMinutes: options.travelBufferMinutes,
+      technicianId: tech.technicianId,
+    };
+    await assert.rejects(
+      dispatchBooking(db, actor, id, {
+        requestId: randomUUID(),
+        review: { ...review, travelBufferMinutes: 179 },
+      }),
+      (e) => e.status === 409 && /changed/.test(e.message),
+    );
+    await assert.rejects(
+      dispatchBooking(db, actor, id, {
+        requestId: randomUUID(),
+        review: { ...review, technicianId: 999999999 },
+      }),
+      (e) =>
+        e.status === 409 && /recommended technician changed/.test(e.message),
+    );
+    assert.equal((await getAdminBooking(db, id)).assignments.length, 0);
+    assert.equal((await listBookingEmails(db, id)).rows.length, 0);
+    const request = { requestId: randomUUID(), review };
+    await dispatchBooking(db, actor, id, request);
+    assert.equal(
+      (await dispatchBooking(db, actor, id, request)).replayed,
+      true,
+    );
+    await assert.rejects(
+      dispatchBooking(db, actor, id, {
+        ...request,
+        review: { ...review, technicianId: 999999999 },
+      }),
+      (e) => e.status === 409,
+    );
+  }));
+
+test('manual failed-mail retry reuses the message, rejects nonfailed deliveries and records one operation', () =>
+  fixture(async ({ c, db, actor, create }) => {
+    const id = await create();
+    await dispatchBooking(db, actor, id, { requestId: randomUUID() });
+    const [[mail]] = await c.execute(
+      'SELECT * FROM booking_email_outbox WHERE booking_id=?',
+      [id],
+    );
+    await assert.rejects(
+      retryBookingEmail(db, actor, id, mail.email_id, {
+        requestId: randomUUID(),
+      }),
+      (e) => e.status === 409,
+    );
+    await c.execute(
+      "UPDATE booking_email_outbox SET delivery_mode='local',last_error='ECONNECTION',attempts=2,next_attempt_at='2090-01-01' WHERE email_id=?",
+      [mail.email_id],
+    );
+    assert.equal((await listBookingEmails(db, id)).rows[0].canRetry, true);
+    const input = { requestId: randomUUID() };
+    await retryBookingEmail(db, actor, id, mail.email_id, input);
+    assert.equal(
+      (await retryBookingEmail(db, actor, id, mail.email_id, input)).replayed,
+      true,
+    );
+    await assert.rejects(
+      retryBookingEmail(db, actor, id, mail.email_id, {
+        requestId: randomUUID(),
+      }),
+      (e) => e.status === 409,
+    );
+    const [[after]] = await c.execute(
+      'SELECT * FROM booking_email_outbox WHERE email_id=?',
+      [mail.email_id],
+    );
+    assert.equal(after.message_id, mail.message_id);
+    assert.equal(after.event_key, mail.event_key);
+    assert.equal(after.attempts, 2);
+    assert.equal(after.last_error, null);
+    assert.equal((await listBookingEmails(db, id)).rows.length, 1);
+    assert.equal(
+      (
+        await listAdminAudit(db, {
+          bookingId: id,
+          action: 'Retry customer email',
+        })
+      ).total,
+      1,
+    );
+    await c.execute(
+      "UPDATE booking_email_outbox SET status='Sent',sent_at=NOW() WHERE email_id=?",
+      [mail.email_id],
+    );
+    assert.equal((await listBookingEmails(db, id)).rows[0].canRetry, false);
+  }));
+
+test('weekly planner includes seven days, excludes closed and fully occupied choices, and never changes an appointment', () =>
+  fixture(async ({ c, db, create }) => {
+    const id = await create(),
+      before = await getAdminBooking(db, id);
+    const plan = await getBookingPlanner(db, id, { week: '2091-01-08' });
+    assert.equal(plan.days.length, 7);
+    assert.equal(plan.days.filter((day) => day.closed).length, 2);
+    assert.ok(
+      plan.days
+        .filter((day) => day.closed)
+        .every((day) => day.slots.every((slot) => !slot.available)),
+    );
+    assert.ok(
+      plan.days.some((day) =>
+        day.slots.some((slot) => slot.available && slot.eligibleCount > 0),
+      ),
+    );
+    await c.execute("UPDATE technician SET availability_status='On Leave'");
+    const full = await getBookingPlanner(db, id, { week: '2091-01-08' });
+    assert.ok(
+      full.days.every((day) => day.slots.every((slot) => !slot.available)),
+    );
+    const after = await getAdminBooking(db, id);
+    assert.equal(after.preferredDate, before.preferredDate);
+    assert.equal(after.timeSlot, before.timeSlot);
+    assert.equal((await listBookingEmails(db, id)).rows.length, 0);
+  }));
 async function fixture(run) {
   const c = await pool.getConnection();
   await c.beginTransaction();

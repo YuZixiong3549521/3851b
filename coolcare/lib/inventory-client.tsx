@@ -54,6 +54,8 @@ export type AdminBooking = {
   totalAmount: number | null;
   createdAt: string;
   customerName: string;
+  waitingSince?: string | null;
+  waitingReason?: string | null;
   email: string;
   addressLine: string;
   serviceName: string;

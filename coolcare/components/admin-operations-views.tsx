@@ -1,12 +1,17 @@
 'use client';
 import { ReturnVisitsPanel } from '@/components/return-visits-panel';
+import {
+  AdminPlanner,
+  CustomerMailPanel,
+  DispatchReviewButton,
+  WaitingDispatchControl,
+} from '@/components/admin-workspace';
 import { ServicePhotoGallery } from '@/components/service-photo-gallery';
 import { SignatureImage } from '@/components/signature-image';
 
 import { useEffect, useRef, useState } from 'react';
 import {
   CalendarDays,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   RefreshCw,
@@ -170,7 +175,17 @@ export function OrdersPage({
           : 'Submitted'
         : 'Confirmed';
   const page = Math.max(1, Number(params.get('page') || 1)),
-    query = new URLSearchParams({ status, page: String(page), pageSize: '20' });
+    query = new URLSearchParams({
+      status,
+      page: String(page),
+      pageSize: '20',
+      sort: params.get('sort') === 'deadline' ? 'deadline' : 'placed',
+      ...(mode === 'dispatch'
+        ? { queue: 'waiting' }
+        : status === 'Submitted' && params.get('sort') !== 'deadline'
+          ? { queue: 'review' }
+          : {}),
+    });
   const resource = useResource<List<AdminBooking>>(
     `/admin/bookings?${query}`,
     version,
@@ -270,11 +285,26 @@ export function OrdersPage({
               <option value="Expired">Expired</option>
             </NativeSelect>
           </label>
+          <label htmlFor="review-order-sort" className="text-sm font-semibold">
+            Order by
+            <NativeSelect
+              id="review-order-sort"
+              value={params.get('sort') === 'deadline' ? 'deadline' : 'placed'}
+              onChange={(e) =>
+                go(`/admin/orders?status=${status}&sort=${e.target.value}`)
+              }
+            >
+              <option value="placed">Oldest placed first</option>
+              <option value="deadline">Earliest confirmation deadline</option>
+            </NativeSelect>
+          </label>
           {status === 'Submitted' && (
             <p className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm font-medium text-red-800">
               <AlertCircle className="size-4" />
-              Oldest requests appear first. Confirmation requires a successful
-              technician assignment.
+              {params.get('sort') === 'deadline'
+                ? 'Requests with the earliest deadlines appear first, including waiting-dispatch requests.'
+                : 'Oldest requests appear first. Queued requests appear under Dispatch.'}{' '}
+              Confirmation requires a successful technician assignment.
             </p>
           )}
         </div>
@@ -358,7 +388,7 @@ export function OrdersPage({
               pageSize={data.pageSize}
               onPage={(next) =>
                 go(
-                  `/${mode === 'review' ? 'admin/orders' : 'admin/dispatch'}?page=${next}&status=${status}`,
+                  `/${mode === 'review' ? 'admin/orders' : 'admin/dispatch'}?page=${next}&status=${status}&sort=${params.get('sort') === 'deadline' ? 'deadline' : 'placed'}`,
                 )
               }
             />
@@ -395,7 +425,7 @@ export function DispatchCalendarPage({ params }: { params: URLSearchParams }) {
     version,
   );
   const queue = useResource<List<AdminBooking>>(
-    `/admin/bookings?status=Confirmed&page=${page}&pageSize=20`,
+    `/admin/bookings?queue=waiting&page=${page}&pageSize=20&sort=${params.get('sort') === 'deadline' ? 'deadline' : 'placed'}`,
     version,
   );
   const days = Array.from({ length: 7 }, (_, index) =>
@@ -411,6 +441,7 @@ export function DispatchCalendarPage({ params }: { params: URLSearchParams }) {
     nextPage = page,
   ) => {
     const query = new URLSearchParams({ week: nextWeek });
+    if (params.get('sort') === 'deadline') query.set('sort', 'deadline');
     if (nextDate) query.set('date', nextDate);
     if (nextPage > 1) query.set('page', String(nextPage));
     return `/admin/dispatch?${query}`;
@@ -466,7 +497,9 @@ export function DispatchCalendarPage({ params }: { params: URLSearchParams }) {
         <div className="stat">
           <span>AWAITING DISPATCH</span>
           <strong>{queue.data?.total ?? '—'}</strong>
-          <small>Confirmed bookings across all dates</small>
+          <small>
+            Waiting requests and confirmed bookings across all dates
+          </small>
         </div>
         <div className="stat">
           <span>WEEKLY VISITS</span>
@@ -570,11 +603,31 @@ export function DispatchCalendarPage({ params }: { params: URLSearchParams }) {
           <section className="panel table-panel admin-operations-table mt-6">
             <div className="schedule-queue-heading">
               <div>
-                <h2>Confirmed bookings awaiting dispatch</h2>
+                <h2>Waiting dispatch — all dates</h2>
                 <p className="muted">
                   Open a booking to adjust its appointment, then choose
                   automatic or manual dispatch.
                 </p>
+                <label htmlFor="dispatch-queue-sort" className="mt-3 block text-sm">
+                  Queue order
+                  <NativeSelect
+                    id="dispatch-queue-sort"
+                    value={
+                      params.get('sort') === 'deadline' ? 'deadline' : 'placed'
+                    }
+                    onChange={(event) => {
+                      const next = new URLSearchParams(params);
+                      next.set('sort', event.target.value);
+                      next.delete('page');
+                      go(`/admin/dispatch?${next}`);
+                    }}
+                  >
+                    <option value="placed">Oldest placed first</option>
+                    <option value="deadline">
+                      Earliest confirmation deadline
+                    </option>
+                  </NativeSelect>
+                </label>
               </div>
             </div>
             <Table>
@@ -594,6 +647,19 @@ export function DispatchCalendarPage({ params }: { params: URLSearchParams }) {
                       <strong>
                         BK-{String(row.bookingId).padStart(4, '0')}
                       </strong>
+                      <small className="block muted">
+                        Placed {displayExpiry(row.createdAt)}
+                      </small>
+                      {row.waitingSince && (
+                        <small className="block text-amber-800">
+                          Waiting: {row.waitingReason}
+                        </small>
+                      )}
+                      {row.status === 'Submitted' && row.expiresAt && (
+                        <small className="block text-red-700">
+                          Confirm by {displayExpiry(row.expiresAt)}
+                        </small>
+                      )}
                     </TableCell>
                     <TableCell data-label="Customer">
                       <strong>{row.customerName}</strong>
@@ -629,8 +695,8 @@ export function DispatchCalendarPage({ params }: { params: URLSearchParams }) {
           </section>
         ) : (
           <NoResults
-            title="No confirmed bookings awaiting dispatch"
-            description="Approved bookings will appear here until assigned."
+            title="No bookings waiting for dispatch"
+            description="Queued requests and confirmed bookings appear here until assigned or closed."
           />
         ))}
     </>
@@ -1448,49 +1514,34 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   {dispatchOptions.data && !hasEligibleTechnician && (
                     <p className="notice error mt-3" role="alert">
                       No technician is available for this appointment. Change
-                      the appointment, update technician availability or reject
-                      the request. The booking cannot be confirmed without an
-                      assignment.
+                      the appointment, move it to waiting dispatch, update
+                      technician availability or reject the request. The booking
+                      cannot be confirmed without an assignment.
                     </p>
                   )}
-                  <Button
-                    className="mt-4"
-                    disabled={
-                      Boolean(busy) ||
-                      scheduleDirty ||
-                      travelDirty ||
-                      dispatchOptions.loading ||
-                      !hasEligibleTechnician ||
-                      (dispatchMode === 'manual' &&
-                        !selectedTechnician?.eligible)
-                    }
-                    onClick={() => action(dispatchAction)}
-                  >
-                    {booking.status === 'Submitted' ? (
-                      <CheckCircle2 />
-                    ) : dispatchAction === 'redispatch' ? (
-                      <RefreshCw />
-                    ) : (
-                      <Send />
+                  <div className="mt-4">
+                    <DispatchReviewButton
+                      booking={booking}
+                      mode={dispatchMode}
+                      technicianId={selectedTechnicianId}
+                      onReload={dispatchOptions.reload}
+                      disabled={
+                        Boolean(busy) ||
+                        scheduleDirty ||
+                        travelDirty ||
+                        dispatchOptions.loading ||
+                        !hasEligibleTechnician ||
+                        (dispatchMode === 'manual' &&
+                          !selectedTechnician?.eligible)
+                      }
+                    />
+                    {dispatchAction === 'dispatch' && (
+                      <WaitingDispatchControl
+                        booking={booking}
+                        disabled={Boolean(busy) || scheduleDirty || travelDirty}
+                      />
                     )}
-                    {busy === dispatchAction
-                      ? booking.status === 'Submitted'
-                        ? 'Confirming and assigning…'
-                        : dispatchAction === 'redispatch'
-                          ? 'Reassigning…'
-                          : 'Assigning…'
-                      : dispatchMode === 'manual'
-                        ? booking.status === 'Submitted'
-                          ? 'Confirm and assign selected technician'
-                          : dispatchAction === 'redispatch'
-                            ? 'Reassign selected technician'
-                            : 'Assign selected technician'
-                        : booking.status === 'Submitted'
-                          ? 'Confirm and automatically assign'
-                          : dispatchAction === 'redispatch'
-                            ? 'Automatically redispatch'
-                            : 'Automatically assign technician'}
-                  </Button>
+                  </div>
                 </div>
               )}
               {error && (
@@ -1633,6 +1684,18 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
               )}
             </section>
           </div>
+          {canEditSchedule && (
+            <AdminPlanner
+              key={bookingId}
+              booking={booking}
+              disabled={Boolean(busy) || travelDirty}
+              onSelect={(preferredDate, timeSlot) => {
+                setScheduleDraft({ bookingId, preferredDate, timeSlot });
+                setError('');
+              }}
+            />
+          )}
+          <CustomerMailPanel bookingId={bookingId} />
         </>
       )}
     </>

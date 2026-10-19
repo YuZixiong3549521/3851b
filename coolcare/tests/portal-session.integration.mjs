@@ -12,6 +12,20 @@ const protectedRoutes = {
 };
 const password = 'PortalSessionTest2026!';
 
+test('Admin workspace rejects other roles and reserves audit export for the Owner', async () => {
+  await withPortalFixture(async client => {
+    for (const role of ['Customer','Technician']) {
+      await client.login(role);
+      for (const path of ['/api/admin/operations-overview','/api/admin/audit','/api/admin/audit/export']) assert.ok([401,403].includes((await client.request(path)).status));
+    }
+    await client.login('Admin');
+    assert.equal((await client.request('/api/admin/operations-overview')).status,200);
+    assert.equal((await client.request('/api/admin/audit')).status,200);
+    assert.equal((await client.request('/api/admin/audit/export')).status,403);
+    assert.equal((await client.request('/api/admin/bookings/1/waiting-dispatch',{method:'POST',token:null,body:{requestId:randomUUID(),reason:'Capacity full'}})).status,403);
+  });
+});
+
 // Only isolated accounts are inserted. The same connection serves real HTTP
 // requests inside an outer rollback transaction, leaving existing data intact.
 async function withPortalFixture(work) {

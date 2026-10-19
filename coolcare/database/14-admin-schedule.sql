@@ -3,4 +3,4 @@ USE coolcare_service_app;
 -- Record idempotent administrator schedule changes alongside review and
 -- dispatch operations. Reapplying the enum definition is safe.
 ALTER TABLE booking_admin_operation
-  MODIFY operation_type ENUM('Approve','Reject','Dispatch','Redispatch','Reschedule','Edit rejection') NOT NULL;
+  MODIFY operation_type ENUM('Approve','Reject','Dispatch','Redispatch','Reschedule','Edit rejection','Edit travel plan','Queue for dispatch','Retry customer email') NOT NULL;

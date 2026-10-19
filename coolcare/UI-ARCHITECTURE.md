@@ -1,5 +1,11 @@
 # Shared UI and application architecture
 
+## Admin operations workspace update
+
+`components/admin-workspace.tsx` adds the Operations overview, booking operation log, final dispatch review, waiting-dispatch control, weekly alternative-time planner and customer email status. These reuse the shared buttons, English date picker, native selects and Base UI dialogs. `/admin/overview` and `/admin/audit` join the existing Admin shell and permitted login-return routes.
+
+The planner displays all seven days with horizontal scrolling on narrow screens and explicitly marks weekends and closed hours. Choosing a slot only stages the appointment form. Dispatch confirmation presents the exact proposed technician, service time, address and travel allowance, then checks the reviewed values under the server transaction. Waiting-dispatch requests retain their customer status and deadline. The operation-log CSV action is Owner-only, while everyday planning, dispatch and failed customer-email retries are available to Admin. See `BOOKING-WORKFLOWS.md` for the API and delivery semantics.
+
 The running application uses React on the frontend, Node.js with Express for HTTP APIs, and MySQL for persisted business data. Vinext provides the main frontend routing/build; the technician portal retains its Vite entry point and existing URLs.
 
 `coolcare/` is self-contained: both frontend sources, shared UI, server code, runtime assets and database migrations are tracked here. Setup and builds do not copy files from the old uploaded projects. Those references are ignored locally and absent from new checkouts; see [ORIGINS.md](ORIGINS.md). The optional SQLite importer requires an explicit local source path and is not part of normal startup.
