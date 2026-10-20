@@ -24,6 +24,8 @@ One bundle contains four quarterly cleaning visits at the same address. The tech
 
 For example, an HDB 4-room property with three units costs 260 per year, allocated as four visits of 65. Four units at that property cost 340 per year, or 85 per visit. A condominium with four units costs 360 per year. Customers pay after each service visit; no payment is collected online.
 
+Payment collection and receipt/refund records are outside the active website workflow. Completion rewards use the recorded service amount, including technician extras and excluding the applied reward discount; they do not depend on a payment record. Each quarterly booking earns once when completed. The service-value figures in reports are not evidence that money was received.
+
 The first appointment must be a weekday at least 14 calendar days ahead in Singapore time. Subsequent dates are three months apart; weekends move to Monday. The same address may have at most one cleaning visit in each Monday–Sunday calendar week, including combined services and annual visits. Repair-only visits do not consume this cleaning quota. Changes must be made at least 72 hours before the original visit, and the new appointment must also be at least 72 hours ahead. Annual changes stay within that visit's quarterly window.
 
 ## Pricing references

@@ -1,4 +1,5 @@
 import {snapshotVisit} from './return-visits.mjs';
+import {awardCompletedBookingRewards} from './commerce.mjs';
 import {registerTechnicianPhotos} from './service-photo-upload.mjs';
 import {getServiceProgress} from './service-progress.mjs';
 import {
@@ -138,6 +139,7 @@ export async function saveReport(pool, userId, jobId, raw) {
         "UPDATE booking SET booking_status='Completed' WHERE booking_id=?",
         [w.booking_id],
       );
+      await awardCompletedBookingRewards(c,w.booking_id);
       await c.execute(
         "UPDATE assignment SET assignment_status='Completed' WHERE assignment_id=?",
         [w.assignment_id],

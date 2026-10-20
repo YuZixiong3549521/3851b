@@ -10,6 +10,8 @@ Plan state is derived on each read from the current bookings and Singapore date.
 
 There is no automatic charging or automatic renewal. Renewal opens 60 days before the final quarterly window ends, or after all four visits are complete. The customer opens `/customer/book?renewPlan=<seriesId>`, reviews the latest catalogue price, property type and all four dates, then submits normally. The new first visit must be on or after the prior term's end and obey the existing minimum 14 days / weekday rule.
 
+The website has no payment or receipt-entry workflow. Each quarterly booking can earn completion rewards once, based on that visit's allocated service amount plus technician extras and less any applied reward discount. Return visits and report edits do not create another reward for the same booking. Historical Completed bookings are not backfilled. See [COMMERCE-REWARDS.md](COMMERCE-REWARDS.md).
+
 The booking transaction validates ownership under the same customer row lock used by every booking creation. The original series and its renewal link are immutable and need no update privileges. `annual_plan_renewal` links the reviewed new series to its source with unique keys. The ordinary booking request ID handles retries; a second request ID cannot create another renewal of the same plan. Customers are directed to their existing renewed plan instead.
 
 Reminders are in-app on My Plans, generated from current persisted data when the page loads and on its normal focus/minute refresh: next quarterly appointment within seven days, and renewal eligibility. Acknowledgement is stored in `annual_plan_notice`; changing the appointment produces a new reminder key. No external email is sent by this feature.

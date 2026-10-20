@@ -8,13 +8,31 @@ import { changePublicBooking } from '../server/public-site.mjs';
 import { rejectBooking } from '../server/admin-operations.mjs';
 import { expireSubmittedBookings } from '../server/order-expiry.mjs';
 import { addCalendarDays } from '../server/customer/booking-schedule.mjs';
-import { recordPayment, reserveReward, releaseBookingRewardReservation, adjustReward, updateRewardRule, rewardsSummary, commerceReport, listPaymentBookings } from '../server/commerce.mjs';
+import { awardCompletedBookingRewards, reserveReward, releaseBookingRewardReservation, adjustReward, updateRewardRule, rewardsSummary, commerceReport, listRewardBookings } from '../server/commerce.mjs';
+import { updateTechnicianJobStatus } from '../server/technician.mjs';
+import { getReport, saveReport } from '../server/technician-pages.mjs';
 
 const pool = mysql.createPool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME, dateStrings: true, connectionLimit: 5 });
 const cleanupPool = mysql.createPool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: 'root', password: process.env.MYSQL_ROOT_PASSWORD, database: process.env.DB_NAME, dateStrings: true });
 after(async () => { await pool.end(); await cleanupPool.end(); });
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-const receipt = (amount, extra = {}) => ({ requestId: randomUUID(), kind: 'Receipt', amount, method: 'PayNow', receivedDate: today(), notes: 'Synthetic isolated settlement test.', ...extra });
+async function complete(db, bookingId) {
+  const c = await db.getConnection();
+  try {
+    await c.beginTransaction();
+    await c.execute("UPDATE booking SET booking_status='Completed' WHERE booking_id=?", [bookingId]);
+    const result = await awardCompletedBookingRewards(c, bookingId);
+    await c.commit();
+    return result;
+  } catch (error) { await c.rollback(); throw error; } finally { c.release(); }
+}
+async function makeJob(c, f, bookingId) {
+  const [[tech]] = await c.query('SELECT technician_id,user_id FROM technician ORDER BY technician_id LIMIT 1');
+  const [assignment] = await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Assigned')", [bookingId, tech.technician_id, f.adminId]);
+  const [job] = await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,current_status) VALUES (?,?,?,'Assigned')", [bookingId, assignment.insertId, today()]);
+  return { jobId: job.insertId, userId: tech.user_id };
+}
+const reportContent = { workPerformed: 'Synthetic completed cleaning checks', problemFound: '', solutionApplied: 'Cleaned filters', checklist: 'Cooling checked', customerSignatureUrl: '', technicianSignatureUrl: '' };
 
 async function makeFixture(c) {
   const [[role]] = await c.query("SELECT role_id FROM role WHERE role_name='Customer'");
@@ -26,7 +44,7 @@ async function makeFixture(c) {
   const [a] = await c.execute('INSERT INTO service_address(customer_id,address_line,postal_code) VALUES (?,?,?)', [customer.insertId, 'Isolated commerce test address', '560123']);
   const bookings = [];
   for (let i = 0; i < 3; i++) {
-    const [b] = await c.execute(`INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,preferred_time_slot,booking_status,total_amount) VALUES (?,?,?,?,'09:00 - 11:00','Completed',100)`, [customer.insertId, a.insertId, service.service_id, today()]);
+    const [b] = await c.execute(`INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,preferred_time_slot,booking_status,total_amount) VALUES (?,?,?,?,'09:00 - 11:00','Assigned',100)`, [customer.insertId, a.insertId, service.service_id, today()]);
     bookings.push(b.insertId);
   }
   return { userId: u.insertId, customerId: customer.insertId, addressId: a.insertId, adminId: admin.user_id, serviceId: service.service_id, bookings, email, password };
@@ -42,29 +60,33 @@ async function setRule(db, c, actor, patch = {}) {
   return updateRewardRule(db, actor, { requestId: randomUUID(), expectedVersion: r.version, pointsPerDollar: 1, redemptionPoints: 100, redemptionValue: 5, reason: 'Isolated rule configuration for validation.', ...patch });
 }
 
-test('commerce partial receipts are cumulative, immutable/idempotent and refunds reverse only actual earnings', () => fixture(async (db, c, f) => {
+test('End service and report submission award once without payments, including repair extras', () => fixture(async (db, c, f) => {
   await setRule(db, c, f.adminId);
-  const first = receipt(10.51);
-  const saved = await recordPayment(db, f.adminId, f.bookings[0], first);
-  assert.equal(saved.pointsChange, 10);
-  assert.deepEqual(await recordPayment(db, f.adminId, f.bookings[0], first), saved);
-  await assert.rejects(recordPayment(db, f.adminId, f.bookings[0], { ...first, amount: 11 }), /request ID/);
-  assert.equal((await recordPayment(db, f.adminId, f.bookings[0], receipt(0.49))).pointsChange, 1);
-  await assert.rejects(recordPayment(db, f.adminId, f.bookings[0], receipt(90)), /exceeds/);
+  const first = await makeJob(c, f, f.bookings[0]), second = await makeJob(c, f, f.bookings[1]);
+  await c.execute('INSERT INTO service_progress(job_id,additional_repair_fee) VALUES (?,25.99)', [first.jobId]);
+  await updateTechnicianJobStatus(db, first.userId, first.jobId, { requestId: randomUUID(), expectedStatus: 'Assigned', status: 'In Progress' });
+  const end = { requestId: randomUUID(), expectedStatus: 'In Progress', status: 'Completed' };
+  await updateTechnicianJobStatus(db, first.userId, first.jobId, end);
+  await updateTechnicianJobStatus(db, first.userId, first.jobId, end);
+  assert.equal((await rewardsSummary(db, f.customerId)).balance, 125);
+  const saved = await getReport(db, first.userId, first.jobId);
+  await saveReport(db, first.userId, first.jobId, { requestId: randomUUID(), expectedVersion: saved.version, report: reportContent });
+  assert.equal((await rewardsSummary(db, f.customerId)).balance, 125, 'late report does not repeat earning');
   await setRule(db, c, f.adminId, { pointsPerDollar: 5 });
-  assert.equal((await recordPayment(db, f.adminId, f.bookings[0], receipt(1))).pointsChange, 1, 'original earning rate is frozen');
-  const refund = await recordPayment(db, f.adminId, f.bookings[0], receipt(2, { kind: 'Refund' }));
-  assert.equal(refund.pointsChange, -2);
+  assert.equal((await complete(db, f.bookings[0])).awardedPoints, 125, 'completed reward keeps its original rate');
+  await updateTechnicianJobStatus(db, second.userId, second.jobId, { requestId: randomUUID(), expectedStatus: 'Assigned', status: 'In Progress' });
+  const draft = await getReport(db, second.userId, second.jobId);
+  const submission = { requestId: randomUUID(), expectedVersion: draft.version, report: reportContent };
+  await saveReport(db, second.userId, second.jobId, submission);
+  await saveReport(db, second.userId, second.jobId, submission);
   const summary = await rewardsSummary(db, f.customerId);
-  assert.equal(summary.balance, 10);
-  assert.equal(summary.payments.length, 4);
-  assert.equal(summary.bookings.find(b => b.bookingId === f.bookings[0]).netReceived, 10);
-  await assert.rejects(recordPayment(db, f.adminId, f.bookings[0], receipt(11, { kind: 'Refund' })), /Refund exceeds/);
-  await c.execute("UPDATE booking SET booking_status='Assigned' WHERE booking_id=?", [f.bookings[1]]);
-  await assert.rejects(recordPayment(db, f.adminId, f.bookings[1], receipt(50)), /completed/);
+  assert.equal(summary.balance, 625);
+  assert.equal(summary.history.filter(h => h.type === 'Earned').length, 2);
+  assert.equal('payments' in summary, false);
+  await assert.rejects(awardCompletedBookingRewards(c, f.bookings[2]), /only when/);
 }));
 
-test('reward reservation freezes rate, releases on closed booking and consumes points once at first receipt', () => fixture(async (db, c, f) => {
+test('reward reservation freezes discount and consumes points once on completion', () => fixture(async (db, c, f) => {
   await setRule(db, c, f.adminId);
   await adjustReward(db, f.adminId, f.customerId, { requestId: randomUUID(), points: 250, reason: 'Seed isolated loyalty validation points.' });
   const reservation = { requestId: randomUUID(), points: 100 };
@@ -78,9 +100,8 @@ test('reward reservation freezes rate, releases on closed booking and consumes p
   await releaseBookingRewardReservation(c, f.bookings[1], 'Cancelled by test.');
   assert.equal((await rewardsSummary(db, f.customerId)).available, 150);
   await setRule(db, c, f.adminId, { redemptionValue: 10 });
-  const payment = receipt(95);
-  await recordPayment(db, f.adminId, f.bookings[0], payment);
-  await recordPayment(db, f.adminId, f.bookings[0], payment);
+  await complete(db, f.bookings[0]);
+  await complete(db, f.bookings[0]);
   const summary = await rewardsSummary(db, f.customerId);
   assert.equal(summary.balance, 245);
   assert.equal(summary.reserved, 0);
@@ -89,19 +110,41 @@ test('reward reservation freezes rate, releases on closed booking and consumes p
   await assert.rejects(reserveReward(db, f.userId, f.customerId, f.bookings[0], { requestId: randomUUID(), points: 0 }), /already been applied/);
 }));
 
-test('refunds after points are spent create debt and future earnings repay it without duplicate return earnings', () => fixture(async (db, c, f) => {
+test('full discounts earn zero and insufficient reserved points do not block completion', () => fixture(async (db, c, f) => {
   await setRule(db, c, f.adminId);
-  await recordPayment(db, f.adminId, f.bookings[0], receipt(100));
+  await adjustReward(db, f.adminId, f.customerId, { requestId: randomUUID(), points: 2200, reason: 'Synthetic full-discount validation.' });
+  await reserveReward(db, f.userId, f.customerId, f.bookings[0], { requestId: randomUUID(), points: 2000 });
+  const full = await complete(db, f.bookings[0]);
+  assert.equal(full.awardedPoints, 0); assert.equal(full.redeemedPoints, 2000);
   await reserveReward(db, f.userId, f.customerId, f.bookings[1], { requestId: randomUUID(), points: 100 });
-  await recordPayment(db, f.adminId, f.bookings[1], receipt(1));
-  await recordPayment(db, f.adminId, f.bookings[0], receipt(100, { kind: 'Refund' }));
+  await reserveReward(db, f.userId, f.customerId, f.bookings[2], { requestId: randomUUID(), points: 100 });
+  await adjustReward(db, f.adminId, f.customerId, { requestId: randomUUID(), points: -100, reason: 'Synthetic reservation shortage.' });
+  const reduced = await complete(db, f.bookings[1]);
+  assert.equal(reduced.redeemedPoints, 0); assert.equal(reduced.awardedPoints, 100);
   let summary = await rewardsSummary(db, f.customerId);
-  assert.equal(summary.balance, -99); assert.equal(summary.available, 0); assert.equal(summary.debt, 99);
-  await recordPayment(db, f.adminId, f.bookings[2], receipt(100));
+  assert.equal(summary.balance, 200); assert.equal(summary.reserved, 100);
+  assert.ok(summary.history.some(h => h.points === 0 && h.description.includes('reduced')));
+  await complete(db, f.bookings[2]);
   summary = await rewardsSummary(db, f.customerId);
-  assert.equal(summary.balance, 1); assert.equal(summary.available, 1);
-  const [[r]] = await c.execute('SELECT COUNT(*) AS n FROM reward_booking_earning WHERE booking_id=?', [f.bookings[0]]);
-  assert.equal(r.n, 1);
+  assert.equal(summary.balance, 195); assert.equal(summary.reserved, 0);
+}));
+
+test('completion marker prevents historical backfill, unknown prices and rolled-back awards', () => fixture(async (db, c, f) => {
+  await setRule(db, c, f.adminId);
+  await c.execute("INSERT INTO booking_completion_reward(booking_id,outcome,note) VALUES (?,'Historical','Pre-cutover booking')", [f.bookings[0]]);
+  assert.equal((await complete(db, f.bookings[0])).replayed, true);
+  assert.equal((await rewardsSummary(db, f.customerId)).balance, 0);
+  await c.execute('UPDATE booking SET total_amount=NULL WHERE booking_id=?', [f.bookings[1]]);
+  const unknown = await complete(db, f.bookings[1]);
+  assert.equal(unknown.outcome, 'Unknown price'); assert.equal(unknown.awardedPoints, 0);
+  await c.query('SAVEPOINT before_failed_completion');
+  await c.execute("UPDATE booking SET booking_status='Completed' WHERE booking_id=?", [f.bookings[2]]);
+  await awardCompletedBookingRewards(c, f.bookings[2]);
+  await c.query('ROLLBACK TO SAVEPOINT before_failed_completion');
+  const [[b]] = await c.execute('SELECT booking_status FROM booking WHERE booking_id=?', [f.bookings[2]]);
+  assert.equal(b.booking_status, 'Assigned');
+  assert.equal((await rewardsSummary(db, f.customerId)).balance, 0);
+  assert.equal((await complete(db, f.bookings[2])).awardedPoints, 100);
 }));
 
 test('actual customer cancellation, admin rejection and expiry atomically release reserved rewards', () => fixture(async (db, c, f) => {
@@ -124,28 +167,30 @@ test('actual customer cancellation, admin rejection and expiry atomically releas
   assert.equal(summary.history.filter(h => h.type === 'Redeemed').length, 0);
 }));
 
-test('commerce report separates service quotes, real cash and order/visit counts with filters', () => fixture(async (db, c, f) => {
+test('reports show completed service values and reward discounts with service and visit filters', () => fixture(async (db, c, f) => {
   await setRule(db, c, f.adminId);
   const [services] = await c.query('SELECT s.service_id,s.service_name FROM simple_service_catalog x JOIN service_catalog s ON s.service_id=x.service_id ORDER BY s.service_id');
   for (const s of services) await c.execute('INSERT INTO booking_service(booking_id,service_id,service_name,base_price,additional_unit_price,quantity,line_total) VALUES (?,?,?,50,0,1,50)', [f.bookings[0], s.service_id, s.service_name]);
-  await recordPayment(db, f.adminId, f.bookings[0], receipt(50));
-  await recordPayment(db, f.adminId, f.bookings[0], receipt(10, { kind: 'Refund' }));
+  await adjustReward(db, f.adminId, f.customerId, { requestId: randomUUID(), points: 100, reason: 'Synthetic report discount.' });
+  await reserveReward(db, f.userId, f.customerId, f.bookings[0], { requestId: randomUUID(), points: 100 });
+  for (const id of f.bookings) await complete(db, id);
   const report = await commerceReport(db, { from: today(), to: today(), serviceId: f.serviceId });
   const row = report.orders.find(b => b.bookingId === f.bookings[0]);
   assert.ok(row);
   for (const s of services) assert.ok(row.serviceName.includes(s.service_name));
-  const paymentBooking = (await listPaymentBookings(db, f.customerId)).find(b => b.bookingId === f.bookings[0]);
-  for (const s of services) assert.ok(paymentBooking.serviceName.includes(s.service_name));
+  const rewardBooking = (await listRewardBookings(db, f.customerId)).find(b => b.bookingId === f.bookings[0]);
+  for (const s of services) assert.ok(rewardBooking.serviceName.includes(s.service_name));
   const combined = await commerceReport(db, { from: today(), to: today(), serviceId: services[1].service_id });
   assert.ok(combined.orders.some(b => b.bookingId === f.bookings[0]), 'secondary Repair service is filterable and visible');
   assert.equal(row.visits, 0, 'no fictional visit is inferred from Completed status');
   assert.equal(Number(row.baseAmount), 100);
-  assert.ok(report.summary.receipts >= 50);
-  assert.ok(report.summary.refunds >= 10);
+  assert.equal(row.rewardDiscount, 5); assert.equal(row.netServiceAmount, 95);
+  assert.equal('receipts' in report.summary, false);
+  assert.equal('refunds' in report.summary, false);
   assert.ok(report.summary.completedServiceAmount >= 300);
   const all = await commerceReport(db, { from: today(), to: today(), technicianId: 4294967295 });
   assert.equal(all.orders.length, 0);
-  assert.equal(all.summary.netReceived, 0);
+  assert.equal(all.summary.completedNetServiceAmount, 0);
   const [[tech]] = await c.query('SELECT technician_id FROM technician LIMIT 1');
   const [assignment] = await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Completed')", [f.bookings[0], tech.technician_id, f.adminId]);
   const [job] = await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,current_status) VALUES (?,?,?,'Completed')", [f.bookings[0], assignment.insertId, today() + ' 09:00:00']);
@@ -178,10 +223,23 @@ test('commerce HTTP enforces role, CSRF and customer booking ownership', () => f
     assert.equal((await call(`/api/commerce/customer/rewards/${f.bookings[0]}`, 'POST', { requestId: randomUUID(), points: 0 }, false)).status, 403);
     const [[other]] = await c.execute('SELECT booking_id FROM booking WHERE customer_id<>? LIMIT 1', [f.customerId]);
     if (other) assert.equal((await call(`/api/commerce/customer/rewards/${other.booking_id}`, 'POST', { requestId: randomUUID(), points: 0 })).status, 404);
+    // A transaction-only admin keeps existing account roles and credentials intact.
+    const adminEmail = `admin-${f.email}`;
+    await c.execute("INSERT INTO user_account(role_id,full_name,email,password_hash) SELECT role_id,'Rewards API test admin',?,? FROM role WHERE role_name='Admin'", [adminEmail, await bcrypt.hash(f.password, 4)]);
+    const adminLogin = await call('/api/public/login', 'POST', { email: adminEmail, password: f.password });
+    assert.equal(adminLogin.status, 200); csrf = adminLogin.data.csrf;
+    assert.equal((await call('/api/commerce/admin/payments')).status, 410);
+    assert.equal((await call(`/api/commerce/admin/payments/${f.bookings[0]}`, 'POST', {})).status, 410);
+    assert.equal((await call('/api/commerce/admin/rewards')).status, 200);
+    const csv = await fetch(`${origin}/api/commerce/admin/reports.csv?from=${today()}&to=${today()}`, { headers: { Cookie: cookie } });
+    assert.equal(csv.status, 200);
+    const text = await csv.text();
+    assert.match(text, /Net service amount SGD/);
+    assert.doesNotMatch(text, /receipts|refunds|netReceived/);
   } finally { await new Promise(resolve => server.close(resolve)); }
 }));
 
-test('simultaneous reservations on separate bookings cannot overspend one wallet', async () => {
+test('concurrent reservations and completions serialize wallets without overspending or duplicate rewards', async () => {
   // Committed, uniquely named fixtures are required for separate connections.
   // The cleanup only targets this synthetic customer's records.
   const c = await pool.getConnection(); let f, second;
@@ -204,19 +262,15 @@ test('simultaneous reservations on separate bookings cannot overspend one wallet
       const h = { execute: snapshot.execute.bind(snapshot), query: snapshot.query.bind(snapshot), beginTransaction: () => snapshot.query('SAVEPOINT stale_view'), commit: () => snapshot.query('RELEASE SAVEPOINT stale_view'), rollback: () => snapshot.query('ROLLBACK TO SAVEPOINT stale_view'), release() {} };
       await assert.rejects(reserveReward({ getConnection: async () => h }, f.userId, f.customerId, f.bookings[1], { requestId: requestId(), points: 100 }), /Not enough/, 'wallet and reservation reads must see commits newer than an established snapshot');
     } finally { await snapshot.rollback(); snapshot.release(); }
-    const payments = await Promise.allSettled([1, 2].map(() => recordPayment(pool, f.adminId, f.bookings[2], receipt(70, { requestId: requestId() }))));
-    assert.equal(payments.filter(r => r.status === 'fulfilled').length, 1, 'concurrent receipts cannot exceed the outstanding quote');
-    const finalReceipt = receipt(30, { requestId: requestId() });
-    const retry = await Promise.all([recordPayment(pool, f.adminId, f.bookings[2], finalReceipt), recordPayment(pool, f.adminId, f.bookings[2], finalReceipt)]);
-    assert.equal(retry[0].paymentId, retry[1].paymentId, 'same-UUID concurrent receipt retries return one ledger row');
-    assert.equal((await rewardsSummary(pool, f.customerId)).payments.length, 2);
-    const prefix = randomUUID().slice(0, -12), adjacent = [prefix + '000000000001', prefix + '000000000002'];
-    requests.push(...adjacent);
-    const independent = await Promise.all([
-      recordPayment(pool, f.adminId, f.bookings[1], receipt(60, { requestId: adjacent[0] })),
-      recordPayment(pool, second.adminId, second.bookings[0], receipt(60, { requestId: adjacent[1] })),
-    ]);
-    assert.equal(independent.length, 2, 'independent-wallet adjacent UUID gap contention safely retries definite deadlocks');
+    const completed = await Promise.all([complete(pool, f.bookings[0]), complete(pool, f.bookings[1])]);
+    assert.equal(completed.length, 2, 'same-wallet completions must succeed without a deadlock retry wrapper');
+    assert.equal((await rewardsSummary(pool, f.customerId)).balance, 195);
+    const retry = await Promise.all([complete(pool, f.bookings[2]), complete(pool, f.bookings[2])]);
+    assert.equal(retry.filter(r => r.replayed).length, 1);
+    assert.equal((await rewardsSummary(pool, f.customerId)).balance, 295);
+    const independent = await Promise.all(second.bookings.slice(0, 2).map(id => complete(pool, id)));
+    assert.equal(independent.length, 2, 'first completions also serialize creation of a new wallet');
+    assert.equal((await rewardsSummary(pool, second.customerId)).balance, 200);
   } finally {
     const d = await cleanupPool.getConnection();
     try {
@@ -226,6 +280,7 @@ test('simultaneous reservations on separate bookings cannot overspend one wallet
         await d.execute('DELETE a FROM reward_adjustment_audit a JOIN loyalty_transaction t ON t.loyalty_transaction_id=a.loyalty_transaction_id JOIN loyalty_account l ON l.loyalty_account_id=t.loyalty_account_id WHERE l.customer_id=?', [customer.customerId]);
         await d.execute('DELETE p FROM commerce_payment p JOIN booking b ON b.booking_id=p.booking_id WHERE b.customer_id=?', [customer.customerId]);
         await d.execute('DELETE e FROM reward_booking_earning e JOIN booking b ON b.booking_id=e.booking_id WHERE b.customer_id=?', [customer.customerId]);
+        await d.execute('DELETE e FROM booking_completion_reward e JOIN booking b ON b.booking_id=e.booking_id WHERE b.customer_id=?', [customer.customerId]);
         await d.execute('DELETE r FROM reward_reservation r JOIN booking b ON b.booking_id=r.booking_id WHERE b.customer_id=?', [customer.customerId]);
         await d.execute('DELETE FROM loyalty_account WHERE customer_id=?', [customer.customerId]);
         await d.execute('DELETE FROM booking WHERE customer_id=?', [customer.customerId]);

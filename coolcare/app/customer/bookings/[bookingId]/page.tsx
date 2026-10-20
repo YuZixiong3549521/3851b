@@ -371,7 +371,7 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
                 Contact support
               </Button>
               <Button nativeButton={false} render={<Link href={`/customer/rewards?booking=${bookingId}`} />} variant="outline">
-                Payments & rewards
+                My rewards
               </Button>
               {booking.status === 'Completed' && <Button nativeButton={false} render={<Link href="/customer/feedback" />} variant="outline">
                 Give service feedback

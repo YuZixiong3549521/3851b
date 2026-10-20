@@ -1,6 +1,6 @@
 'use client';
 import { PortalAccountMenu } from '@/components/portal-account-menu';
-import { CommerceReportsPage, CommercePaymentsPage } from '@/components/commerce-admin';
+import { CommerceReportsPage, CommerceRewardsPage } from '@/components/commerce-admin';
 import { PerformanceAdminView } from '@/components/performance-admin';
 import {
   AdminOverviewPage,
@@ -21,7 +21,7 @@ import {
   Users,
   UserCog,
   ChartNoAxesCombined,
-  CreditCard,
+  Gift,
   Star,
   X,
 } from 'lucide-react';
@@ -251,7 +251,7 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
     },
     { Icon: Users, label: 'Technicians', path: '/admin/technicians', count: 0 },
     { Icon: ChartNoAxesCombined, label: 'Reports & Analytics', path: '/admin/reports', count: 0 },
-    { Icon: CreditCard, label: 'Payments & Rewards', path: '/admin/payments', count: 0 },
+    { Icon: Gift, label: 'Customer Rewards', path: '/admin/rewards', count: 0 },
     { Icon: Star, label: 'Technician Performance', path: '/admin/performance', count: 0 },
     {
       Icon: ClipboardCheck,
@@ -274,7 +274,7 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
   ];
   const active =
     pathname === '/admin/reports' ? 'Reports & Analytics'
-      : pathname === '/admin/payments' ? 'Payments & Rewards'
+      : pathname === '/admin/rewards' ? 'Customer Rewards'
       : pathname === '/admin/performance' ? 'Technician Performance'
       : pathname === '/admin/overview'
       ? 'Overview'
@@ -417,8 +417,8 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
                 <AdminOverviewPage />
               ) : pathname === '/admin/reports' ? (
                 <CommerceReportsPage />
-              ) : pathname === '/admin/payments' ? (
-                <CommercePaymentsPage />
+              ) : pathname === '/admin/rewards' ? (
+                <CommerceRewardsPage />
               ) : pathname === '/admin/performance' ? (
                 <PerformanceAdminView />
               ) : pathname === '/admin/audit' ? (

@@ -7,18 +7,11 @@ const terminal = new Set(['Cancelled', 'Rejected', 'Expired']);
 const money = z.coerce.number().finite().positive().max(9999999.99).refine(v => Math.abs(v * 100 - Math.round(v * 100)) < 0.000001, 'Use at most two decimal places.');
 const date = z.string().refine(isCalendarDate, 'Enter a valid calendar date.');
 const request = { requestId: z.uuid() };
-export const paymentSchema = z.object({
-  ...request, kind: z.enum(['Receipt', 'Refund']), amount: money,
-  method: z.enum(['Cash', 'PayNow', 'Bank transfer', 'Card', 'Other']),
-  receivedDate: date, reference: z.string().trim().max(120).default(''),
-  notes: z.string().trim().min(5).max(1000),
-}).strict();
 const redemptionSchema = z.object({ ...request, points: z.number().int().min(0).max(10000000) }).strict();
 const adjustSchema = z.object({ ...request, points: z.number().int().min(-1000000).max(1000000).refine(v => v !== 0), reason: z.string().trim().min(5).max(500) }).strict();
 const ruleSchema = z.object({ ...request, expectedVersion: z.number().int().positive(), pointsPerDollar: z.number().int().min(0).max(100), redemptionPoints: z.number().int().min(1).max(1000000), redemptionValue: money, reason: z.string().trim().min(5).max(500) }).strict();
 const dollars = v => Math.round(Number(v || 0) * 100);
 const number = v => Number(v || 0);
-const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const hash = input => createHash('sha256').update(JSON.stringify(input)).digest('hex');
 const json = value => typeof value === 'string' ? JSON.parse(value) : value;
 export function earnedPoints(cents, rate) { return Math.floor(Math.max(0, cents) * rate / 100); }
@@ -58,27 +51,26 @@ async function lockBooking(c, bookingId, customerId) {
   return b;
 }
 async function lockAccount(c, customerId) {
-  await c.execute('INSERT IGNORE INTO loyalty_account(customer_id) VALUES (?)', [customerId]);
+  // Acquire the wallet's exclusive unique-key lock directly. INSERT IGNORE
+  // takes a shared duplicate-key lock that concurrent completions can deadlock
+  // while upgrading in the following SELECT FOR UPDATE.
+  await c.execute('INSERT INTO loyalty_account(customer_id) VALUES (?) ON DUPLICATE KEY UPDATE customer_id=loyalty_account.customer_id', [customerId]);
   const [[account]] = await c.execute('SELECT * FROM loyalty_account WHERE customer_id=? FOR UPDATE', [customerId]);
   return account;
 }
 async function rule(c, lock = false) {
-  const [[r]] = await c.query('SELECT version,points_per_dollar AS pointsPerDollar,redemption_points AS redemptionPoints,redemption_value AS redemptionValue FROM reward_rule WHERE rule_id=1' + (lock ? ' FOR UPDATE' : ''));
+  const [[r]] = await c.query('SELECT version,points_per_dollar AS pointsPerDollar,redemption_points AS redemptionPoints,redemption_value AS redemptionValue FROM reward_rule WHERE rule_id=1' + (lock === 'share' ? ' FOR SHARE' : lock ? ' FOR UPDATE' : ''));
   return { ...r, redemptionValue: number(r.redemptionValue) };
 }
-async function bookingMoney(c, b) {
-  // The current technician quote is charged once per booking; return visits do
-  // not create independent invoice or loyalty earning records.
+async function bookingValue(c, b) {
+  // Extras belong to the booking. Return visits do not create another reward.
   const [extras] = await c.execute(`SELECT p.additional_repair_fee AS fee FROM work_order w
     JOIN assignment a ON a.assignment_id=w.assignment_id JOIN service_progress p ON p.job_id=w.job_id
     WHERE w.booking_id=? AND a.assignment_status NOT IN ('Cancelled','Reassigned','Declined') FOR SHARE`, [b.booking_id]);
-  const [payments] = await c.execute('SELECT kind,amount FROM commerce_payment WHERE booking_id=? FOR SHARE', [b.booking_id]);
   const [[reservation]] = await c.execute('SELECT * FROM reward_reservation WHERE booking_id=? FOR SHARE', [b.booking_id]);
   const quote = b.total_amount === null ? null : dollars(b.total_amount) + extras.reduce((sum, r) => sum + dollars(r.fee), 0);
   const discount = reservation && reservation.status !== 'Released' ? dollars(reservation.discount_amount) : 0;
-  const received = payments.filter(p => p.kind === 'Receipt').reduce((sum, p) => sum + dollars(p.amount), 0);
-  const refunded = payments.filter(p => p.kind === 'Refund').reduce((sum, p) => sum + dollars(p.amount), 0);
-  return { quote, discount, received, refunded, net: received - refunded, due: quote === null ? null : Math.max(0, quote - discount - received + refunded), reservation };
+  return { quote: quote === null ? null : Math.max(0, quote), discount, reservation };
 }
 async function appendPoints(c, account, bookingId, points, type, description) {
   const [result] = await c.execute(`INSERT INTO loyalty_transaction(loyalty_account_id,booking_id,transaction_type,points,description) VALUES (?,?,?,?,?)`, [account.loyalty_account_id, bookingId, type, points, description.slice(0, 255)]);
@@ -86,42 +78,53 @@ async function appendPoints(c, account, bookingId, points, type, description) {
   account.current_points += points;
   return result.insertId;
 }
-async function settleEarning(c, b, account, netCents) {
-  const currentRule = await rule(c);
-  await c.execute(`INSERT IGNORE INTO reward_booking_earning(booking_id,loyalty_account_id,points_per_dollar,rule_version) VALUES (?,?,?,?)`, [b.booking_id, account.loyalty_account_id, currentRule.pointsPerDollar, currentRule.version]);
-  const [[earning]] = await c.execute('SELECT * FROM reward_booking_earning WHERE booking_id=? FOR UPDATE', [b.booking_id]);
-  const target = earnedPoints(netCents, earning.points_per_dollar), delta = target - earning.awarded_points;
-  if (delta) {
-    await appendPoints(c, account, b.booking_id, delta, delta > 0 ? 'Earned' : 'Adjusted', delta > 0 ? 'Earned from recorded payment for completed service.' : 'Payment refund: earned points reversed. A negative balance offsets future earnings.');
-    await c.execute('UPDATE reward_booking_earning SET awarded_points=? WHERE booking_id=?', [target, b.booking_id]);
-  }
-  return delta;
+export function completionRedemption({ quoteCents, balance, otherReserved, points, blockPoints, blockValueCents }) {
+  const spendable = Math.max(0, balance - otherReserved);
+  if (quoteCents === null || blockPoints <= 0 || blockValueCents <= 0) return { points: 0, discountCents: 0 };
+  const blocks = Math.max(0, Math.min(Math.floor(points / blockPoints), Math.floor(spendable / blockPoints), Math.floor(quoteCents / blockValueCents)));
+  return { points: blocks * blockPoints, discountCents: blocks * blockValueCents };
 }
-export async function recordPayment(pool, actorId, rawBookingId, raw) {
-  const bookingId = idSchema.parse(rawBookingId), data = paymentSchema.parse(raw);
-  const input = { action: 'payment', bookingId, ...data };
-  if (data.receivedDate > today()) throw new AppError('Payment date cannot be in the future.');
-  return transaction(pool, async c => {
-    const b = await lockBooking(c, bookingId);
-    const account = await lockAccount(c, b.customer_id);
-    const previous = await replay(c, actorId, input); if (previous) return previous;
-    const state = await bookingMoney(c, b), amount = dollars(data.amount);
-    if (data.kind === 'Receipt') {
-      if (b.booking_status !== 'Completed') throw new AppError('Record receipts only after the service is completed.', 409);
-      if (state.quote === null) throw new AppError('This historical booking has no recorded price. Record an agreed price through the booking workflow before taking payment.', 409);
-      if (amount > state.due) throw new AppError('Receipt exceeds the outstanding amount. Refresh the booking balance.', 409);
-      if (state.reservation?.status === 'Reserved') {
-        if (state.discount > state.quote) throw new AppError('The reserved discount exceeds the current price. Release or reduce the reservation first.', 409);
-        if (account.current_points < state.reservation.points) throw new AppError('The reserved points are no longer available after a refund or adjustment. Release or reduce the reservation.', 409);
-        await appendPoints(c, account, bookingId, -state.reservation.points, 'Redeemed', 'Reserved reward applied to the completed service.');
-        await c.execute("UPDATE reward_reservation SET status='Redeemed' WHERE booking_id=?", [bookingId]);
-      }
-    } else if (amount > state.net) throw new AppError('Refund exceeds the recorded cash received for this booking.', 409);
-    const [result] = await c.execute(`INSERT INTO commerce_payment(booking_id,kind,amount,method,received_date,reference,notes,actor_user_id) VALUES (?,?,?,?,?,?,?,?)`, [bookingId, data.kind, amount / 100, data.method, data.receivedDate, data.reference, data.notes, actorId]);
-    const net = state.net + (data.kind === 'Receipt' ? amount : -amount);
-    const pointsChange = await settleEarning(c, b, account, net);
-    return remember(c, actorId, input, { paymentId: result.insertId, bookingId, netReceived: net / 100, pointsChange });
-  });
+// The caller owns the transaction and has transitioned booking to Completed.
+// An error rolls back both service completion and its reward; no external side
+// effect or payment is involved. Repeated returns/report submissions are no-ops.
+export async function awardCompletedBookingRewards(c, rawBookingId) {
+  const bookingId = idSchema.parse(rawBookingId), b = await lockBooking(c, bookingId);
+  if (b.booking_status !== 'Completed') throw new AppError('Rewards are granted only when the booking is completed.', 409);
+  const account = await lockAccount(c, b.customer_id);
+  // Insert before reading to avoid missing-row gap-lock upgrades on simultaneous
+  // completions of different wallets. The placeholder cannot survive rollback.
+  const [claim] = await c.execute("INSERT IGNORE INTO booking_completion_reward(booking_id,loyalty_account_id,outcome) VALUES (?,?,'Pending')", [bookingId, account.loyalty_account_id]);
+  if (!claim.affectedRows) {
+    const [[done]] = await c.execute('SELECT * FROM booking_completion_reward WHERE booking_id=? FOR SHARE', [bookingId]);
+    return { bookingId, awardedPoints: done.awarded_points, redeemedPoints: done.redeemed_points, outcome: done.outcome, replayed: true };
+  }
+  const state = await bookingValue(c, b), config = await rule(c, 'share');
+  const reservation = state.reservation;
+  const requestedPoints = reservation?.status === 'Reserved' ? reservation.points : 0;
+  let redeemedPoints = 0, discount = reservation?.status === 'Redeemed' ? state.discount : 0, note = '';
+  if (requestedPoints) {
+    const [other] = await c.execute("SELECT points FROM reward_reservation WHERE loyalty_account_id=? AND booking_id<>? AND status='Reserved' FOR SHARE", [account.loyalty_account_id, bookingId]);
+    const redemption = completionRedemption({
+      quoteCents: state.quote, balance: account.current_points, otherReserved: other.reduce((sum, r) => sum + r.points, 0),
+      points: requestedPoints, blockPoints: reservation.redemption_points || requestedPoints,
+      blockValueCents: dollars(reservation.redemption_value || reservation.discount_amount),
+    });
+    redeemedPoints = redemption.points; discount = redemption.discountCents;
+    if (redeemedPoints !== requestedPoints) {
+      note = `Reserved reward reduced from ${requestedPoints} to ${redeemedPoints} points at completion because the available balance or service value changed.`;
+      await appendPoints(c, account, bookingId, 0, 'Adjusted', note);
+    }
+    if (redeemedPoints) await appendPoints(c, account, bookingId, -redeemedPoints, 'Redeemed', 'Reserved reward applied when the service was completed.');
+    await c.execute('UPDATE reward_reservation SET points=?,discount_amount=?,status=?,reason=? WHERE booking_id=?', [redeemedPoints, discount / 100, redeemedPoints ? 'Redeemed' : 'Released', note || 'Reward applied when the service was completed.', bookingId]);
+  }
+  const net = state.quote === null ? null : Math.max(0, state.quote - discount);
+  const earned = net === null ? 0 : earnedPoints(net, config.pointsPerDollar);
+  if (earned) await appendPoints(c, account, bookingId, earned, 'Earned', 'Earned once for the completed booking, based on its service amount after rewards.');
+  const outcome = net === null ? 'Unknown price' : 'Awarded';
+  if (net === null) note ||= 'No recorded service price; no points were awarded. Service completion was preserved.';
+  await c.execute(`UPDATE booking_completion_reward SET outcome=?,gross_amount=?,discount_amount=?,net_amount=?,requested_points=?,redeemed_points=?,awarded_points=?,points_per_dollar=?,rule_version=?,note=?,completed_at=UTC_TIMESTAMP() WHERE booking_id=?`,
+    [outcome, state.quote === null ? null : state.quote / 100, discount / 100, net === null ? null : net / 100, requestedPoints, redeemedPoints, earned, config.pointsPerDollar, config.version, note, bookingId]);
+  return { bookingId, awardedPoints: earned, redeemedPoints, outcome, replayed: false };
 }
 export async function reserveReward(pool, actorId, customerId, rawBookingId, raw) {
   const bookingId = idSchema.parse(rawBookingId), data = redemptionSchema.parse(raw);
@@ -130,25 +133,24 @@ export async function reserveReward(pool, actorId, customerId, rawBookingId, raw
     const b = await lockBooking(c, bookingId, customerId);
     const account = await lockAccount(c, customerId);
     const previous = await replay(c, actorId, input); if (previous) return previous;
-    const state = await bookingMoney(c, b);
-    if (state.reservation?.status === 'Redeemed') throw new AppError('This reward has already been applied to a payment.', 409);
+    const state = await bookingValue(c, b);
+    if (state.reservation?.status === 'Redeemed') throw new AppError('This reward has already been applied to the completed service.', 409);
     if (!data.points) {
       await releaseBookingRewardReservation(c, bookingId, 'Released by customer.');
       return remember(c, actorId, input, { bookingId, points: 0, discount: 0 });
     }
-    if (terminal.has(b.booking_status)) throw new AppError('Rewards cannot be reserved on a closed request.', 409);
-    if (state.received > 0) throw new AppError('Reserve rewards before the first payment.', 409);
+    if (terminal.has(b.booking_status) || b.booking_status === 'Completed') throw new AppError('Reserve rewards before the booking is completed or closed.', 409);
+    const [[processed]] = await c.execute('SELECT booking_id FROM booking_completion_reward WHERE booking_id=? FOR SHARE', [bookingId]);
+    if (processed) throw new AppError('This booking has already been processed for rewards. A return visit does not earn or redeem again.', 409);
     if (state.quote === null) throw new AppError('This booking does not have a recorded price.', 409);
     const config = await rule(c);
     if (data.points % config.redemptionPoints) throw new AppError(`Redeem in multiples of ${config.redemptionPoints} points.`);
     const discount = data.points / config.redemptionPoints * dollars(config.redemptionValue);
-    // Leave at least one cent payable; payment records always represent actual
-    // money. There is no fake zero-dollar receipt or fabricated point earning.
-    if (discount >= state.quote) throw new AppError('The reward must be less than the service total; leave a cash balance to settle.');
+    if (discount > state.quote) throw new AppError('The reward cannot exceed the service total.');
     const [reserved] = await c.execute(`SELECT points FROM reward_reservation WHERE loyalty_account_id=? AND status='Reserved' AND booking_id<>? FOR SHARE`, [account.loyalty_account_id, bookingId]);
     if (data.points > Math.max(0, account.current_points - reserved.reduce((sum, r) => sum + r.points, 0))) throw new AppError('Not enough available points. Other bookings may already reserve some points.', 409);
-    await c.execute(`INSERT INTO reward_reservation(booking_id,loyalty_account_id,points,discount_amount,rule_version,status,reason)
-      VALUES (?,?,?,?,?,'Reserved','Reserved by customer.') ON DUPLICATE KEY UPDATE points=VALUES(points),discount_amount=VALUES(discount_amount),rule_version=VALUES(rule_version),status='Reserved',reason=VALUES(reason)`, [bookingId, account.loyalty_account_id, data.points, discount / 100, config.version]);
+    await c.execute(`INSERT INTO reward_reservation(booking_id,loyalty_account_id,points,discount_amount,rule_version,status,reason,redemption_points,redemption_value)
+      VALUES (?,?,?,?,?,'Reserved','Reserved by customer.',?,?) ON DUPLICATE KEY UPDATE points=VALUES(points),discount_amount=VALUES(discount_amount),rule_version=VALUES(rule_version),status='Reserved',reason=VALUES(reason),redemption_points=VALUES(redemption_points),redemption_value=VALUES(redemption_value)`, [bookingId, account.loyalty_account_id, data.points, discount / 100, config.version, config.redemptionPoints, config.redemptionValue]);
     return remember(c, actorId, input, { bookingId, points: data.points, discount: discount / 100 });
   });
 }
@@ -188,22 +190,26 @@ export async function updateRewardRule(pool, actorId, raw) {
   });
 }
 
-export async function listPaymentBookings(pool, customerId) {
+export async function listRewardBookings(pool, customerId) {
   const [rows] = await pool.execute(`SELECT b.booking_id AS bookingId,b.customer_id AS customerId,b.booking_status AS status,b.preferred_service_date AS serviceDate,
     b.total_amount AS baseAmount,u.full_name AS customerName,u.email,
     COALESCE((SELECT bp.package_name FROM booking_package bp WHERE bp.booking_id=b.booking_id),
       (SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ') FROM booking_service bs WHERE bs.booking_id=b.booking_id),s.service_name) AS serviceName,
     COALESCE((SELECT SUM(p.additional_repair_fee) FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id JOIN service_progress p ON p.job_id=w.job_id WHERE w.booking_id=b.booking_id AND a.assignment_status NOT IN ('Cancelled','Reassigned','Declined')),0) AS additionalFee,
-    COALESCE((SELECT SUM(IF(p.kind='Receipt',p.amount,-p.amount)) FROM commerce_payment p WHERE p.booking_id=b.booking_id),0) AS netReceived,
-    COALESCE((SELECT SUM(p.amount) FROM commerce_payment p WHERE p.booking_id=b.booking_id AND p.kind='Receipt'),0) AS totalReceived,
-    COALESCE((SELECT SUM(p.amount) FROM commerce_payment p WHERE p.booking_id=b.booking_id AND p.kind='Refund'),0) AS totalRefunded,
-    COALESCE(IF(r.status IN ('Reserved','Redeemed'),r.discount_amount,0),0) AS discount,r.status AS rewardStatus,COALESCE(r.points,0) AS rewardPoints
+    COALESCE(IF(r.status IN ('Reserved','Redeemed'),r.discount_amount,0),0) AS discount,r.status AS rewardStatus,COALESCE(r.points,0) AS rewardPoints,
+    done.outcome AS completionOutcome,done.gross_amount AS completedGrossAmount,done.discount_amount AS completedDiscount,
+    done.net_amount AS completedNetAmount,done.awarded_points AS awardedPoints,done.redeemed_points AS redeemedPoints,done.completed_at AS completedAt,done.note AS completionNote
     FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN user_account u ON u.user_id=c.user_id
     JOIN service_catalog s ON s.service_id=b.service_id LEFT JOIN reward_reservation r ON r.booking_id=b.booking_id
+    LEFT JOIN booking_completion_reward done ON done.booking_id=b.booking_id
     ${customerId === undefined ? '' : 'WHERE b.customer_id=?'} ORDER BY b.booking_id DESC LIMIT 1000`, customerId === undefined ? [] : [customerId]);
   return rows.map(row => {
     const quote = row.baseAmount === null ? null : (dollars(row.baseAmount) + dollars(row.additionalFee)) / 100;
-    return { ...row, baseAmount: row.baseAmount === null ? null : number(row.baseAmount), additionalFee: number(row.additionalFee), quote, netReceived: number(row.netReceived), totalReceived: number(row.totalReceived), totalRefunded: number(row.totalRefunded), discount: number(row.discount), amountDue: quote === null ? null : Math.max(0, dollars(quote) - dollars(row.discount) - dollars(row.netReceived)) / 100 };
+    const { completionOutcome, completedGrossAmount, completedDiscount, completedNetAmount, awardedPoints, redeemedPoints, completedAt, completionNote, ...booking } = row;
+    return { ...booking, baseAmount: row.baseAmount === null ? null : number(row.baseAmount), additionalFee: number(row.additionalFee), quote, discount: number(row.discount),
+      netServiceAmount: quote === null ? null : Math.max(0, dollars(quote) - dollars(row.discount)) / 100,
+      canReserve: !terminal.has(row.status) && row.status !== 'Completed' && !completionOutcome && row.rewardStatus !== 'Redeemed' && quote !== null,
+      completionReward: completionOutcome ? { outcome: completionOutcome, grossAmount: completedGrossAmount === null ? null : number(completedGrossAmount), discountAmount: number(completedDiscount), netServiceAmount: completedNetAmount === null ? null : number(completedNetAmount), awardedPoints, redeemedPoints, completedAt, note: completionNote } : null };
   });
 }
 export async function rewardsSummary(pool, customerId) {
@@ -215,9 +221,8 @@ export async function rewardsSummary(pool, customerId) {
     FROM loyalty_transaction t LEFT JOIN reward_adjustment_audit a ON a.loyalty_transaction_id=t.loyalty_transaction_id LEFT JOIN user_account u ON u.user_id=a.actor_user_id
     WHERE t.loyalty_account_id=? ORDER BY t.loyalty_transaction_id DESC LIMIT 200`, [account.id]) : [[]];
   const balance = number(account?.balance), reserved = number(account?.reserved);
-  const bookings = await listPaymentBookings(pool, customerId);
-  const [payments] = await pool.execute(`SELECT p.payment_id AS id,p.booking_id AS bookingId,p.kind,p.amount,p.method,p.received_date AS receivedDate,p.reference,p.notes FROM commerce_payment p JOIN booking b ON b.booking_id=p.booking_id WHERE b.customer_id=? ORDER BY p.payment_id DESC LIMIT 200`, [customerId]);
-  return { rules: config, balance, reserved, available: Math.max(0, balance - reserved), debt: Math.max(0, -balance), history, bookings, payments };
+  const bookings = await listRewardBookings(pool, customerId);
+  return { rules: config, balance, reserved, available: Math.max(0, balance - reserved), debt: Math.max(0, -balance), history, bookings };
 }
 
 export const reportFilterSchema = z.object({ from: date, to: date, serviceId: idSchema.optional(), technicianId: idSchema.optional() }).strict().refine(v => v.from <= v.to && (Date.parse(v.to) - Date.parse(v.from)) / 86400000 <= 366, 'Choose a date range of at most 367 days.');
@@ -234,7 +239,8 @@ function bookingFilter(filters, alias = 'b') {
 export async function commerceReport(pool, raw) {
   const filters = reportFilterSchema.parse(raw), f = bookingFilter(filters);
   const [orders] = await pool.execute(`SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS serviceDate,
-    b.total_amount AS baseAmount,
+    b.total_amount AS baseAmount,done.gross_amount AS completionGrossAmount,done.net_amount AS completionNetAmount,
+    COALESCE(IF(done.outcome IN ('Awarded','Unknown price'),done.discount_amount,NULL),IF(r.status='Redeemed',r.discount_amount,0),0) AS rewardDiscount,
     COALESCE((SELECT bp.package_name FROM booking_package bp WHERE bp.booking_id=b.booking_id),
       (SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ') FROM booking_service bs WHERE bs.booking_id=b.booking_id),s.service_name) AS serviceName,
     COALESCE((SELECT SUM(p.additional_repair_fee) FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id JOIN service_progress p ON p.job_id=w.job_id WHERE w.booking_id=b.booking_id AND a.assignment_status NOT IN ('Cancelled','Reassigned','Declined')),0) AS additionalFee,
@@ -242,9 +248,9 @@ export async function commerceReport(pool, raw) {
     (SELECT COUNT(*) FROM service_report r JOIN work_order w ON w.job_id=COALESCE(r.job_id,r.archived_job_id)
       JOIN assignment va ON va.assignment_id=w.assignment_id LEFT JOIN performance_visit pv ON pv.report_id=r.report_id
       WHERE w.booking_id=b.booking_id AND r.started_at IS NOT NULL${filters.technicianId ? ' AND pv.technician_id=?' : ''}) AS visits
-    FROM booking b JOIN service_catalog s ON s.service_id=b.service_id WHERE b.preferred_service_date BETWEEN ? AND ?${f.sql} ORDER BY b.preferred_service_date,b.booking_id`, [...(filters.technicianId ? [filters.technicianId, filters.technicianId] : []), filters.from, filters.to, ...f.values]);
-  const [cash] = await pool.execute(`SELECT p.received_date AS date,SUM(IF(p.kind='Receipt',p.amount,0)) AS receipts,SUM(IF(p.kind='Refund',p.amount,0)) AS refunds
-    FROM commerce_payment p JOIN booking b ON b.booking_id=p.booking_id WHERE p.received_date BETWEEN ? AND ?${f.sql} GROUP BY p.received_date ORDER BY p.received_date`, [filters.from, filters.to, ...f.values]);
+    FROM booking b JOIN service_catalog s ON s.service_id=b.service_id LEFT JOIN booking_completion_reward done ON done.booking_id=b.booking_id
+    LEFT JOIN reward_reservation r ON r.booking_id=b.booking_id
+    WHERE b.preferred_service_date BETWEEN ? AND ?${f.sql} ORDER BY b.preferred_service_date,b.booking_id`, [...(filters.technicianId ? [filters.technicianId, filters.technicianId] : []), filters.from, filters.to, ...f.values]);
   const [parts] = await pool.execute(`SELECT p.part_id AS partId,p.part_name AS name,p.stock_unit AS unit,
     SUM(IF(i.transaction_type='Stock Out',i.quantity,0)) AS issued,SUM(IF(i.transaction_type='Return',i.quantity,0)) AS returned
     FROM inventory_transaction i JOIN part p ON p.part_id=i.part_id JOIN work_order w ON w.job_id=i.job_id JOIN booking b ON b.booking_id=w.booking_id
@@ -256,16 +262,37 @@ export async function commerceReport(pool, raw) {
   const [technicians] = await pool.query('SELECT t.technician_id AS id,u.full_name AS name FROM technician t JOIN user_account u ON u.user_id=t.user_id ORDER BY u.full_name');
   const total = orders.length, completed = orders.filter(o => o.status === 'Completed').length, cancelled = orders.filter(o => o.status === 'Cancelled').length;
   const returnOrders = orders.filter(o => number(o.returns) > 0).length;
-  const quote = orders.filter(o => o.status === 'Completed' && o.baseAmount !== null).reduce((sum, o) => sum + dollars(o.baseAmount) + dollars(o.additionalFee), 0);
-  const receipts = cash.reduce((sum, r) => sum + dollars(r.receipts), 0), refunds = cash.reduce((sum, r) => sum + dollars(r.refunds), 0);
-  return { filters, summary: { orders: total, completed, cancelled, returnOrders, visits: orders.reduce((s, o) => s + number(o.visits), 0), completionRate: total ? Math.round(completed / total * 1000) / 10 : 0, cancellationRate: total ? Math.round(cancelled / total * 1000) / 10 : 0, returnRate: total ? Math.round(returnOrders / total * 1000) / 10 : 0, completedServiceAmount: quote / 100, unknownCompletedPrices: orders.filter(o => o.status === 'Completed' && o.baseAmount === null).length, receipts: receipts / 100, refunds: refunds / 100, netReceived: (receipts - refunds) / 100 }, orders, cash: cash.map(r => ({ ...r, receipts: number(r.receipts), refunds: number(r.refunds), net: number(r.receipts) - number(r.refunds) })), parts, bundles, services, technicians };
+  const mapped = orders.map(o => {
+    const gross = o.completionGrossAmount === null ? (o.baseAmount === null ? null : dollars(o.baseAmount) + dollars(o.additionalFee)) : dollars(o.completionGrossAmount);
+    const discount = Math.min(gross ?? 0, dollars(o.rewardDiscount));
+    const { completionGrossAmount, completionNetAmount, ...order } = o;
+    return { ...order, serviceAmount: gross === null ? null : gross / 100, rewardDiscount: discount / 100,
+      netServiceAmount: gross === null ? null : Math.max(0, gross - discount) / 100 };
+  });
+  const daily = new Map();
+  for (const order of mapped.filter(o => o.status === 'Completed')) {
+    const row = daily.get(order.serviceDate) || { date: order.serviceDate, completed: 0, serviceAmount: 0, rewardDiscounts: 0, netServiceAmount: 0 };
+    row.completed++;
+    row.serviceAmount += dollars(order.serviceAmount);
+    row.rewardDiscounts += dollars(order.rewardDiscount);
+    row.netServiceAmount += dollars(order.netServiceAmount);
+    daily.set(order.serviceDate, row);
+  }
+  const dailyService = [...daily.values()].map(r => ({ ...r, serviceAmount: r.serviceAmount / 100, rewardDiscounts: r.rewardDiscounts / 100, netServiceAmount: r.netServiceAmount / 100 }));
+  const completedRows = mapped.filter(o => o.status === 'Completed');
+  return { filters, summary: { orders: total, completed, cancelled, returnOrders, visits: orders.reduce((s, o) => s + number(o.visits), 0), completionRate: total ? Math.round(completed / total * 1000) / 10 : 0, cancellationRate: total ? Math.round(cancelled / total * 1000) / 10 : 0, returnRate: total ? Math.round(returnOrders / total * 1000) / 10 : 0,
+    completedServiceAmount: completedRows.reduce((sum, o) => sum + dollars(o.serviceAmount), 0) / 100,
+    rewardDiscounts: completedRows.reduce((sum, o) => sum + dollars(o.rewardDiscount), 0) / 100,
+    completedNetServiceAmount: completedRows.reduce((sum, o) => sum + dollars(o.netServiceAmount), 0) / 100,
+    unknownCompletedPrices: completedRows.filter(o => o.serviceAmount === null).length }, orders: mapped, dailyService, parts, bundles, services, technicians };
 }
 function reportCsv(data) {
   return safeCsv([
     ['CoolCare reports', `${data.filters.from} to ${data.filters.to}`],
     ['Metric', 'Value'], ...Object.entries(data.summary),
-    [], ['Cash date', 'Receipts SGD', 'Refunds SGD', 'Net SGD'], ...data.cash.map(r => [r.date, r.receipts, r.refunds, r.net]),
-    [], ['Booking', 'Service date', 'Service', 'Status', 'Started visits', 'Return requests', 'Base quote SGD', 'Additional quote SGD'], ...data.orders.map(r => [r.bookingId, r.serviceDate, r.serviceName, r.status, r.visits, r.returns, r.baseAmount, r.additionalFee]),
+    ['Service filter', data.filters.serviceId ?? 'All'], ['Technician filter', data.filters.technicianId ?? 'All'],
+    [], ['Scheduled service date', 'Completed bookings', 'Service amount SGD', 'Reward discounts SGD', 'Net service amount SGD'], ...data.dailyService.map(r => [r.date, r.completed, r.serviceAmount, r.rewardDiscounts, r.netServiceAmount]),
+    [], ['Booking', 'Service date', 'Service', 'Status', 'Started visits', 'Return requests', 'Service amount SGD', 'Reward discount SGD', 'Net service amount SGD'], ...data.orders.map(r => [r.bookingId, r.serviceDate, r.serviceName, r.status, r.visits, r.returns, r.serviceAmount, r.rewardDiscount, r.netServiceAmount]),
     [], ['Part', 'Unit', 'Issued', 'Returned'], ...data.parts.map(r => [r.name, r.unit, r.issued, r.returned]),
   ]);
 }
@@ -282,13 +309,12 @@ export function registerCommerceRoutes(app, pool) {
   app.use('/api/commerce/admin', auth('Admin'));
   app.get('/api/commerce/customer/rewards', async (req, res) => res.json(await rewardsSummary(pool, req.commerceUser.customerId)));
   app.post('/api/commerce/customer/rewards/:bookingId', async (req, res) => res.json(await reserveReward(pool, req.commerceUser.id, req.commerceUser.customerId, req.params.bookingId, req.body)));
-  app.get('/api/commerce/admin/payments', async (_req, res) => {
-    const [payments] = await pool.query(`SELECT p.payment_id AS id,p.booking_id AS bookingId,p.kind,p.amount,p.method,p.received_date AS receivedDate,p.reference,p.notes,u.full_name AS recordedBy FROM commerce_payment p JOIN user_account u ON u.user_id=p.actor_user_id ORDER BY p.payment_id DESC LIMIT 200`);
+  app.all(['/api/commerce/admin/payments','/api/commerce/admin/payments/:bookingId'], (_req, res) => res.status(410).json({ error: 'Payment management has been removed. Rewards are awarded when the booking is completed.' }));
+  app.get('/api/commerce/admin/rewards', async (_req, res) => {
     const [customers] = await pool.query('SELECT c.customer_id AS id,u.full_name AS name,u.email,COALESCE(a.current_points,0) AS points FROM customer c JOIN user_account u ON u.user_id=c.user_id LEFT JOIN loyalty_account a ON a.customer_id=c.customer_id ORDER BY u.full_name');
     const [ruleHistory] = await pool.query('SELECT a.version,a.reason,a.rule_json AS rules,a.created_at AS createdAt,u.full_name AS changedBy FROM reward_rule_audit a JOIN user_account u ON u.user_id=a.actor_user_id ORDER BY a.version DESC LIMIT 30');
-    res.json({ bookings: await listPaymentBookings(pool), payments, customers, rules: await rule(pool), ruleHistory });
+    res.json({ bookings: await listRewardBookings(pool), customers, rules: await rule(pool), ruleHistory });
   });
-  app.post('/api/commerce/admin/payments/:bookingId', async (req, res) => res.json(await recordPayment(pool, req.commerceUser.id, req.params.bookingId, req.body)));
   app.get('/api/commerce/admin/rewards/:customerId', async (req, res) => res.json(await rewardsSummary(pool, idSchema.parse(req.params.customerId))));
   app.post('/api/commerce/admin/rewards/:customerId/adjust', async (req, res) => res.json(await adjustReward(pool, req.commerceUser.id, req.params.customerId, req.body)));
   app.patch('/api/commerce/admin/reward-rules', async (req, res) => res.json(await updateRewardRule(pool, req.commerceUser.id, req.body)));

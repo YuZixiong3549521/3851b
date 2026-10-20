@@ -1,5 +1,6 @@
 import {snapshotVisit} from './return-visits.mjs';
 import {capturePerformanceVisitStart} from './performance.mjs';
+import {awardCompletedBookingRewards} from './commerce.mjs';
 import {registerTechnicianPages} from './technician-pages.mjs';
 import {getServiceProgress,updateServiceProgress} from './service-progress.mjs';
 import express from 'express';
@@ -192,6 +193,7 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
     }
     await connection.execute('UPDATE work_order SET current_status=? WHERE job_id=?',[data.status,jobId]);
     await connection.execute('UPDATE booking SET booking_status=? WHERE booking_id=?',[data.status,work.booking_id]);
+    if(data.status==='Completed')await awardCompletedBookingRewards(connection,work.booking_id);
     await connection.execute('UPDATE assignment SET assignment_status=? WHERE assignment_id=?',[data.status==='Completed'?'Completed':'Accepted',work.assignment_id]);
     const notes={'On The Way':'Technician is travelling to the confirmed service address.','In Progress':'Technician arrived and started the service.','Completed':'Technician completed the service visit.'};
     await connection.execute(`INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)

@@ -1,2 +1,2 @@
 export { CommerceReportsPage } from './commerce-reports';
-export { CommercePaymentsPage } from './commerce-payments';
+export { CommerceRewardsPage } from './commerce-rewards';

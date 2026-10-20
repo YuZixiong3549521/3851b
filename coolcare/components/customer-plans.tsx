@@ -98,7 +98,7 @@ export function CustomerPlans() {
       </div>
       {data.reminders.length > 0 && <section aria-label="Plan reminders" className="mb-6 grid gap-3">{data.reminders.map(reminder => <PlanReminderCard key={`${reminder.seriesId}-${reminder.key}`} reminder={reminder} onDismiss={refresh} />)}</section>}
       {!data.plans.length ? <div className="rounded-3xl border bg-card p-5"><EmptyState title="Your annual plan starts here" description="Choose the Annual Cleaning Bundle when booking to arrange four quarterly visits for your home." /><div className="mt-4 flex justify-center"><Button nativeButton={false} render={<Link href="/customer/book" />}><Wind className="size-4" />Explore services</Button></div></div> : <div className="space-y-6">{data.plans.map(plan => <PlanCard key={plan.seriesId} plan={plan} />)}</div>}
-      <p className="mt-6 text-sm text-muted-foreground">These prices describe the agreed services, not collected payments. Extra repair work and any payments appear separately on the booking. No automatic renewal or recurring charge is enabled.</p>
+      <p className="mt-6 text-sm text-muted-foreground">Each completed quarterly booking earns reward points on its service value after any reward discount. Extra repair work appears separately on the booking. Renewal requires your confirmation.</p>
     </>}
   </div>;
 }

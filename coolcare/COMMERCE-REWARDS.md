@@ -1,100 +1,139 @@
-# Collections, rewards and operational reports
+# Completion rewards and service-value reports
 
-The Admin **Reports & analytics** and **Payments & rewards** pages use real MySQL
-records. Customers access **My Rewards** from the customer navigation. No payment
-provider or card information is required: Admin records money actually received
-offline, and the application stores the receipt or refund with its actor, date,
-method, reference and explanation. No historical receipt is inferred from an
-existing booking price. The migration preserves all existing orders and points.
+The Admin **Reports & Analytics** and **Customer Rewards** pages use real MySQL
+records. Customers access **My Rewards** from customer navigation. The website
+has no payment, collection or refund workflow. Completing an order awards
+loyalty points automatically; an administrator does not have to record a receipt.
 
-## Settlement
+The document keeps its existing filename so previously shared links continue to
+work. Older payment records and audit tables remain in the database as inactive
+history. They are not deleted, do not drive new rewards, and are not exposed
+through active payment pages or APIs.
 
-- A receipt can be recorded only when the booking is Completed. The amount may
-  not exceed the current booking quote plus technician extras, less an applied
-  or reserved reward and existing net payments. Unknown legacy prices cannot be
-  collected through this screen.
-- Partial receipts are supported. Refunds cannot exceed the recorded net cash
-  received. Both are immutable; a correction uses a refund and a new receipt,
-  never an overwritten ledger entry.
-- Each quarterly bundle booking has its own settlement. Return visits remain on
-  their original booking and do not create a second invoice or duplicate earning.
-- Changing a technician's quote changes the outstanding balance, not recorded
-  cash. Overpayment following a quote reduction is visible and is corrected
-  through an actual refund.
-- Payment dates are calendar dates in Singapore, may not be in the future, and
-  must reflect the actual receipt/refund date. Record creation timestamps are
-  preserved separately.
+## Earning points when an order is completed
 
-## Reward accounting
+Default rules: one point per SGD 1 of the completed order's service amount, and
+100 points for a SGD 5 reward discount. Admin can change the rules with a reason;
+version history preserves the actor and configuration.
 
-Initial rules are one point per SGD 1 actually paid for completed service, and
-100 points for a SGD 5 discount. Admin can save a new rule version with a reason;
-rule history preserves the actor and before/after configuration.
+The earning basis is the booking's recorded service amount plus technician-set
+additional fees, minus its applied reward discount. Points are rounded down to a
+whole number once per booking. For example, a completed SGD 150 service with a
+SGD 5 reward discount earns 145 points under the default rule. The earning does
+not assert that money was collected.
 
-The earning rate is fixed by a booking's first receipt. Earning is calculated on
-the cumulative net amount received for that booking, rounded down once. Splitting
-one payment into several smaller receipts cannot increase points. Refunding
-money recalculates that target and adds a reversing transaction. If the customer
-has already spent the points, their balance may become negative. Available
-points never go below zero; later earnings clear the debt before they are
-spendable. Administrators can make an audited positive or negative adjustment
-with a required reason.
+Both **End service** and **Submit report & complete** run the completion rule
+inside the existing transaction that changes the booking to Completed. The
+booking, wallet, applied discount and earning record therefore succeed or roll
+back together. The saved per-booking completion record freezes the earning
+basis and rule version. Identical retries, later report submissions or edits,
+and another completed return visit for that booking cannot award points twice.
+A return request which leaves an order awaiting further service is not a
+Completed order and does not earn points yet.
 
-Customers can reserve whole redemption blocks against their own unpaid, priced,
-non-cancelled bookings before the first receipt. The balance is the ledger total;
-available points equal `max(0, balance - active reservations)`. Booking then wallet
-locks serialize simultaneous spending across bookings. A reservation stores its
-original rule version and discount. Customers can replace/release it before
-payment. Cancellation, rejection and expiry release unused reservations inside
-the existing booking transaction.
+Each quarterly booking in an annual plan earns once from its own allocated
+visit value. The full annual price is not awarded on every visit, and the
+technician's return visit does not create another quarterly entitlement.
 
-The discount must be less than the service total (at least SGD 0.01 remains
-payable). At the first actual receipt, reserved points are deducted once and the
-reservation becomes Redeemed. This implementation does not create artificial
-zero-dollar receipts. Applied discounts are not cash: a cash refund reverses
-earning but does not automatically return redeemed discount points. A justified
-points correction can be recorded by Admin with its audit reason. If a refund or
-adjustment leaves insufficient points to honour another reservation, payment is
-blocked until that reservation is reduced or released.
+Only completion events after this change take effect are eligible. Migration
+and application startup do not award points to historical Completed orders.
+Existing balances, prior transactions and administrative corrections remain
+unchanged. Unknown historical service prices must not be replaced with an
+invented earning amount. If a newly completed booking still has no recorded
+price, service completion succeeds, the reward outcome is saved as **Unknown
+price**, and no points are invented. Admin can make a documented points
+adjustment when the missing amount is resolved.
+
+## Reservations and administrative adjustments
+
+Customers can reserve whole redemption blocks against their own eligible,
+priced, unfinished bookings. The wallet balance is the points ledger total;
+available points are `max(0, balance - active reservations)`. Booking and wallet
+locks serialize simultaneous spending across different bookings. The
+reservation stores its rule version, points and discount.
+
+A customer can change or release an unused reservation before the order is
+completed. At completion, the accepted reservation is consumed once and the net
+service amount determines the new earning. Cancellation, rejection and expiry
+release unused reservations in the existing booking transaction. A completed
+order cannot acquire a new discount after its reward has been calculated.
+
+Rewards can cover the full service amount. A fully discounted order earns zero
+new points because its net service value is zero. If an administrative adjustment
+or a changed service price makes the original reservation unusable, completion
+reduces it to affordable whole redemption blocks while preserving points reserved
+for other bookings. Any reduction or release records its reason in the points
+history, including a zero-point audit entry. A points shortage does not prevent
+the technician from finishing the service.
+
+Admin can make a positive or negative points adjustment with a required reason
+and append-only audit. Historical balances, including any existing negative
+balance, are retained; available points never display a negative spendable
+amount. Corrections use the points ledger rather than a receipt or refund form.
 
 ## Reports
 
-Filters accept a date range of at most 367 days, a service and/or a technician.
-Order metrics use scheduled service dates and count one booking once, including
-combined services. A technician filter selects orders assigned to them or with a
-recorded visit by them; money and parts remain whole-order totals and are not
-attributed individual earnings. Started report records are counted separately as visits;
-historical missing visit records are not invented. Return requests are counted
-against the original order. Completed quoted service value is before rewards
-and is explicitly separate from cash receipts, refunds and net received.
+Filters accept a date range of up to 367 days, a service and/or a technician.
+Order metrics use scheduled service dates and count each booking once,
+including combined Cleaning + Repair orders. A technician filter selects orders
+assigned to them or with a recorded visit by them. Service-value and parts
+figures remain whole-order totals, not earnings attributed to that technician.
 
-Cash totals use actual payment dates. Work-order part movements use Singapore
-stock-movement dates and distinguish issues from returned parts. Bundle usage
-counts the original quarterly entitlements, not return visits. The chart has an
-equivalent accessible data table. CSV exports escape quotes and neutralise
-spreadsheet formula prefixes, including text with leading whitespace.
+Started report records are counted separately as visits. Technician-specific
+visit counts use captured visit ownership, not a later reassignment. Historical
+missing visit records are not invented. Return requests remain attached to the
+original order; quarterly bundle usage counts the original entitlements rather
+than return visits.
 
-## API and persistence
+The monetary figures describe completed service value, reward discounts and net
+service value after those discounts. The daily series uses scheduled service
+dates, the same cohort as the order totals.
+They do not describe receipts, refunds, money received, outstanding payments or
+revenue collected. No historical payment is inferred from a completed booking.
+Work-order parts figures use Singapore stock-movement dates and distinguish
+issues from returned parts. Charts have equivalent accessible tables. CSV
+exports escape quotes and neutralise spreadsheet formula prefixes, including
+text with leading whitespace.
 
-All routes are under `/api/commerce`. Existing session authentication and global
-CSRF apply; the module also reloads the active user's role from MySQL. Responses
-are private/no-store. Customer ownership is enforced on every reservation.
+## Pages, API and persistence
+
+Admin pages are `/admin/reports` and `/admin/rewards`. The old
+`/admin/payments` page redirects to `/admin/rewards`; its payment forms are gone.
+Customer points remain at `/customer/rewards`.
+
+Active API routes remain under `/api/commerce` for compatibility. Existing
+session authentication and global CSRF protection apply, and the module reloads
+the active user's role from MySQL. Responses are private/no-store. Customer
+ownership is enforced on every reservation.
 
 | Method | Route after `/api/commerce` | Purpose |
 | --- | --- | --- |
-| GET | `/admin/reports?from=YYYY-MM-DD&to=YYYY-MM-DD&serviceId=&technicianId=` | Operational aggregates and source rows |
-| GET | `/admin/reports.csv` with the same non-empty filter parameters | CSV export |
-| GET | `/admin/payments` | Latest 1,000 bookings, latest 200 ledger records, customers and rule history |
-| POST | `/admin/payments/:bookingId` | Receipt/refund: `requestId`, `kind`, `amount`, `method`, `receivedDate`, `reference`, `notes` |
-| GET | `/admin/rewards/:customerId` | Customer points, reservations, payments and history |
+| GET | `/admin/reports?from=YYYY-MM-DD&to=YYYY-MM-DD` | Operational counts, service values and source rows; optional `serviceId` and `technicianId` |
+| GET | `/admin/reports.csv` with the same filters | CSV export |
+| GET | `/admin/rewards` | Customer rewards management and rule history |
+| GET | `/admin/rewards/:customerId` | Customer wallet, bookings, reservations and points history |
 | POST | `/admin/rewards/:customerId/adjust` | `requestId`, signed non-zero `points`, `reason` |
 | PATCH | `/admin/reward-rules` | `requestId`, `expectedVersion`, `pointsPerDollar`, `redemptionPoints`, `redemptionValue`, `reason` |
-| GET | `/customer/rewards` | Signed-in customer's wallet, eligible bookings and history |
+| GET | `/customer/rewards` | Signed-in customer's wallet, eligible bookings and points history |
 | POST | `/customer/rewards/:bookingId` | `requestId`, `points`; zero releases an unused reservation |
 
-Every mutation takes a UUID request ID. Identical retries return the original
-result without repeating the ledger operation; a changed payload or actor using
-the same ID receives a conflict. Rule edits also require the current version.
-Migration `27-commerce-rewards.sql` adds payment, operation, rule/audit,
-reservation, per-booking earning and adjustment-audit tables; it reuses
-`loyalty_account` and `loyalty_transaction`.
+There are no active receipt/refund endpoints. The previous admin payments GET
+and POST endpoints return HTTP 410 (retired), rather than acting as alternative
+reward APIs.
+Every remaining customer/admin mutation takes a UUID request ID; identical
+retries recover the original result without repeating ledger operations. Rule
+edits also require the current version. Completion earning is invoked by the
+server's authorized service-completion transaction, not a browser-accessible
+"award points" endpoint.
+
+Apply the normal `npm run db:up` migration flow before starting the updated API.
+Migration `30-completion-rewards.sql` adds `booking_completion_reward`, keyed by
+booking, to record gross/discount/net service values, earned and redeemed points,
+the rule version, outcome and reason. Historical/legacy-reward markers prevent
+old completed or already rewarded bookings from earning again. The helper
+`awardCompletedBookingRewards(connection, bookingId)` runs only inside an
+authorized completion transaction after the booking status changes.
+
+Migrations preserve existing orders, wallets and historical financial audits;
+they do not recreate payment operations or backfill completion points. Demo
+login and local Mailpit remain unchanged for local development.
