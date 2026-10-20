@@ -8,6 +8,8 @@ import { getBookingOptions, lockCustomer } from '../server/customer/booking-opti
 import { addCalendarMonths } from '../server/customer/annual-bookings.mjs';
 import {addCalendarDays,singaporeToday,minimumBookingDate,nextWeekday,isWeekday} from '../server/customer/booking-schedule.mjs';
 import {openPrivilegedFixtureConnection} from './privileged-fixture.mjs';
+import { assertBookingNotExpired, expireSubmittedBookings } from '../server/order-expiry.mjs';
+import { listAnnualPlans } from '../server/customer/plans.mjs';
 
 const pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,dateStrings:true,decimalNumbers:true,connectionLimit:4});
 after(()=>pool.end());
@@ -236,6 +238,10 @@ for(const route of ['public','customer'])test(`${route} annual bundle creates fo
   assert.deepEqual(series.visits.map(visit=>visit.preferredDate),[0,3,6,9].map(month=>nextWeekday(addCalendarMonths(firstDate,month))));
   assert.ok(series.visits.every(visit=>isWeekday(visit.preferredDate)));
   assert.deepEqual(series.visits.map(visit=>visit.windowStart),[0,3,6,9].map(month=>addCalendarMonths(firstDate,month)));
+  const [deadlines]=await c.execute(`SELECT b.expires_at FROM annual_booking_visit v
+    JOIN booking b ON b.booking_id=v.booking_id WHERE v.series_id=? ORDER BY v.visit_number`,[series.seriesId]);
+  assert.ok(deadlines[0].expires_at,'initial annual request still has a confirmation deadline');
+  assert.deepEqual(deadlines.slice(1).map(row=>row.expires_at),[null,null,null],'future quarterly reservations must not expire 48 hours after purchase');
   assert.equal((await create()).annualBundle.seriesId,series.seriesId);
   const [[counts]]=await c.execute(`SELECT COUNT(DISTINCT b.booking_id) AS bookings,COUNT(bu.unit_id) AS units
     FROM booking b JOIN booking_aircon_unit bu ON bu.booking_id=b.booking_id WHERE b.customer_id=?`,[user.customerId]);
@@ -248,6 +254,7 @@ for(const route of ['public','customer'])test(`${route} annual bundle creates fo
   await assert.rejects(changePublicBooking(db,user,second.bookingId,'reschedule',{preferredDate:firstDate,timeWindow:'09:00 AM - 11:00 AM'}),error=>error.status===409);
   const rescheduled=nextWeekday(addCalendarMonths(firstDate,4));
   await changePublicBooking(db,user,second.bookingId,'reschedule',{preferredDate:rescheduled,timeWindow:'09:00 AM - 11:00 AM'});
+  assert.equal((await c.execute('SELECT expires_at FROM booking WHERE booking_id=?',[second.bookingId]))[0][0].expires_at,null,'rescheduling a later quarterly visit preserves its entitlement');
   await changePublicBooking(db,user,second.bookingId,'cancel',{status:'Cancelled'});
   const refreshed=(await create()).annualBundle;
   assert.equal(refreshed.visits[1].status,'Cancelled');assert.equal(refreshed.visits[1].preferredDate,rescheduled);
@@ -255,6 +262,23 @@ for(const route of ['public','customer'])test(`${route} annual bundle creates fo
   assert.equal(refreshed.totalAmount,expectedTotal,'cancellation does not fabricate a payment or refund');
   const listed=await listBookings(db,'all',user.id);
   assert.equal(listed.length,4);assert.ok(listed.every(item=>item.annualBundle.seriesId===series.seriesId));
+  // Simulate deadlines written by an older release. The worker and mutation
+  // guard must retain later visits even when migration has not corrected them.
+  await c.execute("UPDATE booking SET expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 49 HOUR) WHERE customer_id=? AND booking_status='Submitted'",[user.customerId]);
+  const [[initial]]=await c.execute('SELECT * FROM booking WHERE booking_id=?',[booking.bookingId]);
+  const [[later]]=await c.execute('SELECT * FROM booking WHERE booking_id=?',[series.visits[2].bookingId]);
+  await assert.rejects(assertBookingNotExpired(c,initial),error=>error.status===409);
+  await assertBookingNotExpired(c,later);
+  const scoped={...db,execute:(sql,params)=>sql.includes("SELECT booking_id FROM booking WHERE booking_status='Submitted'")
+    ? c.execute(sql.replace("WHERE booking_status='Submitted'","WHERE customer_id=? AND booking_status='Submitted'"),[user.customerId,...params])
+    : db.execute(sql,params)};
+  assert.equal((await expireSubmittedBookings(scoped)).expired,1);
+  assert.equal((await expireSubmittedBookings(scoped)).expired,0,'expiry retries cannot affect retained visits');
+  const plans=await listAnnualPlans(db,user.id);
+  assert.deepEqual(plans.plans[0].visits.map(visit=>visit.status),['Expired','Cancelled','Submitted','Submitted']);
+  assert.equal(plans.plans[0].remainingVisits,2);
+  assert.match(plans.plans[0].attentionMessage,/Visit 1 is expired/);
+  assert.equal(plans.plans[0].totalAmount,expectedTotal,'expired initial requests preserve the annual contract snapshot');
 }));
 
 test('annual later-visit quota failure rolls back the complete series and successful retry remains silent before dispatch',async()=>rollbackFixture(async(db,c,user)=>{

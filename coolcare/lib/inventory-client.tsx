@@ -1,5 +1,6 @@
 'use client';
 import { createContext, useContext, useEffect, useState } from 'react';
+import type { BookingAmounts } from './coolcare-types';
 export const ROOT = '/admin/inventory';
 export const ADMIN_ROOT = '/admin';
 export type Part = {
@@ -26,7 +27,9 @@ export type Transaction = {
   admin_name: string | null;
   remarks: string | null;
   created_at: string;
+  created_at_iso?: string;
   modified_at: string | null;
+  modified_at_iso?: string | null;
   version: number;
 };
 export type List<T> = {
@@ -42,6 +45,7 @@ export type User = {
   access_level: 'Owner' | 'Admin';
 };
 export type AdminBooking = {
+  amounts?: BookingAmounts;
   bookingId: number;
   status: string;
   preferredDate: string;
@@ -62,6 +66,10 @@ export type AdminBooking = {
   numberOfUnits: number;
   technicianName: string | null;
   expiresAt?: string | null;
+  reportPending?: boolean;
+  reportId?: number | null;
+  pendingReportJobId?: number | null;
+  pendingReportTechnicianName?: string | null;
 };
 export type AdminBookingDetail = AdminBooking & {
   reports?: Array<{
@@ -74,6 +82,10 @@ export type AdminBookingDetail = AdminBooking & {
     customerSignatureUrl?: string | null;
     technicianSignatureUrl?: string | null;
     reportId: number;
+    serviceDate?: string | null;
+    scheduledStart?: string | null;
+    technicianName?: string | null;
+    archived?: boolean | number;
     workPerformed: string;
     problemFound: string | null;
     solutionApplied: string | null;
@@ -189,6 +201,7 @@ export type AdminActionSummary = {
   expiringSoon: number;
   returnVisits: number;
   awaitingDispatch: number;
+  pendingReports: number;
   ordersRequiringAction: number;
   totalRequiringAction: number;
 };

@@ -1,3 +1,4 @@
+import {arrangeVisitForNow} from './service-visit-fixture.mjs';
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -455,6 +456,7 @@ test('confirmation and automatic dispatch are atomic, rotate conflict-free techn
       [firstDispatch.assignmentId],
     );
     assert.equal(accepted.assignment_status, 'Accepted');
+    await arrangeVisitForNow(connection,firstDispatch.jobId);
     await updateTechnicianJobStatus(
       db,
       technicians[0].userId,

@@ -1,3 +1,5 @@
+import {lockTechnicianRoster} from './scheduling.mjs';
+import {visitStartBlockReason,visitCompletionBlockReason} from './visit-start.mjs';
 import {snapshotVisit} from './return-visits.mjs';
 import {capturePerformanceVisitStart} from './performance.mjs';
 import {awardCompletedBookingRewards} from './commerce.mjs';
@@ -29,7 +31,9 @@ export async function getTechnicianJobs(pool, technicianId, jobId) {
     COALESCE(b.estimated_duration_minutes,(SELECT SUM(cat.estimated_duration_minutes) FROM booking_service bs JOIN service_catalog cat ON cat.service_id=bs.service_id WHERE bs.booking_id=b.booking_id),sc.estimated_duration_minutes) AS estimatedDurationMinutes,
     (EXISTS(SELECT 1 FROM simple_service_catalog ss WHERE ss.service_id=b.service_id AND ss.code='repair') OR EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog ss ON ss.service_id=bs.service_id WHERE bs.booking_id=b.booking_id AND ss.code='repair')) AS repairEligible,
     (SELECT COUNT(*) FROM booking_aircon_unit bau WHERE bau.booking_id=b.booking_id) AS acCount,
-    DATE_FORMAT(w.updated_at,'%Y-%m-%d %H:%i:%s') AS lastModified,
+    UNIX_TIMESTAMP(w.updated_at) AS lastModifiedEpoch,
+    r.report_id AS reportId,UNIX_TIMESTAMP(r.submitted_time) AS reportSubmittedAtEpoch,
+    (w.current_status IN ('Completed','Awaiting return arrangement') AND r.submitted_time IS NULL) AS reportPending,
     (EXISTS(SELECT 1 FROM simple_service_catalog ss WHERE ss.service_id=b.service_id AND ss.code='cleaning')
       OR EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog ss ON ss.service_id=bs.service_id WHERE bs.booking_id=b.booking_id AND ss.code='cleaning')) AS cleaningEligible,
     av.series_id AS annualSeriesId,av.visit_number AS annualVisitNumber,
@@ -43,12 +47,15 @@ export async function getTechnicianJobs(pool, technicianId, jobId) {
     JOIN service_address sa ON sa.address_id=b.address_id
     LEFT JOIN annual_booking_visit av ON av.booking_id=b.booking_id
     LEFT JOIN service_progress sp ON sp.job_id=w.job_id
+    LEFT JOIN service_report r ON r.job_id=w.job_id
     WHERE a.technician_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
     ${jobId === undefined ? '' : 'AND w.job_id=?'}
     ORDER BY w.appointment_date,w.appointment_time,w.job_id`,jobId === undefined ? [technicianId] : [technicianId,jobId]);
-  return rows.map(row=>({...row,cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
+  const [[active]]=await pool.execute(`SELECT w.job_id AS jobId FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id WHERE a.technician_id=? AND w.current_status='In Progress' LIMIT 1`,[technicianId]);
+  const now=new Date();
+  return rows.map(({lastModifiedEpoch,reportSubmittedAtEpoch,...row})=>{const startBlockedReason=visitStartBlockReason(row.date,row.time,now,active?.jobId!==row.jobId?active?.jobId:null);return {...row,lastModified:lastModifiedEpoch?new Date(Number(lastModifiedEpoch)*1000).toISOString():null,reportSubmittedAt:reportSubmittedAtEpoch?new Date(Number(reportSubmittedAtEpoch)*1000).toISOString():null,reportPending:Boolean(row.reportPending),canStart:!startBlockedReason,startBlockedReason,canComplete:!visitCompletionBlockReason(row.date,now),completionBlockedReason:visitCompletionBlockReason(row.date,now),cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
     status:row.status==='On The Way'?'On the Way':row.status,
-    initials:row.customer.split(/\s+/).map(s=>s[0]).slice(0,2).join('')}));
+    initials:row.customer.split(/\s+/).map(s=>s[0]).slice(0,2).join('')};});
 }
 
 export const cleaningAssessmentSchema=z.object({
@@ -82,10 +89,10 @@ export async function saveCleaningAssessment(pool,technicianUserId,jobId,raw) {
   if(version!==data.expectedVersion)throw new AppError('This assessment was updated elsewhere. Reload the work order before saving your decision.',409);
   const next=version+1;
   await conn.execute(`INSERT INTO work_order_cleaning_assessment_revision
-   (request_id,payload_hash,job_id,changed_by_user_id,before_method,after_method,before_note,after_note,before_version,after_version)
-   VALUES(?,?,?,?,?,?,?,?,?,?)`,[data.requestId,hash,jobId,technicianUserId,current?.cleaning_method??null,data.method,current?.assessment_note??null,data.note,version,next]);
-  if(current)await conn.execute('UPDATE work_order_cleaning_assessment SET cleaning_method=?,assessment_note=?,version=?,assessed_by_user_id=?,updated_at=CURRENT_TIMESTAMP(6) WHERE job_id=?',[data.method,data.note,next,technicianUserId,jobId]);
-  else await conn.execute('INSERT INTO work_order_cleaning_assessment(job_id,cleaning_method,assessment_note,version,assessed_by_user_id) VALUES(?,?,?,?,?)',[jobId,data.method,data.note,next,technicianUserId]);
+   (request_id,payload_hash,job_id,changed_by_user_id,before_method,after_method,before_note,after_note,before_version,after_version,changed_at)
+   VALUES(?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))`,[data.requestId,hash,jobId,technicianUserId,current?.cleaning_method??null,data.method,current?.assessment_note??null,data.note,version,next]);
+  if(current)await conn.execute('UPDATE work_order_cleaning_assessment SET cleaning_method=?,assessment_note=?,version=?,assessed_by_user_id=?,updated_at=UTC_TIMESTAMP(6) WHERE job_id=?',[data.method,data.note,next,technicianUserId,jobId]);
+  else await conn.execute('INSERT INTO work_order_cleaning_assessment(job_id,cleaning_method,assessment_note,version,assessed_by_user_id,created_at,updated_at) VALUES(?,?,?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))',[jobId,data.method,data.note,next,technicianUserId]);
   await conn.execute('UPDATE work_order SET updated_at=CURRENT_TIMESTAMP WHERE job_id=?',[jobId]);
   await conn.commit();return {jobId,method:data.method,note:data.note,version:next,replayed:false};
  }catch(error){await conn.rollback();throw error;}finally{conn.release();}
@@ -96,41 +103,44 @@ export async function getTechnicianJobDetails(pool, technicianId, jobId) {
   if(!job)throw new AppError('Job not found for this technician.',404);
   const reportSelect=`SELECT r.report_id AS reportId,w.job_id AS jobId,b.booking_id AS bookingId,
     b.subscription_id AS subscriptionId,mp.package_name AS packageName,sa.address_line AS address,
-    DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,r.work_performed AS workPerformed,
+    DATE_FORMAT(r.visit_service_date,'%Y-%m-%d') AS date,r.visit_technician_id AS technicianId,ru.full_name AS technician,r.visit_start_time AS scheduledStart,r.work_performed AS workPerformed,
     r.problem_found AS problemFound,r.solution_applied AS solutionApplied,r.checklist_result AS checklist,
     r.customer_signature_url AS customerSignatureUrl,r.technician_signature_url AS technicianSignatureUrl,
-    r.submitted_time AS submittedAt,r.started_at AS startedAt,r.completed_at AS completedAt,
+    UNIX_TIMESTAMP(r.submitted_time) AS submittedAtEpoch,r.started_at AS startedAt,r.completed_at AS completedAt,
     ca.cleaning_method AS cleaningMethod,ca.assessment_note AS cleaningAssessmentNote,
     CASE WHEN r.started_at IS NOT NULL AND r.completed_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE,r.started_at,r.completed_at) ELSE NULL END AS durationMinutes
-    FROM service_report r JOIN work_order w ON w.job_id=r.job_id JOIN booking b ON b.booking_id=w.booking_id
+    FROM service_report r JOIN work_order w ON w.job_id=COALESCE(r.job_id,r.archived_job_id) JOIN booking b ON b.booking_id=w.booking_id
     JOIN service_address sa ON sa.address_id=b.address_id
     LEFT JOIN customer_subscription sub ON sub.subscription_id=b.subscription_id
     LEFT JOIN maintenance_package mp ON mp.package_id=sub.package_id
-    LEFT JOIN work_order_cleaning_assessment ca ON ca.job_id=w.job_id`;
-  const [[report]]=await pool.execute(reportSelect+' WHERE w.job_id=?',[jobId]);
-  const [addressHistory]=await pool.execute(reportSelect+` WHERE b.customer_id=? AND b.address_id=? AND w.current_status='Completed' AND w.job_id<>?
-    ORDER BY COALESCE(r.completed_at,r.submitted_time,w.appointment_date) DESC,r.report_id DESC LIMIT 3`,[job.customerId,job.addressId,jobId]);
-  const [packageHistory]=await pool.execute(reportSelect+` WHERE b.customer_id=? AND b.subscription_id IS NOT NULL AND w.current_status='Completed' AND w.job_id<>?
-    ORDER BY COALESCE(r.completed_at,r.submitted_time,w.appointment_date) DESC,r.report_id DESC`,[job.customerId,jobId]);
+    LEFT JOIN work_order_cleaning_assessment ca ON ca.job_id=w.job_id
+    LEFT JOIN technician rt ON rt.technician_id=r.visit_technician_id LEFT JOIN user_account ru ON ru.user_id=rt.user_id`;
+  const [[report]]=await pool.execute(reportSelect+' WHERE r.job_id=?',[jobId]);
+  const [addressHistory]=await pool.execute(reportSelect+` WHERE b.customer_id=? AND b.address_id=? AND r.submitted_time IS NOT NULL AND (r.archived_job_id IS NOT NULL OR r.completed_at IS NOT NULL OR w.current_status='Completed') AND w.job_id<>?
+    ORDER BY COALESCE(r.completed_at,r.submitted_time,r.visit_service_date) DESC,r.report_id DESC LIMIT 3`,[job.customerId,job.addressId,jobId]);
+  const [packageHistory]=await pool.execute(reportSelect+` WHERE b.customer_id=? AND b.subscription_id IS NOT NULL AND r.submitted_time IS NOT NULL AND (r.archived_job_id IS NOT NULL OR r.completed_at IS NOT NULL OR w.current_status='Completed') AND w.job_id<>?
+    ORDER BY COALESCE(r.completed_at,r.submitted_time,r.visit_service_date) DESC,r.report_id DESC`,[job.customerId,jobId]);
   const [packages]=await pool.execute(`SELECT s.subscription_id AS subscriptionId,mp.package_name AS packageName,s.remaining_service_count AS remainingVisits,s.start_date AS startDate,s.end_date AS endDate,s.subscription_status AS status
     FROM customer_subscription s JOIN maintenance_package mp ON mp.package_id=s.package_id WHERE s.customer_id=? ORDER BY s.created_at DESC`,[job.customerId]);
   const [annualHistory]=job.annualSeriesId?await pool.execute(reportSelect+` JOIN annual_booking_visit av ON av.booking_id=b.booking_id
     JOIN annual_booking_series series ON series.series_id=av.series_id
-    WHERE av.series_id=? AND av.visit_number<? AND series.customer_id=? AND b.customer_id=? AND w.current_status='Completed'
+    WHERE av.series_id=? AND av.visit_number<? AND series.customer_id=? AND b.customer_id=? AND r.submitted_time IS NOT NULL AND (r.archived_job_id IS NOT NULL OR r.completed_at IS NOT NULL OR w.current_status='Completed')
     ORDER BY av.visit_number DESC`,[job.annualSeriesId,job.annualVisitNumber,job.customerId,job.customerId]):[[]];
   const [[cleaningAssessment]]=await pool.execute(`SELECT ca.cleaning_method AS method,ca.assessment_note AS note,ca.version,
-    ca.updated_at AS updatedAt,u.full_name AS assessedBy FROM work_order_cleaning_assessment ca
+    DATE_FORMAT(ca.updated_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS updatedAt,u.full_name AS assessedBy FROM work_order_cleaning_assessment ca
     JOIN user_account u ON u.user_id=ca.assessed_by_user_id WHERE ca.job_id=?`,[jobId]);
   const [cleaningAssessmentHistory]=await pool.execute(`SELECT ca.before_method AS beforeMethod,ca.after_method AS afterMethod,
-    ca.before_note AS beforeNote,ca.after_note AS afterNote,ca.after_version AS version,ca.changed_at AS changedAt,u.full_name AS changedBy
+    ca.before_note AS beforeNote,ca.after_note AS afterNote,ca.after_version AS version,DATE_FORMAT(ca.changed_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS changedAt,u.full_name AS changedBy
     FROM work_order_cleaning_assessment_revision ca JOIN user_account u ON u.user_id=ca.changed_by_user_id WHERE ca.job_id=? ORDER BY ca.after_version DESC`,[jobId]);
   const jobIds=[...new Set([jobId,...addressHistory.map(r=>r.jobId),...packageHistory.map(r=>r.jobId),...annualHistory.map(r=>r.jobId)])];
-  const [inventory]=await pool.query(`SELECT t.transaction_id AS transactionId,t.job_id AS jobId,p.part_name AS partName,p.stock_unit AS stockUnit,t.transaction_type AS type,t.quantity,t.remarks,t.created_at AS occurredAt,t.modified_at AS lastModified
+  const [inventory]=await pool.query(`SELECT t.transaction_id AS transactionId,t.job_id AS jobId,p.part_name AS partName,p.stock_unit AS stockUnit,t.transaction_type AS type,t.quantity,t.remarks,UNIX_TIMESTAMP(t.created_at) AS occurredAtEpoch,DATE_FORMAT(t.modified_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS lastModified
     FROM inventory_transaction t JOIN part p ON p.part_id=t.part_id WHERE t.job_id IN (?) AND t.transaction_type IN ('Stock Out','Return') ORDER BY t.created_at DESC,t.transaction_id DESC`,[jobIds]);
   const progressByJob=new Map(await Promise.all(jobIds.map(async id=>[id,await getServiceProgress(pool,id)])));
-  const attach=r=>({...r,inventory:inventory.filter(t=>t.jobId===r.jobId),serviceProgress:progressByJob.get(r.jobId)});
+  const instant=value=>value?new Date(Number(value)*1000).toISOString():null;
+  const inventoryDates=inventory.map(r=>({...r,occurredAt:instant(r.occurredAtEpoch)}));
+  const attach=r=>({...r,submittedAt:instant(r.submittedAtEpoch),inventory:inventoryDates.filter(t=>t.jobId===r.jobId),serviceProgress:progressByJob.get(r.jobId)});
   const serviceProgress=progressByJob.get(jobId);
-  return {job:{...job,serviceProgress,report:report?{...attach(report),serviceProgress}:null,inventory:inventory.filter(t=>t.jobId===jobId),cleaningAssessment:cleaningAssessment??null},addressHistory:addressHistory.map(attach),packageHistory:packageHistory.map(attach),packages,annualHistory:annualHistory.map(attach),cleaningAssessmentHistory};
+  return {job:{...job,serviceProgress,report:report?{...attach(report),serviceProgress}:null,inventory:inventoryDates.filter(t=>t.jobId===jobId),cleaningAssessment:cleaningAssessment??null},addressHistory:addressHistory.map(attach),packageHistory:packageHistory.map(attach),packages,annualHistory:annualHistory.map(attach),cleaningAssessmentHistory};
 }
 
 const statusTransition={Assigned:'On The Way','On The Way':'In Progress','In Progress':'Completed','Return visit':'In Progress'};
@@ -152,7 +162,9 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
     await connection.beginTransaction();
     const [[bookingLock]]=await connection.execute('SELECT booking_id FROM work_order WHERE job_id=?',[jobId]);
     if(bookingLock)await connection.execute('SELECT booking_id FROM booking WHERE booking_id=? FOR UPDATE',[bookingLock.booking_id]);
-    const [[work]]=await connection.execute(`SELECT w.*,a.technician_id,a.assignment_status,b.booking_status,r.customer_signature_url,r.technician_signature_url
+    // Serialize starts with dispatch before locking technician/work-order rows.
+    if(data.status==='In Progress')await lockTechnicianRoster(connection);
+    const [[work]]=await connection.execute(`SELECT w.*,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,DATE_FORMAT(w.appointment_time,'%H:%i:%s') AS serviceTime,a.technician_id,a.assignment_status,b.booking_status,r.visit_technician_id AS reportTechnicianId,r.customer_signature_url,r.technician_signature_url
       FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
       JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id
       JOIN booking b ON b.booking_id=w.booking_id
@@ -164,17 +176,24 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
       if(previous.payload_hash!==hash)throw new AppError('This request ID has already been used for a different update.',409);
       await connection.commit();return {...(typeof previous.result_json==='string'?JSON.parse(previous.result_json):previous.result_json),replayed:true};
     }
+    if(work.current_status!=='Return visit' && work.reportTechnicianId && work.reportTechnicianId!==work.technician_id)throw new AppError('This report belongs to a previous technician. Ask the administrator to correct the visit assignment before continuing.',409);
     if(work.current_status!==data.expectedStatus||!(statusTransition[work.current_status]===data.status || (work.current_status==='Assigned' && data.status==='In Progress'))) {
       throw new AppError('Reload this work order and complete each status step in order.',409);
     }
+    if(data.status==='In Progress'){
+      const [active]=await connection.execute(`SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id WHERE a.technician_id=? AND w.job_id<>? AND w.current_status='In Progress' FOR UPDATE`,[work.technician_id,jobId]);
+      const reason=visitStartBlockReason(work.serviceDate,work.serviceTime,new Date(),active[0]?.job_id);
+      if(reason)throw new AppError(reason,409);
+    }
+    if(data.status==='Completed'){const reason=visitCompletionBlockReason(work.serviceDate);if(reason)throw new AppError(reason,409);}
     if(work.current_status==='Return visit'){
       await connection.execute("UPDATE service_progress SET follow_up_status='In Progress',revision=revision+1 WHERE job_id=?",[jobId]);
       await connection.execute("UPDATE service_report SET archived_job_id=job_id,job_id=NULL WHERE job_id=?",[jobId]);
     }
     if(data.status==='In Progress'){
-      await connection.execute(`INSERT INTO service_report(job_id,work_performed,started_at)
-        VALUES (?,'',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))
-        ON DUPLICATE KEY UPDATE started_at=COALESCE(started_at,VALUES(started_at))`,[jobId]);
+      await connection.execute(`INSERT INTO service_report(job_id,work_performed,started_at,visit_technician_id,visit_service_date,visit_start_time)
+        VALUES (?,'',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR),?,?,?)
+        ON DUPLICATE KEY UPDATE started_at=COALESCE(started_at,VALUES(started_at)),visit_technician_id=COALESCE(visit_technician_id,VALUES(visit_technician_id)),visit_service_date=COALESCE(visit_service_date,VALUES(visit_service_date)),visit_start_time=COALESCE(visit_start_time,VALUES(visit_start_time))`,[jobId,work.technician_id,work.serviceDate,work.serviceTime]);
       await capturePerformanceVisitStart(connection,jobId);
     }
     if(data.status==='Completed'&&data.report&&(work.customer_signature_url||work.technician_signature_url))throw new AppError('Use Service Reports to update a signed report.',409);

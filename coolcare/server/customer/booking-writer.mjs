@@ -46,7 +46,8 @@ export async function writeSelectedBookings(connection,selection,context) {
     const [booking]=await connection.execute(`INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,
       preferred_time_slot,slot_start,slot_end,estimated_duration_minutes,expires_at,problem_description,booking_status,total_amount) VALUES (?,?,?,?,?,?,?,?,?,?,'Submitted',?)`,
     [context.customerId,context.addressId,selection.services[0].serviceId,visit.preferredDate,context.timeSlot,slot?.start??null,slot?.end??null,
-      context.legacy?null:selection.estimatedDurationMinutes,context.legacy?null:bookingExpiryDate(),context.problemDescription||null,visit.totalAmount]);
+      context.legacy?null:selection.estimatedDurationMinutes,
+      context.legacy||(selection.annual&&visit.visitNumber>1)?null:bookingExpiryDate(),context.problemDescription||null,visit.totalAmount]);
     firstBookingId??=booking.insertId;
     for(const unitId of context.unitIds)await connection.execute('INSERT INTO booking_aircon_unit(booking_id,unit_id) VALUES (?,?)',[booking.insertId,unitId]);
     await connection.execute('INSERT INTO web_booking_details(booking_id,service_package,contact_phone,special_notes,request_id) VALUES (?,?,?,?,?)',
@@ -55,7 +56,7 @@ export async function writeSelectedBookings(connection,selection,context) {
     if(seriesId)await connection.execute(`INSERT INTO annual_booking_visit(booking_id,series_id,visit_number,scheduled_date,window_start,window_end) VALUES (?,?,?,?,?,?)`,
       [booking.insertId,seriesId,visit.visitNumber,visit.preferredDate,visit.windowStart,visit.windowEnd]);
     await connection.execute("INSERT INTO booking_status_history(booking_id,new_status,changed_by_user_id,change_note) VALUES (?,'Submitted',?,?)",
-      [booking.insertId,context.userId,selection.annual?`Annual cleaning visit ${visit.visitNumber} of 4 requested; appointment awaits confirmation.`:context.source]);
+      [booking.insertId,context.userId,selection.annual?`Annual cleaning visit ${visit.visitNumber} of 4 requested; ${visit.visitNumber>1?'quarterly reservation retained without automatic confirmation expiry; appointment awaits individual confirmation.':'first appointment awaits confirmation before its deadline.'}`:context.source]);
   }
   return describeCreatedBooking(connection,firstBookingId);
 }

@@ -3,6 +3,7 @@ import { registerAdminWorkspaceRoutes } from './admin-workspace.mjs';
 import { getServiceProgress } from './service-progress.mjs';
 import { assertBookingNotExpired } from './order-expiry.mjs';
 import { releaseBookingRewardReservation } from './commerce.mjs';
+import { readBookingAmounts } from './booking-amounts.mjs';
 import {
   addDispatchProximity,
   compareDispatchCandidates,
@@ -101,10 +102,30 @@ const pageSchema = z.object({
     ])
     .default(''),
   q: z.string().trim().max(120).default(''),
-  queue: z.enum(['', 'waiting', 'review']).default(''),
+  queue: z.enum(['', 'waiting', 'review', 'reports']).default(''),
   sort: z.enum(['placed', 'deadline']).default('placed'),
   page: z.coerce.number().int().min(1).max(1000000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+const reportPendingCondition = "w.current_status IN ('Completed','Awaiting return arrangement') AND r.submitted_time IS NULL";
+const pendingReportBookingCondition = `EXISTS(SELECT 1 FROM work_order w
+  LEFT JOIN service_report r ON r.job_id=w.job_id
+  WHERE w.booking_id=b.booking_id AND ${reportPendingCondition})`;
+const pendingReportColumns = `
+  ${pendingReportBookingCondition} AS reportPending,
+  (SELECT r.report_id FROM work_order w LEFT JOIN service_report r ON r.job_id=w.job_id
+    WHERE w.booking_id=b.booking_id AND ${reportPendingCondition} ORDER BY w.job_id DESC LIMIT 1) AS reportId,
+  (SELECT w.job_id FROM work_order w LEFT JOIN service_report r ON r.job_id=w.job_id
+    WHERE w.booking_id=b.booking_id AND ${reportPendingCondition} ORDER BY w.job_id DESC LIMIT 1) AS pendingReportJobId,
+  (SELECT tech_user.full_name FROM work_order w LEFT JOIN service_report r ON r.job_id=w.job_id
+    JOIN assignment assignment_owner ON assignment_owner.assignment_id=w.assignment_id
+    JOIN technician tech_owner ON tech_owner.technician_id=assignment_owner.technician_id
+    JOIN user_account tech_user ON tech_user.user_id=tech_owner.user_id
+    WHERE w.booking_id=b.booking_id AND ${reportPendingCondition} ORDER BY w.job_id DESC LIMIT 1) AS pendingReportTechnicianName`;
+const timestampIso = seconds => seconds == null ? null : new Date(Number(seconds) * 1000).toISOString();
+const describeAdminBooking = ({ createdAtEpoch, reportPending, ...row }) => ({
+  ...row, createdAt: timestampIso(createdAtEpoch), reportPending: Boolean(reportPending),
 });
 
 const canonicalPayload = (value) =>
@@ -387,16 +408,21 @@ export async function getAdminActionSummary(pool) {
     `SELECT COUNT(*) AS awaitingAdmin FROM service_progress
     WHERE follow_up_status IN ('Required','Awaiting confirmation')`,
   );
+  const [[reports]] = await pool.execute(`SELECT COUNT(DISTINCT w.booking_id) AS pendingReports
+    FROM work_order w LEFT JOIN service_report r ON r.job_id=w.job_id
+    WHERE ${reportPendingCondition}`);
   const submitted = Number(bookings.submitted || 0),
     returnVisits = Number(returns.awaitingAdmin || 0),
-    awaitingDispatch = Number(bookings.awaitingDispatch || 0);
+    awaitingDispatch = Number(bookings.awaitingDispatch || 0),
+    pendingReports = Number(reports.pendingReports || 0);
   return {
     submitted,
     expiringSoon: Number(bookings.expiringSoon || 0),
     returnVisits,
     awaitingDispatch,
-    ordersRequiringAction: submitted + returnVisits,
-    totalRequiringAction: submitted + returnVisits + awaitingDispatch,
+    pendingReports,
+    ordersRequiringAction: submitted + returnVisits + pendingReports,
+    totalRequiringAction: submitted + returnVisits + awaitingDispatch + pendingReports,
   };
 }
 
@@ -1052,7 +1078,9 @@ export async function listAdminBookings(pool, query) {
   const data = pageSchema.parse(query),
     where = [],
     values = [];
-  if (data.queue === 'waiting') {
+  if (data.queue === 'reports') {
+    where.push(pendingReportBookingCondition);
+  } else if (data.queue === 'waiting') {
     where.push(
       "(b.booking_status='Confirmed' OR (b.booking_status='Submitted' AND b.admin_waiting_since IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at>UTC_TIMESTAMP())))",
     );
@@ -1079,7 +1107,8 @@ export async function listAdminBookings(pool, query) {
   );
   const [rows] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS preferredDate,
-    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,u.full_name AS customerName,u.email,
+    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.total_amount AS totalAmount,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,u.full_name AS customerName,u.email,
+    ${pendingReportColumns},
     sa.address_line AS addressLine,COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
     (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
     (SELECT technician_user.full_name FROM assignment latest_assignment JOIN technician latest_technician ON latest_technician.technician_id=latest_assignment.technician_id
@@ -1099,7 +1128,8 @@ export async function listAdminBookings(pool, query) {
     LIMIT ? OFFSET ?`,
     [...values, data.pageSize, (page - 1) * data.pageSize],
   );
-  return { rows, total: Number(total), page, pageSize: data.pageSize };
+  const amounts = await readBookingAmounts(pool, rows.map(row => row.bookingId));
+  return { rows: rows.map(row => ({ ...describeAdminBooking(row), amounts: amounts.get(row.bookingId) })), total: Number(total), page, pageSize: data.pageSize };
 }
 
 export async function listAdminSchedule(pool, query) {
@@ -1107,7 +1137,7 @@ export async function listAdminSchedule(pool, query) {
   const [rows] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,
     b.preferred_service_date AS preferredDate,b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,
-    b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,u.full_name AS customerName,u.email,
+    b.total_amount AS totalAmount,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,u.full_name AS customerName,u.email,
     sa.address_line AS addressLine,
     COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
     (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
@@ -1128,13 +1158,14 @@ export async function listAdminSchedule(pool, query) {
     ORDER BY b.preferred_service_date,b.slot_start,b.booking_id`,
     [data.from, data.to],
   );
-  return { from: data.from, to: data.to, rows };
+  return { from: data.from, to: data.to, rows: rows.map(describeAdminBooking) };
 }
 
 export async function getAdminBooking(pool, bookingId) {
   const [[booking]] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS preferredDate,
-    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.problem_description AS problemDescription,b.total_amount AS totalAmount,b.created_at AS createdAt,b.expires_at AS expiresAt,b.rejection_reason AS rejectionReason,b.rejection_version AS rejectionVersion,
+    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.problem_description AS problemDescription,b.total_amount AS totalAmount,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,b.rejection_reason AS rejectionReason,b.rejection_version AS rejectionVersion,
+    ${pendingReportColumns},
     b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,
     (SELECT details.special_notes FROM web_booking_details details WHERE details.booking_id=b.booking_id) AS otherRemarks,
     u.full_name AS customerName,u.email,u.phone,sa.address_line AS addressLine,sa.postal_code AS postalCode,
@@ -1150,27 +1181,34 @@ export async function getAdminBooking(pool, bookingId) {
   if (!booking) throw new AppError('Booking not found.', 404);
   const [timeline] = await pool.execute(
     `SELECT h.history_id AS historyId,h.old_status AS oldStatus,h.new_status AS status,
-    h.change_note AS note,h.changed_at AS changedAt,u.full_name AS changedBy FROM booking_status_history h
+    h.change_note AS note,UNIX_TIMESTAMP(h.changed_at) AS changedAtEpoch,u.full_name AS changedBy FROM booking_status_history h
     LEFT JOIN user_account u ON u.user_id=h.changed_by_user_id WHERE h.booking_id=? ORDER BY h.changed_at,h.history_id`,
     [bookingId],
   );
   const [assignments] = await pool.execute(
-    `SELECT a.assignment_id AS assignmentId,a.assignment_status AS status,a.assigned_at AS assignedAt,
+    `SELECT a.assignment_id AS assignmentId,a.assignment_status AS status,UNIX_TIMESTAMP(a.assigned_at) AS assignedAtEpoch,
     u.full_name AS technicianName,w.job_id AS jobId,w.current_status AS workStatus
     FROM assignment a JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id
     LEFT JOIN work_order w ON w.assignment_id=a.assignment_id WHERE a.booking_id=? ORDER BY a.assignment_id DESC`,
     [bookingId],
   );
   const [reports] = await pool.execute(
-    `SELECT w.job_id AS jobId,r.report_id AS reportId,r.work_performed AS workPerformed,r.problem_found AS problemFound,r.solution_applied AS solutionApplied,r.checklist_result AS checklist,r.customer_signature_url AS customerSignatureUrl,r.technician_signature_url AS technicianSignatureUrl,r.started_at AS startedAt,r.completed_at AS completedAt FROM service_report r JOIN work_order w ON w.job_id=r.job_id WHERE w.booking_id=? AND r.submitted_time IS NOT NULL ORDER BY r.report_id DESC`,
+    `SELECT w.job_id AS jobId,r.report_id AS reportId,r.work_performed AS workPerformed,r.problem_found AS problemFound,r.solution_applied AS solutionApplied,r.checklist_result AS checklist,
+      r.customer_signature_url AS customerSignatureUrl,r.technician_signature_url AS technicianSignatureUrl,r.started_at AS startedAt,r.completed_at AS completedAt,
+      r.visit_service_date AS serviceDate,r.visit_start_time AS scheduledStart,ru.full_name AS technicianName,r.archived_job_id IS NOT NULL AS archived
+      FROM service_report r JOIN work_order w ON w.job_id=COALESCE(r.job_id,r.archived_job_id)
+      LEFT JOIN technician rt ON rt.technician_id=r.visit_technician_id LEFT JOIN user_account ru ON ru.user_id=rt.user_id
+      WHERE w.booking_id=? AND r.submitted_time IS NOT NULL ORDER BY r.report_id DESC`,
     [bookingId],
   );
   return {
-    ...booking,
-    timeline,
+    ...describeAdminBooking(booking),
+    amounts: (await readBookingAmounts(pool, [bookingId])).get(bookingId),
+    timeline: timeline.map(({ changedAtEpoch, ...event }) => ({ ...event, changedAt: timestampIso(changedAtEpoch) })),
     assignments: await Promise.all(
-      assignments.map(async (item) => ({
+      assignments.map(async ({ assignedAtEpoch, ...item }) => ({
         ...item,
+        assignedAt: timestampIso(assignedAtEpoch),
         progress: item.jobId
           ? await getServiceProgress(pool, item.jobId)
           : null,
@@ -1179,7 +1217,7 @@ export async function getAdminBooking(pool, bookingId) {
     reports: await Promise.all(
       reports.map(async (r) => ({
         ...r,
-        photos: await listServicePhotos(pool, r.jobId),
+        photos: await listServicePhotos(pool, r.jobId, r.reportId),
       })),
     ),
   };

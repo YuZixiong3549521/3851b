@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { ArrowRight, CalendarDays, Check, ChevronDown, ChevronUp, RefreshCw, Repeat, Wind, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CalendarDays, Check, ChevronDown, ChevronUp, RefreshCw, Repeat, Wind, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -63,6 +63,7 @@ function PlanCard({ plan }: { plan: AnnualPlan }) {
         <div className="text-sm"><p className="font-medium">{plan.completedVisits} of {plan.totalVisits} quarterly visits completed</p><p className="mt-1 text-muted-foreground">{plan.remainingVisits} open · {plan.unusedClosedVisits} closed without completion</p></div>
       </div>
       <Progress value={plan.completedVisits / plan.totalVisits * 100} aria-label={`${plan.completedVisits} of ${plan.totalVisits} quarterly visits completed`} />
+      {plan.attentionMessage && <div className="flex gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4 text-sm"><AlertTriangle className="mt-0.5 size-5 shrink-0 text-primary" /><p>{plan.attentionMessage}</p></div>}
       {plan.nextVisit && <div className="flex gap-3 rounded-2xl bg-muted/50 p-4"><CalendarDays className="mt-0.5 size-5 shrink-0 text-primary" /><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">Next quarterly appointment</p><p className="mt-1 font-medium">{formatDate(plan.nextVisit.preferredDate)} · {formatTimeSlot(plan.nextVisit.slotStart && plan.nextVisit.slotEnd ? `${plan.nextVisit.slotStart.slice(0, 5)} - ${plan.nextVisit.slotEnd.slice(0, 5)}` : plan.nextVisit.timeSlot)}</p><p className="mt-1 text-sm text-muted-foreground">{plan.nextVisit.reference} · {plan.nextVisit.status}</p></div></div>}
       {!plan.nextVisit && plan.remainingVisits > 0 && <p className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">An open visit may be awaiting a new arrangement or return visit. Open its booking below for the latest service updates.</p>}
       <div className="flex flex-wrap gap-2">
@@ -74,10 +75,10 @@ function PlanCard({ plan }: { plan: AnnualPlan }) {
       {plan.renewedFromSeriesId && <p className="text-xs text-muted-foreground">Renewed from <Link className="text-primary underline" href={`/customer/plans#plan-${plan.renewedFromSeriesId}`}>plan #{plan.renewedFromSeriesId}</Link>. This plan has its own four quarterly visits.</p>}
       <div id={`plan-visits-${plan.seriesId}`} hidden={!expanded} className="space-y-3">
         {plan.visits.map(visit => <div key={visit.bookingId} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-4">
-          <div><p className="text-sm font-semibold">Visit {visit.visitNumber} · {formatDate(visit.preferredDate)}</p><p className="mt-1 text-sm text-muted-foreground">{formatTimeSlot(visit.slotStart && visit.slotEnd ? `${visit.slotStart.slice(0, 5)} - ${visit.slotEnd.slice(0, 5)}` : visit.timeSlot)} · {formatMoney(visit.totalAmount)}</p><p className="mt-1 text-xs text-muted-foreground">{visit.reference} · {visit.status}</p></div>
+          <div><p className="text-sm font-semibold">Visit {visit.visitNumber} · {formatDate(visit.preferredDate)}</p><p className="mt-1 text-sm text-muted-foreground">{formatTimeSlot(visit.slotStart && visit.slotEnd ? `${visit.slotStart.slice(0, 5)} - ${visit.slotEnd.slice(0, 5)}` : visit.timeSlot)} · {formatMoney(visit.totalAmount)}</p><p className="mt-1 text-xs text-muted-foreground">{visit.reference} · {visit.status}</p>{visit.visitNumber > 1 && visit.status === 'Submitted' && <p className="mt-1 text-xs text-muted-foreground">Reserved · awaiting individual confirmation · no 48-hour expiry</p>}</div>
           <Button size="sm" variant="outline" nativeButton={false} render={<Link href={`/customer/bookings/${visit.bookingId}`} />}>View / manage<ArrowRight className="size-4" /></Button>
         </div>)}
-        <p className="text-xs leading-relaxed text-muted-foreground">Rescheduling or cancellation requires at least 72 hours&apos; notice. A quarterly visit must stay within its original three-month window. Return visits remain part of the same quarterly service and do not use another entitlement. Cancelled, rejected or expired appointments do not count as completed service.</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">The first visit has a confirmation deadline. Visits 2–4 stay reserved and require individual confirmation, without a 48-hour expiry. Rescheduling or cancellation requires at least 72 hours&apos; notice. A quarterly visit must stay within its original three-month window. Return visits remain part of the same quarterly service and do not use another entitlement. Cancelling, rejecting or expiring one appointment affects only that visit and does not count as completed service.</p>
       </div>
     </div>
   </article>;

@@ -53,7 +53,7 @@ npm start
 
 ## 数据整合
 
-四项扩展功能使用真实业务记录，运行 `npm run db:up` 会应用所需迁移，包括订单完成自动发分的 `30-completion-rewards.sql`，不覆盖已有订单：
+四项扩展功能使用真实业务记录，运行 `npm run db:up` 会应用所需迁移，包括订单完成自动发分的 `30-completion-rewards.sql`、年度套餐确认期限的 `31-annual-confirmation.sql`、每次服务报告归属的 `32-service-visit-identity.sql` 和完成金额明细的 `33-booking-amount-snapshots.sql`，保留已有订单：
 
 - **Reports & Analytics** 按日期、服务和技师筛选，展示订单数、上门次数、已完成服务金额、积分抵扣和配件用量，支持 CSV 导出。这里的金额表示服务价值，不表示实际收款。
 - **My Plans** 显示原年度套餐的四次季度服务、使用情况、日期和续购提醒。续购须由客户确认当前价格后提交，创建新的四次预约；不会自动续费。

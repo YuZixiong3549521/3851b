@@ -92,10 +92,11 @@ export async function getServiceProgress(c, jobId) {
   additional_repair_fee AS additionalRepairFee,repair_quote_note AS repairQuoteNote FROM service_progress WHERE job_id=?`,
     [jobId],
   );
+  const [[completion]]=await c.execute('SELECT w.current_status,cr.booking_id AS completedBookingId FROM work_order w LEFT JOIN booking_completion_reward cr ON cr.booking_id=w.booking_id WHERE w.job_id=?',[jobId]);
   const [events] = await c.execute(
     `SELECT e.event_id AS id,e.report_id AS reportId,e.revision AS version,e.kind,e.minutes,e.amount,e.reason,e.notes,e.part_notes AS partNotes,
   DATE_FORMAT(e.follow_up_date,'%Y-%m-%d') AS followUpDate,e.follow_up_start AS followUpStart,e.follow_up_end AS followUpEnd,
-  DATE_FORMAT(CONVERT_TZ(e.created_at,'+00:00','+08:00'),'%Y-%m-%d %H:%i:%s') AS createdAt,u.full_name AS createdBy
+  UNIX_TIMESTAMP(e.created_at) AS createdAtEpoch,u.full_name AS createdBy
   FROM service_progress_event e JOIN user_account u ON u.user_id=e.actor_user_id WHERE e.job_id=? ORDER BY e.revision DESC`,
     [jobId],
   );
@@ -103,16 +104,17 @@ export async function getServiceProgress(c, jobId) {
     'SELECT visit_id AS id,technician_id AS technicianId,started_at AS startedAt,ended_at AS endedAt,outcome,report_snapshot AS snapshot FROM service_visit_record WHERE job_id=? ORDER BY visit_id',
     [jobId],
   );
-  const [reports] = await c.execute(`SELECT report_id AS reportId,job_id IS NOT NULL AS isCurrent,work_performed AS workPerformed,problem_found AS remarks,solution_applied AS solution,checklist_result AS checklist,customer_signature_url AS customerSignatureUrl,technician_signature_url AS technicianSignatureUrl,submitted_time AS submittedAt,started_at AS startedAt,completed_at AS completedAt FROM service_report WHERE job_id=? OR archived_job_id=? ORDER BY report_id`,[jobId,jobId]);
-  const [photos] = await c.execute('SELECT photo_id AS photoId,report_id AS reportId,description,captured_time AS uploadedAt FROM photo WHERE job_id=? ORDER BY captured_time,photo_id',[jobId]);
+  const [reports] = await c.execute(`SELECT r.report_id AS reportId,r.visit_technician_id AS technicianId,u.full_name AS technician,DATE_FORMAT(r.visit_service_date,'%Y-%m-%d') AS serviceDate,r.visit_start_time AS scheduledStart,r.job_id IS NOT NULL AS isCurrent,work_performed AS workPerformed,problem_found AS remarks,solution_applied AS solution,checklist_result AS checklist,customer_signature_url AS customerSignatureUrl,technician_signature_url AS technicianSignatureUrl,UNIX_TIMESTAMP(submitted_time) AS submittedAtEpoch,started_at AS startedAt,completed_at AS completedAt FROM service_report r LEFT JOIN technician t ON t.technician_id=r.visit_technician_id LEFT JOIN user_account u ON u.user_id=t.user_id WHERE r.job_id=? OR r.archived_job_id=? ORDER BY r.report_id`,[jobId,jobId]);
+  const [photos] = await c.execute('SELECT photo_id AS photoId,report_id AS reportId,description,UNIX_TIMESTAMP(captured_time) AS uploadedAtEpoch FROM photo WHERE job_id=? ORDER BY captured_time,photo_id',[jobId]);
   // Before migration 25, return visits reused the current report. Keep the
   // recorded first-visit snapshot visible without manufacturing a new report.
-  const legacyFirstVisit = reports.length === 1 && events.some(e => e.kind === 'Return scheduled')
-    ? visits.find(v => v.outcome === 'Return required') : null;
+  const legacyFirstVisit = reports.length === 1 && Boolean(reports[0].isCurrent) && events.some(e => e.kind === 'Return scheduled')
+    ? visits.find(v => v.outcome === 'Return required' && v.startedAt !== reports[0].startedAt) : null;
   const legacySnapshot = legacyFirstVisit && (typeof legacyFirstVisit.snapshot === 'string' ? JSON.parse(legacyFirstVisit.snapshot) : legacyFirstVisit.snapshot);
   const priorReports = legacySnapshot ? [{reportId: legacySnapshot.report_id, visitNumber:1, isCurrent:false, legacySnapshot:true, workPerformed:legacySnapshot.work_performed, remarks:legacySnapshot.problem_found, solution:legacySnapshot.solution_applied, checklist:legacySnapshot.checklist_result, submittedAt:legacySnapshot.submitted_time, startedAt:legacyFirstVisit.startedAt, completedAt:legacyFirstVisit.endedAt, customerSignatureUrl:legacySnapshot.customer_signature_url, technicianSignatureUrl:legacySnapshot.technician_signature_url, photos:[]}] : [];
   return {
-    visitReports: [...priorReports,...reports.map((r,index)=>({...r,visitNumber:index+1+priorReports.length,photos:photos.filter(p=>p.reportId===r.reportId).map(p=>({...p,url:'/api/service-photos/'+p.photoId}))}))],
+    repairQuoteLocked:completion?.current_status==='Completed'||Boolean(completion?.completedBookingId),
+    visitReports: [...priorReports,...reports.map((r,index)=>({...r,submittedAt:r.submittedAtEpoch?new Date(Number(r.submittedAtEpoch)*1000).toISOString():null,visitNumber:index+1+priorReports.length,photos:photos.filter(p=>p.reportId===r.reportId).map(p=>({...p,uploadedAt:p.uploadedAtEpoch?new Date(Number(p.uploadedAtEpoch)*1000).toISOString():null,url:'/api/service-photos/'+p.photoId}))}))],
     visits: visits.map((v) => ({
       ...v,
       snapshot:
@@ -132,6 +134,7 @@ export async function getServiceProgress(c, jobId) {
     additionalRepairFee: Number(row?.additionalRepairFee ?? 0),
     events: events.map((e) => ({
       ...e,
+      createdAt:e.createdAtEpoch?new Date(Number(e.createdAtEpoch)*1000).toISOString():null,
       amount: e.amount === null ? null : Number(e.amount),
     })),
   };
@@ -241,6 +244,12 @@ async function saveServiceProgress(pool, userId, jobId, raw) {
         'Return visits must be arranged by the administrator after the customer chooses a date. Use My Jobs to start or end the visit.',
         409,
       );
+    const [[reportOwner]]=await c.execute('SELECT visit_technician_id FROM service_report WHERE job_id=? FOR UPDATE',[jobId]);
+    if(reportOwner?.visit_technician_id && reportOwner.visit_technician_id!==w.technician_id)throw new AppError('This report belongs to a previous technician and is read-only.',409);
+    if(d.action==='repair-quote'){
+      const [[completion]]=await c.execute('SELECT booking_id FROM booking_completion_reward WHERE booking_id=? FOR SHARE',[w.booking_id]);
+      if(w.current_status==='Completed'||completion)throw new AppError('Completed service charges are locked. Additional repair fees must be recorded before ending the service.',409);
+    }
     if (!['In Progress', 'Completed'].includes(w.current_status))
       throw new AppError(
         'Start the service before recording a service update.',

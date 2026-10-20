@@ -32,6 +32,7 @@ import {
 } from '@/lib/inventory-client';
 import { earliestBookingDate, singaporeToday } from '@/lib/booking-schedule';
 import { formatTimeSlot } from '@/lib/format';
+import { formatInstantDateTime } from '@/lib/sg-time';
 
 const dayLabel = (date: string) =>
   new Intl.DateTimeFormat('en-SG', {
@@ -42,15 +43,7 @@ const dayLabel = (date: string) =>
     timeZone: 'UTC',
   }).format(new Date(date.slice(0, 10) + 'T00:00:00Z'));
 const momentLabel = (value: string | null) =>
-  value
-    ? new Intl.DateTimeFormat('en-SG', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-        timeZone: 'Asia/Singapore',
-      }).format(
-        new Date(value.includes('T') ? value : value.replace(' ', 'T') + 'Z'),
-      ) + ' SGT'
-    : '—';
+  value ? formatInstantDateTime(value) : '—';
 const shift = (date: string, days: number) => {
   const d = new Date(date.slice(0, 10) + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + days);

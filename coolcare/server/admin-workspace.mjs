@@ -96,13 +96,14 @@ export async function listBookingEmails(pool, bookingId) {
   if (!booking) throw new AppError('Booking not found.', 404);
   const [rows] = await pool.execute(
     `SELECT email_id AS emailId,recipient,subject,status,delivery_mode AS deliveryMode,
-    attempts,last_error AS lastError,next_attempt_at AS nextAttemptAt,sent_at AS sentAt,created_at AS createdAt
+    attempts,last_error AS lastError,next_attempt_at AS nextAttemptAt,sent_at AS sentAt,UNIX_TIMESTAMP(created_at) AS createdAtEpoch
     FROM booking_email_outbox WHERE booking_id=? AND event_type='booking.assigned' ORDER BY email_id DESC`,
     [bookingId],
   );
   return {
-    rows: rows.map((row) => ({
+    rows: rows.map(({createdAtEpoch,...row}) => ({
       ...row,
+      createdAt:new Date(Number(createdAtEpoch)*1000).toISOString(),
       canRetry:
         row.status === 'Pending' &&
         Boolean(row.lastError) &&
@@ -289,11 +290,11 @@ export async function listAdminAudit(pool, query) {
   );
   const page = Math.min(data.page, Math.max(1, Math.ceil(Number(total) / 25)));
   const [rows] = await pool.execute(
-    `SELECT o.request_id AS requestId,o.booking_id AS bookingId,o.operation_type AS action,o.created_at AS createdAt,u.full_name AS actor
+    `SELECT o.request_id AS requestId,o.booking_id AS bookingId,o.operation_type AS action,UNIX_TIMESTAMP(o.created_at) AS createdAtEpoch,u.full_name AS actor
     FROM booking_admin_operation o JOIN user_account u ON u.user_id=o.actor_user_id${clause} ORDER BY o.created_at DESC,o.request_id DESC LIMIT 25 OFFSET ?`,
     [...values, (page - 1) * 25],
   );
-  return { rows, total: Number(total), page, pageSize: 25 };
+  return { rows:rows.map(({createdAtEpoch,...row})=>({...row,createdAt:new Date(Number(createdAtEpoch)*1000).toISOString()})), total: Number(total), page, pageSize: 25 };
 }
 
 export const csvCell = (value) =>

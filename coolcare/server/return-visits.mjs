@@ -37,8 +37,9 @@ export const returnRequestSchema = z.discriminatedUnion('action', [
     .strict(),
 ]);
 export async function snapshotVisit(c, jobId, outcome) {
+  if(outcome==='Return required')await c.execute('UPDATE service_report SET completed_at=COALESCE(completed_at,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR)) WHERE job_id=?',[jobId]);
   const [[w]] = await c.execute(
-    `SELECT w.assignment_id,a.technician_id,r.* FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id JOIN service_report r ON r.job_id=w.job_id WHERE w.job_id=? FOR UPDATE`,
+    `SELECT w.assignment_id,COALESCE(r.visit_technician_id,a.technician_id) AS technician_id,r.* FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id JOIN service_report r ON r.job_id=w.job_id WHERE w.job_id=? FOR UPDATE`,
     [jobId],
   );
   if (!w) return;
@@ -157,6 +158,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
         'This request changed. Reload before continuing.',
         409,
       );
+    const [[report]] = await c.execute('SELECT report_id,submitted_time FROM service_report WHERE job_id=? FOR UPDATE',[jobId]);
     let state,
       kind,
       notes,
@@ -191,6 +193,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
     } else {
       if (p.follow_up_status !== 'Awaiting confirmation')
         throw new AppError('Wait for the customer to choose a time.', 409);
+      if(!report?.submitted_time)throw new AppError('The previous technician must submit the service report before this return visit can be dispatched.',409);
       date = String(p.follow_up_date).slice(0, 10);
       start = p.follow_up_start;
       end = p.follow_up_end;
@@ -220,6 +223,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
           'This technician has overlapping work. Choose another technician.',
           409,
         );
+      await c.execute("UPDATE service_report SET archived_job_id=job_id,job_id=NULL WHERE report_id=?",[report.report_id]);
       await c.execute(
         "UPDATE assignment SET assignment_status='Reassigned' WHERE assignment_id=?",
         [w.assignment_id],
@@ -255,10 +259,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       'UPDATE service_progress SET revision=?,follow_up_status=?,follow_up_date=?,follow_up_start=?,follow_up_end=? WHERE job_id=?',
       [version, state, date, start, end, jobId],
     );
-    const [[report]] = await c.execute(
-      'SELECT report_id FROM service_report WHERE job_id=?',
-      [jobId],
-    );
+
     const result = { jobId, version, status: state, replayed: false };
     await c.execute(
       `INSERT INTO service_progress_event(request_id,payload_hash,result_json,job_id,report_id,actor_user_id,revision,kind,reason,notes,part_notes,follow_up_date,follow_up_start,follow_up_end) VALUES (?,?,?,?,?,?,?,?,?,?,'',?,?,?)`,
@@ -267,7 +268,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
         hash,
         JSON.stringify(result),
         jobId,
-        report.report_id,
+        report?.report_id??null,
         userId,
         version,
         kind,

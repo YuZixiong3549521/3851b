@@ -32,6 +32,7 @@ export type AnnualPlan = {
   completedVisits: number;
   remainingVisits: number;
   unusedClosedVisits: number;
+  attentionMessage: string | null;
   nextVisit: AnnualPlanVisit | null;
   canRenew: boolean;
   renewalOpenDate: string;

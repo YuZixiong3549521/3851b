@@ -11,7 +11,7 @@ import { assertAnnualRescheduleWindow } from './customer/annual-bookings.mjs';
 import { isCalendarDate,assertChangeNotice,assertRescheduleDate } from './customer/booking-schedule.mjs';
 import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './customer/address-service.mjs';
 import { assertTeamCapacity,lockServiceDates,bookingServiceSlot } from './scheduling.mjs';
-import {bookingExpiryDate,assertBookingNotExpired} from './order-expiry.mjs';
+import {bookingConfirmationDeadline,assertBookingNotExpired} from './order-expiry.mjs';
 import { acceptStaffInvitation,validateStaffInvitation } from './staff-invitations.mjs';
 
 export const offers = [
@@ -84,7 +84,8 @@ export async function changePublicBooking(pool,user,id,action,input){
  await c.execute("UPDATE assignment SET assignment_status='Cancelled' WHERE booking_id=? AND assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')",[bookingId]);
  await c.execute("UPDATE work_order SET current_status='Cancelled' WHERE booking_id=? AND current_status NOT IN ('Completed','Cancelled')",[bookingId]);
  if(action==='reschedule') {
-  await c.execute("UPDATE booking SET preferred_service_date=?,preferred_time_slot=?,slot_start=?,slot_end=?,booking_status='Submitted',expires_at=? WHERE booking_id=?",[patch.preferredDate,patch.timeWindow,slot.start,slot.end,bookingExpiryDate(),bookingId]);
+  const confirmationDeadline=await bookingConfirmationDeadline(c,bookingId);
+  await c.execute("UPDATE booking SET preferred_service_date=?,preferred_time_slot=?,slot_start=?,slot_end=?,booking_status='Submitted',expires_at=? WHERE booking_id=?",[patch.preferredDate,patch.timeWindow,slot.start,slot.end,confirmationDeadline,bookingId]);
   await c.execute('UPDATE annual_booking_visit SET scheduled_date=? WHERE booking_id=?',[patch.preferredDate,bookingId]);
  } else {
   await c.execute("UPDATE booking SET booking_status='Cancelled',expires_at=NULL WHERE booking_id=?",[bookingId]);

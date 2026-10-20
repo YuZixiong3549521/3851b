@@ -32,6 +32,10 @@ export function describeAnnualPlan(series, visits, now = new Date()) {
   const existingRenewalSeriesId = series.existingRenewalSeriesId ? Number(series.existingRenewalSeriesId) : null;
   const canRenew = !existingRenewalSeriesId && status !== 'Cancelled' && (today >= renewalOpenDate || status === 'Completed');
   const minimumFirstDate = nextWeekday([validUntil, minimumBookingDate(now)].sort().at(-1));
+  const closedVisits = visits.filter(visit => inactiveStatuses.has(visit.status));
+  const attentionMessage = closedVisits.length && activeVisits.length
+    ? `${closedVisits.map(visit => `Visit ${visit.visitNumber} is ${visit.status.toLowerCase()}`).join('; ')}. The other ${activeVisits.length} quarterly ${activeVisits.length === 1 ? 'visit remains' : 'visits remain'} reserved. Review each open booking to manage its date or contact support. Closing one visit does not cancel the other visits.`
+    : null;
   return {
     ...series,
     seriesId: Number(series.seriesId),
@@ -47,6 +51,7 @@ export function describeAnnualPlan(series, visits, now = new Date()) {
     completedVisits,
     remainingVisits: activeVisits.length,
     unusedClosedVisits: inactiveVisits,
+    attentionMessage,
     nextVisit,
     renewalOpenDate,
     canRenew,

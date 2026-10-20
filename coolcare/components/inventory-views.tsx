@@ -17,6 +17,8 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { EnglishDatePicker } from '@/components/english-date-picker';
+import { formatInstantDateTime } from '@/lib/sg-time';
 import { Textarea } from '@/components/ui/textarea';
 import { TransactionDetails as TransactionDrawer } from './inventory-transaction-details';
 import {
@@ -920,18 +922,24 @@ export function TransactionsPage({ params }: { params: URLSearchParams }) {
           />
           <label className="date-filter">
             From
-            <Input
-              type="date"
+            <EnglishDatePicker
               value={params.get('from') || ''}
-              onChange={(e) => update({ from: e.target.value })}
+              onChange={(value) => update({ from: value })}
+              max={params.get('to') || undefined}
+              disableWeekends={false}
+              label="Transaction start date"
+              className="h-10 min-w-[155px]"
             />
           </label>
           <label className="date-filter">
             To
-            <Input
-              type="date"
+            <EnglishDatePicker
               value={params.get('to') || ''}
-              onChange={(e) => update({ to: e.target.value })}
+              onChange={(value) => update({ to: value })}
+              min={params.get('from') || undefined}
+              disableWeekends={false}
+              label="Transaction end date"
+              className="h-10 min-w-[155px]"
             />
           </label>
           {params.size > 0 && (
@@ -953,7 +961,7 @@ export function TransactionsPage({ params }: { params: URLSearchParams }) {
         )}
       </section>
       <p className="form-hint">
-        Newest first. Dates use the MySQL server’s local time. Administrators can
+        Newest first. Dates and filters use Singapore time (SGT). Administrators can
         correct inbound and outbound records; all corrections remain in the change history.
       </p>
       <TransactionDrawer
@@ -998,7 +1006,7 @@ function TransactionTable({
               <Button variant="ghost" className="part-name" onClick={() => onSelect(t)}>
                 {code('TX', t.transaction_id)}
               </Button>
-              <small className="record-id">{t.created_at}</small>
+              <small className="record-id">{formatInstantDateTime(t.created_at_iso ?? t.created_at)}</small>
             </TableCell>
             <TableCell>
               <Button variant="ghost"
@@ -1023,7 +1031,7 @@ function TransactionTable({
             </TableCell>
             <TableCell>{t.job_id ? code('WO', t.job_id) : '—'}</TableCell>
             <TableCell>{t.admin_name || 'Not recorded'}</TableCell>
-            <TableCell>{t.modified_at || 'Never modified'}</TableCell>
+            <TableCell>{t.modified_at ? formatInstantDateTime(t.modified_at_iso ?? t.modified_at) : 'Never modified'}</TableCell>
           </TableRow>
         ))}
       </TableBody>

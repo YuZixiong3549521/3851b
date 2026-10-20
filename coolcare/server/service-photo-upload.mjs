@@ -24,7 +24,7 @@ export const photoUploadSchema = z
   .strict();
 async function owned(c, userId, jobId, lock = false) {
   const [[w]] = await c.execute(
-    `SELECT w.job_id,w.current_status FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id WHERE w.job_id=? AND t.user_id=? AND u.status='Active' AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') ${lock ? 'FOR UPDATE' : ''}`,
+    `SELECT w.job_id,w.current_status,a.technician_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id WHERE w.job_id=? AND t.user_id=? AND u.status='Active' AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') ${lock ? 'FOR UPDATE' : ''}`,
     [jobId, userId],
   );
   if (!w) throw new AppError('Work order not found for this technician.', 404);
@@ -64,10 +64,10 @@ export async function normalizeServicePhoto(image) {
     );
   }
 }
-export async function listServicePhotos(pool, jobId) {
+export async function listServicePhotos(pool, jobId, reportId) {
   const [rows] = await pool.execute(
-    'SELECT photo_id AS photoId,photo_url AS storedPath,description,UNIX_TIMESTAMP(captured_time) AS uploadedAt FROM photo WHERE job_id=? AND (report_id IS NULL OR report_id=(SELECT report_id FROM service_report WHERE job_id=photo.job_id)) ORDER BY captured_time,photo_id',
-    [jobId],
+    `SELECT photo_id AS photoId,photo_url AS storedPath,description,UNIX_TIMESTAMP(captured_time) AS uploadedAt FROM photo WHERE job_id=? AND ${reportId === undefined ? '(report_id IS NULL OR report_id=(SELECT report_id FROM service_report WHERE job_id=photo.job_id))' : 'report_id=?'} ORDER BY captured_time,photo_id`,
+    reportId === undefined ? [jobId] : [jobId,reportId],
   );
   return Promise.all(
     rows.map(async ({ storedPath, uploadedAt, ...r }) => ({
@@ -92,7 +92,7 @@ export async function uploadServicePhoto(pool, userId, jobId, raw) {
   try {
     await c.beginTransaction();
     const w = await owned(c, userId, jobId, true);
-    if (!['In Progress', 'Completed'].includes(w.current_status))
+    if (!['In Progress', 'Completed', 'Awaiting return arrangement'].includes(w.current_status))
       throw new AppError(
         'Start the service before uploading process photos.',
         409,
@@ -110,8 +110,8 @@ export async function uploadServicePhoto(pool, userId, jobId, raw) {
       await c.commit();
       return { photoId: prior.photo_id, replayed: true };
     }
-    const [[activeReport]] = await c.execute('SELECT report_id FROM service_report WHERE job_id=? FOR UPDATE',[jobId]);
-    if (!activeReport || (d.reportId && d.reportId !== activeReport.report_id)) throw new AppError('This visit has changed. Reload the report before uploading photos.',409);
+    const [[activeReport]] = await c.execute('SELECT report_id,visit_technician_id FROM service_report WHERE job_id=? FOR UPDATE',[jobId]);
+    if (!activeReport || (activeReport.visit_technician_id && activeReport.visit_technician_id !== w.technician_id) || (d.reportId && d.reportId !== activeReport.report_id)) throw new AppError('This visit has changed. Reload the report before uploading photos.',409);
     const [[count]] = await c.execute(
       'SELECT COUNT(*) AS total FROM photo WHERE report_id=?',
       [activeReport.report_id],

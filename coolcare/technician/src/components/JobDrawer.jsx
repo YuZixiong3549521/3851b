@@ -1,3 +1,5 @@
+import {VisitReports} from '@/components/visit-reports';
+import {formatInstantDateTime,formatSingaporeDateTime} from '@/lib/sg-time';
 import { parseChecks } from '../utils/reportChecks.js';
 import {SignatureImage} from '@/components/signature-image';
 import ServiceProgress from './ServiceProgress.jsx';
@@ -11,8 +13,7 @@ import { X, MapPin, CalendarDays, Clock3, Wrench, Package } from 'lucide-react';
 import { StatusBadge, PriorityBadge } from './Badges.jsx';
 import { formatDate, formatTime } from '../utils/jobs.js';
 import { mockMode, technicianRequest } from '../services/jobService.js';
-const formatMoment = (value) =>
-  value ? String(value).replace('T', ' ').slice(0, 19) : 'Not recorded';
+const formatMoment = formatInstantDateTime;
 
 function InventoryUsed({ items = [] }) {
   return items.length ? (
@@ -59,8 +60,8 @@ function Report({ report,includeProgress=false }) {
           : `${report.durationMinutes} minutes`}
       </p>
       <p>
-        <strong>Start / finish:</strong> {report.startedAt || 'Not recorded'} /{' '}
-        {report.completedAt || 'Not recorded'}
+        <strong>Start / finish:</strong> {formatSingaporeDateTime(report.startedAt)} /{' '}
+        {formatSingaporeDateTime(report.completedAt)}
       </p>
       <h4>Customer signature</h4><SignatureImage url={report.customerSignatureUrl} label="Customer signature"/>
       <h4>Technician signature</h4><SignatureImage url={report.technicianSignatureUrl} label="Technician signature"/>
@@ -147,10 +148,14 @@ function WorkStatusActions({
     }
   }
   const label = next === 'In Progress' ? 'Start service' : 'End service';
+  const startBlocked=next==='In Progress' && job.canStart===false && !uncertain;
+  const completionBlocked=next==='Completed' && job.canComplete===false && !uncertain;
   return (
     <section className="tech-status-actions">
       <h3>Work order status</h3>
       <p>Start the visit when you begin work. End service when the visit is finished; the customer will see it in History. You can submit the service report afterwards.</p>
+      {startBlocked && <p role="status">{job.startBlockedReason}</p>}
+      {completionBlocked && <p role="status">{job.completionBlockedReason}</p>}
       {error && (
         <p className="tech-error" role="alert">
           {error}
@@ -165,7 +170,7 @@ function WorkStatusActions({
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
-          disabled={busy || (externallyLocked && !uncertain)}
+          disabled={busy || startBlocked || completionBlocked || (externallyLocked && !uncertain)}
           onClick={advance}
         >
           {busy ? 'Updating…' : uncertain ? 'Retry same update' : label}
@@ -576,7 +581,8 @@ export default function JobDrawer({
               ? `${job.estimatedDurationMinutes} minutes`
               : 'Not recorded'}
           </p>
-          <p>Last modified: {job.lastModified || 'Not recorded'}</p>
+          {job.reportPending && <p role="status" className="text-amber-800">Report pending. <a href="#reports">Complete this visit's report</a>{job.status==='Awaiting return arrangement'?' before the return visit can be dispatched.':'.'}</p>}
+          <p>Last modified: {formatInstantDateTime(job.lastModified)}</p>
           <WorkStatusActions
             job={job}
             lock={setLocked}
@@ -636,6 +642,7 @@ export default function JobDrawer({
                   <InventoryUsed items={job.inventory} />
                 </>
               )}
+              <VisitReports reports={job.serviceProgress?.visitReports}/>
               <h3>Latest 3 completed visits at this address</h3>
               <History
                 items={detail.addressHistory}
@@ -647,8 +654,8 @@ export default function JobDrawer({
                     Annual Cleaning Bundle · visit {job.annualVisitNumber} of 4
                   </h3>
                   <p>
-                    This visit window starts {job.annualWindowStart} and ends
-                    before {job.annualWindowEnd}.
+                    This visit window starts {formatDate(job.annualWindowStart)} and ends
+                    before {formatDate(job.annualWindowEnd)}.
                   </p>
                   <h4>Earlier completed visits in this bundle</h4>
                   <History
@@ -670,7 +677,7 @@ export default function JobDrawer({
                         <strong>{p.packageName}</strong> · {p.status}
                         <small>
                           Recorded balance: {p.remainingVisits} visits ·{' '}
-                          {p.startDate} to {p.endDate}
+                          {formatDate(p.startDate)} to {formatDate(p.endDate)}
                         </small>
                       </li>
                     ))}

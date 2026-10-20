@@ -31,4 +31,6 @@ test('report filter validates calendar dates, finite window and numeric IDs', ()
   assert.throws(() => reportFilterSchema.parse({ from: '2026-10-31', to: '2026-10-01' }));
   assert.throws(() => reportFilterSchema.parse({ from: '2024-01-01', to: '2026-10-01' }));
   assert.throws(() => reportFilterSchema.parse({ from: '2026-02-30', to: '2026-03-02' }));
+  assert.equal(reportFilterSchema.parse({ from: '2026-10-01', to: '2026-10-31', serviceGroup: 'annual' }).serviceGroup, 'annual');
+  assert.throws(() => reportFilterSchema.parse({ from: '2026-10-01', to: '2026-10-31', serviceId: 1, serviceGroup: 'annual' }));
 });

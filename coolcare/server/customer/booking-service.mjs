@@ -8,6 +8,7 @@ import { isCalendarDate,canChangeAppointment,appointmentInstant,MINIMUM_CHANGE_H
 import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './address-service.mjs';
 import { resolveReportPhoto } from './report-photos.mjs';
 import {getServiceProgress} from '../service-progress.mjs';
+import {readBookingAmounts} from '../booking-amounts.mjs';
 
 const timeSlots = ['09:00 - 11:00', '11:00 - 13:00', '14:00 - 16:00', '16:00 - 18:00'];
 
@@ -156,7 +157,11 @@ export async function listBookings(pool, scope = 'all', userId) {
        WHERE w2.booking_id = b.booking_id
        ORDER BY w2.job_id DESC LIMIT 1
      )
-     LEFT JOIN service_report sr ON sr.job_id = w.job_id AND sr.submitted_time IS NOT NULL
+     LEFT JOIN service_report sr ON sr.report_id = (
+       SELECT previous_report.report_id FROM service_report previous_report
+       WHERE COALESCE(previous_report.job_id,previous_report.archived_job_id)=w.job_id
+       AND previous_report.submitted_time IS NOT NULL ORDER BY previous_report.report_id DESC LIMIT 1
+     )
      WHERE ${conditions.join(' AND ')}
      ORDER BY b.preferred_service_date DESC, b.booking_id DESC`,
     values,
@@ -175,9 +180,11 @@ export async function listBookings(pool, scope = 'all', userId) {
     ids,
   );
   const unitsByBooking = Map.groupBy(unitRows, (row) => row.bookingId);
+  const amountsByBooking = await readBookingAmounts(pool, ids);
 
   return attachBookingSelections(pool, rows.map(({createdAtEpoch,...row}) => ({
     ...row,
+    amounts:amountsByBooking.get(row.bookingId),
     canModify:Boolean(row.canModify)&&canChangeAppointment(row.preferredDate,row.slotStart||'09:00:00'),
     changeDeadline:new Date(appointmentInstant(row.preferredDate,row.slotStart||'09:00:00').getTime()-MINIMUM_CHANGE_HOURS*3600000).toISOString(),
     expiresAt:row.expiresAt?`${String(row.expiresAt).replace(' ','T')}Z`:null,
@@ -205,10 +212,10 @@ export async function getBookingReport(pool, bookingId, userId) {
     `SELECT
        b.booking_id AS bookingId,
        b.created_at AS createdAt,
-       b.preferred_service_date AS serviceDate,
-       COALESCE(CONCAT(TIME_FORMAT(b.slot_start,'%H:%i'),' - ',TIME_FORMAT(b.slot_end,'%H:%i')),b.preferred_time_slot) AS timeSlot,
+       COALESCE(sr.visit_service_date,'') AS serviceDate,
+       COALESCE(TIME_FORMAT(sr.visit_start_time,'%H:%i'),'') AS timeSlot,
        sc.service_name AS serviceName,
-       tech_user.full_name AS technicianName,
+       COALESCE(tech_user.full_name,'Not recorded') AS technicianName,
        sr.report_id AS reportId,
        w.job_id AS jobId,
        TIMESTAMPDIFF(MINUTE,sr.started_at,sr.completed_at) AS durationMinutes,
@@ -223,13 +230,12 @@ export async function getBookingReport(pool, bookingId, userId) {
      FROM booking b
      JOIN service_catalog sc ON sc.service_id = b.service_id
      JOIN work_order w ON w.booking_id = b.booking_id
-     JOIN service_report sr ON sr.job_id = w.job_id AND sr.submitted_time IS NOT NULL
-     LEFT JOIN work_order_cleaning_assessment ca ON ca.job_id=w.job_id
-     JOIN assignment a ON a.assignment_id = w.assignment_id
-     JOIN technician t ON t.technician_id = a.technician_id
-     JOIN user_account tech_user ON tech_user.user_id = t.user_id
+     JOIN service_report sr ON COALESCE(sr.job_id,sr.archived_job_id) = w.job_id AND sr.submitted_time IS NOT NULL
+     LEFT JOIN work_order_cleaning_assessment ca ON ca.job_id=sr.job_id
+     LEFT JOIN technician t ON t.technician_id = sr.visit_technician_id
+     LEFT JOIN user_account tech_user ON tech_user.user_id = t.user_id
      WHERE b.booking_id = ? AND b.customer_id = ?
-     ORDER BY w.job_id DESC
+     ORDER BY sr.report_id DESC
      LIMIT 1`,
     [bookingId, customer.customerId],
   );
@@ -239,9 +245,9 @@ export async function getBookingReport(pool, bookingId, userId) {
     `SELECT p.photo_id AS photoId, p.photo_url AS photoUrl, p.description, UNIX_TIMESTAMP(p.captured_time) AS capturedTimeEpoch
      FROM photo p
      JOIN work_order w ON w.job_id = p.job_id
-     WHERE w.booking_id = ? AND p.job_id = ? AND (p.report_id IS NULL OR p.report_id=(SELECT report_id FROM service_report WHERE job_id=p.job_id))
+     WHERE w.booking_id = ? AND p.job_id = ? AND (p.report_id IS NULL OR p.report_id=?)
      ORDER BY p.captured_time`,
-    [bookingId,rows[0].jobId],
+    [bookingId,rows[0].jobId,rows[0].reportId],
   );
   const availablePhotos=await Promise.all(photos.map(async ({capturedTimeEpoch,...photo})=>({...photo,capturedTime:timestampIso(capturedTimeEpoch),
     photoUrl:await resolveReportPhoto(photo.photoUrl)?`/api/customer/bookings/${bookingId}/photos/${photo.photoId}`:null})));

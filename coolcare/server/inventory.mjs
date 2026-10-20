@@ -275,8 +275,10 @@ export async function getStockRecommendation(conn, jobId, part) {
   return {acCount:Number(counts.acCount),issued:Math.max(0,Number(counts.issued)),recommended:Math.ceil(Number(counts.acCount)*Number(part.recommended_units_per_ac))};
 }
 
-const occurredAtSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$/)
-  .transform(s=>s.replace('T',' ').length===16?s.replace('T',' ')+':00':s.replace('T',' '))
+// Explicit UTC is preferred; offsetless values retain the existing UTC API contract.
+const occurredAtSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?Z?$/)
+  .transform(s=>s.replace(/Z$/,'').replace('T',' '))
+  .transform(s=>s.length===16?s+':00':s)
   .refine(s=>!Number.isNaN(Date.parse(s.replace(' ','T')+'Z')) && new Date(s.replace(' ','T')+'Z').toISOString().slice(0,19).replace('T',' ')===s,'Enter a valid date and time.');
 export const editTransactionSchema = z.object({
   request_id:z.uuid(), expected_version:z.number().int().positive(),
@@ -291,7 +293,7 @@ export async function editTransaction(pool, transactionId, raw, adminId) {
     // The first read is a locking read, so the audit snapshot starts only after the part lock.
     const [[part]]=await conn.execute('SELECT p.* FROM part p WHERE p.part_id=(SELECT part_id FROM inventory_transaction WHERE transaction_id=?) FOR UPDATE',[transactionId]);
     if(!part) throw new AppError('Transaction not found.',404);
-    const [[current]]=await conn.execute('SELECT * FROM inventory_transaction WHERE transaction_id=? FOR UPDATE',[transactionId]);
+    const [[current]]=await conn.execute('SELECT *,UNIX_TIMESTAMP(created_at) AS created_at_epoch FROM inventory_transaction WHERE transaction_id=? FOR UPDATE',[transactionId]);
     const [[previous]]=await conn.execute('SELECT * FROM inventory_transaction_revision WHERE request_id=?',[data.request_id]);
     if(previous){
       if(previous.payload_hash!==hash) throw new AppError('This request was already used for a different correction.',409);
@@ -303,9 +305,9 @@ export async function editTransaction(pool, transactionId, raw, adminId) {
     const after=projectedStock(part.current_stock,delta);
     const nextVersion=current.version+1;
     await conn.execute(`INSERT INTO inventory_transaction_revision
-      (request_id,payload_hash,transaction_id,changed_by_user_id,before_quantity,after_quantity,before_occurred_at,after_occurred_at,before_remarks,after_remarks,before_version,after_version,stock_before,stock_delta,stock_after)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,[data.request_id,hash,transactionId,adminId,current.quantity,data.quantity,current.created_at,data.occurred_at,current.remarks,data.remarks||null,current.version,nextVersion,part.current_stock,delta,after]);
-    await conn.execute('UPDATE inventory_transaction SET quantity=?,created_at=?,remarks=?,modified_at=CURRENT_TIMESTAMP(6),version=? WHERE transaction_id=?',[data.quantity,data.occurred_at,data.remarks||null,nextVersion,transactionId]);
+      (request_id,payload_hash,transaction_id,changed_by_user_id,before_quantity,after_quantity,before_occurred_at,after_occurred_at,before_remarks,after_remarks,before_version,after_version,stock_before,stock_delta,stock_after,changed_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,UTC_TIMESTAMP(6))`,[data.request_id,hash,transactionId,adminId,current.quantity,data.quantity,new Date(Number(current.created_at_epoch)*1000).toISOString().slice(0,19).replace('T',' '),data.occurred_at,current.remarks,data.remarks||null,current.version,nextVersion,part.current_stock,delta,after]);
+    await conn.execute('UPDATE inventory_transaction SET quantity=?,created_at=FROM_UNIXTIME(?),remarks=?,modified_at=UTC_TIMESTAMP(6),version=? WHERE transaction_id=?',[data.quantity,Date.parse(data.occurred_at.replace(' ','T')+'Z')/1000,data.remarks||null,nextVersion,transactionId]);
     await conn.execute('UPDATE part SET current_stock=? WHERE part_id=?',[after,part.part_id]);
     return {transaction_id:transactionId,version:nextVersion,stock_after:after,replayed:false};
   });

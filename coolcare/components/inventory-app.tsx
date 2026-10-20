@@ -100,6 +100,7 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
     submitted: 0,
     expiringSoon: 0,
     returnVisits: 0,
+    pendingReports: 0,
     awaitingDispatch: 0,
     ordersRequiringAction: 0,
     totalRequiringAction: 0,

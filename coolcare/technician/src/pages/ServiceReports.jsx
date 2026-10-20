@@ -1,3 +1,4 @@
+import {formatInstantDateTime,formatSingaporeDateTime} from '@/lib/sg-time';
 import {VisitReports} from '@/components/visit-reports';
 import ReportChecks from '../components/ReportChecks.jsx';
 import { parseChecks, summarizeChecks } from '../utils/reportChecks.js';
@@ -26,8 +27,7 @@ const fields = [
   ['solutionApplied', 'Solution applied', false],
   ['checklist', 'Checks completed', true],
 ];
-const moment = (v) =>
-  v ? String(v).replace('T', ' ').slice(0, 19) : 'Not recorded';
+const moment = formatInstantDateTime;
 function ReportEditor({ row, onClose, onSaved }) {
   const [data, setData] = useState(null),
     [form, setForm] = useState({}),
@@ -69,7 +69,7 @@ function ReportEditor({ row, onClose, onSaved }) {
           ].map((k) => [k, d.report?.[k] ?? '']),
         ),
       );
-      setEdit(!d.report?.submittedAt);
+      setEdit(d.canEdit && !d.report?.submittedAt);
       pending.current = null;
       setUncertain(false);
     } catch (e) {
@@ -158,9 +158,10 @@ function ReportEditor({ row, onClose, onSaved }) {
             <div className="report-meta">
               <span>Job: WO-{row.jobId}</span>
               <span>Submitted: {moment(data.report?.submittedAt)}</span>
-              <span>Started: {moment(data.report?.startedAt)}</span>
-              <span>Completed: {moment(data.report?.completedAt)}</span>
+              <span>Started: {formatSingaporeDateTime(data.report?.startedAt)}</span>
+              <span>Completed: {formatSingaporeDateTime(data.report?.completedAt)}</span>
             </div>
+            {data.status==='Awaiting return arrangement' && <p role="status">Submit this visit's report before the administrator can dispatch a return visit. The report becomes read-only after return dispatch.</p>}
             <VisitReports reports={data.serviceProgress?.visitReports}/>
             {edit ? (
               <form onSubmit={submit} className="portal-form">
@@ -274,7 +275,7 @@ function ReportEditor({ row, onClose, onSaved }) {
                     </section>
                   ))}
                 </div>
-                <Button onClick={() => setEdit(true)}>Edit report</Button>
+                {data.canEdit && <Button onClick={() => setEdit(true)}>Edit report</Button>}
               </>
             )}
             {data.history.length > 0 && (
@@ -334,7 +335,7 @@ export default function ServiceReports({ onChanged }) {
   }, []);
   const filtered = reports.filter(
     (r) =>
-      (!status || (r.submittedAt ? 'Submitted' : 'Pending') === status) &&
+      (!status || (r.reportPending ? 'Report pending' : r.submittedAt ? 'Submitted' : 'In progress') === status) &&
       (!date || r.date === date) &&
       `SR-${r.reportId ?? ''} WO-${r.jobId} ${r.customer}`
         .toLowerCase()
@@ -359,8 +360,8 @@ export default function ServiceReports({ onChanged }) {
         />
         <StatCard
           icon={Clock3}
-          value={reports.filter((r) => !r.submittedAt).length}
-          label="Pending"
+          value={reports.filter((r) => r.reportPending).length}
+          label="Report pending"
           color="indigo"
         />
       </section>
@@ -388,7 +389,8 @@ export default function ServiceReports({ onChanged }) {
           >
             <option value="">Status: All</option>
             <option>Submitted</option>
-            <option>Pending</option>
+            <option>Report pending</option>
+            <option>In progress</option>
           </NativeSelect>
           <div className="report-date">
             <EnglishDatePicker
@@ -458,7 +460,7 @@ export default function ServiceReports({ onChanged }) {
                           (r.submittedAt ? 'submitted' : 'pending')
                         }
                       >
-                        {r.submittedAt ? 'Submitted' : 'Pending'}
+                        {r.reportPending ? 'Report pending' : r.submittedAt ? 'Submitted' : 'In progress'}
                       </span>
                     </td>
                     <td>

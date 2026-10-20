@@ -16,7 +16,7 @@ type Report = {
   orders: { bookingId: number; status: string; serviceDate: string; serviceName: string; visits: number; returns: number; serviceAmount: number | null; rewardDiscount: number; netServiceAmount: number | null }[];
   parts: { partId: number; name: string; unit: string; issued: number; returned: number }[];
   bundles: { plans: number; scheduledVisits: number; completedVisits: number };
-  services: { id: number; name: string }[]; technicians: { id: number; name: string }[];
+  services: { id: number; name: string; isCurrent: boolean }[]; technicians: { id: number; name: string }[];
 };
 export function CommerceReportsPage() {
   const today = singaporeToday();
@@ -34,10 +34,10 @@ export function CommerceReportsPage() {
   }
   return <div className="mx-auto max-w-7xl space-y-6">
     <header className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-sm font-semibold text-primary">OPERATIONS</p><h1 className="mt-1 text-3xl font-bold">Reports &amp; analytics</h1><p className="mt-2 text-sm text-muted-foreground">Live booking, completed service, rewards and inventory records.</p></div><div className="flex gap-2"><Button variant="outline" onClick={reload} disabled={loading}><RefreshCw className="size-4" />Refresh</Button><Button variant="outline" onClick={() => void download()} disabled={!data || loading}><Download className="size-4" />Export CSV</Button></div></header>
-    <form className="grid items-end gap-4 rounded-2xl border bg-card p-5 sm:grid-cols-2 lg:grid-cols-5" onSubmit={e => { e.preventDefault(); const q = new URLSearchParams({ from, to }); if (service) q.set('serviceId', service); if (technician) q.set('technicianId', technician); setQuery(q.toString()); }}>
+    <form className="grid items-end gap-4 rounded-2xl border bg-card p-5 sm:grid-cols-2 lg:grid-cols-5" onSubmit={e => { e.preventDefault(); const q = new URLSearchParams({ from, to }); if (service === 'annual') q.set('serviceGroup', 'annual'); else if (service) q.set('serviceId', service); if (technician) q.set('technicianId', technician); setQuery(q.toString()); }}>
       <Field label="From"><EnglishDatePicker label="Report start date" value={from} onChange={setFrom} disableWeekends={false} max={to} /></Field>
       <Field label="To"><EnglishDatePicker label="Report end date" value={to} onChange={setTo} disableWeekends={false} min={from} /></Field>
-      <Field label="Service"><NativeSelect value={service} onChange={e => setService(e.target.value)}><option value="">All services</option>{data?.services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</NativeSelect></Field>
+      <Field label="Service"><NativeSelect value={service} onChange={e => setService(e.target.value)}><option value="">All services</option><optgroup label="Current services">{data?.services.filter(s => s.isCurrent).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}<option value="annual">Annual Cleaning Bundle</option></optgroup><optgroup label="Historical services">{data?.services.filter(s => !s.isCurrent).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</optgroup></NativeSelect></Field>
       <Field label="Technician"><NativeSelect value={technician} onChange={e => setTechnician(e.target.value)}><option value="">All technicians</option>{data?.technicians.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</NativeSelect></Field><Button type="submit">Apply filters</Button>
     </form>
     <Feedback error={error || exportError} />{loading && <p role="status">Loading report…</p>}

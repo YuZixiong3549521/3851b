@@ -5,12 +5,13 @@ import mysql from 'mysql2/promise';
 import bcrypt from 'bcryptjs';
 import { createApp } from '../server/app.mjs';
 import { changePublicBooking } from '../server/public-site.mjs';
-import { rejectBooking } from '../server/admin-operations.mjs';
+import { rejectBooking, listAdminBookings, getAdminBooking } from '../server/admin-operations.mjs';
 import { expireSubmittedBookings } from '../server/order-expiry.mjs';
 import { addCalendarDays } from '../server/customer/booking-schedule.mjs';
 import { awardCompletedBookingRewards, reserveReward, releaseBookingRewardReservation, adjustReward, updateRewardRule, rewardsSummary, commerceReport, listRewardBookings } from '../server/commerce.mjs';
 import { updateTechnicianJobStatus } from '../server/technician.mjs';
 import { getReport, saveReport } from '../server/technician-pages.mjs';
+import { listBookings, getBookingDetail } from '../server/customer/booking-service.mjs';
 
 const pool = mysql.createPool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME, dateStrings: true, connectionLimit: 5 });
 const cleanupPool = mysql.createPool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: 'root', password: process.env.MYSQL_ROOT_PASSWORD, database: process.env.DB_NAME, dateStrings: true });
@@ -27,9 +28,15 @@ async function complete(db, bookingId) {
   } catch (error) { await c.rollback(); throw error; } finally { c.release(); }
 }
 async function makeJob(c, f, bookingId) {
-  const [[tech]] = await c.query('SELECT technician_id,user_id FROM technician ORDER BY technician_id LIMIT 1');
+  if (!f.technician) {
+    const [user] = await c.execute(`INSERT INTO user_account(role_id,full_name,email,password_hash)
+      SELECT role_id,'Isolated commerce technician',?,'disabled-test-password' FROM role WHERE role_name='Technician'`, [`commerce-tech-${randomUUID()}@coolcare.test`]);
+    const [t] = await c.execute("INSERT INTO technician(user_id,availability_status) VALUES (?,'Available')", [user.insertId]);
+    f.technician = { technician_id: t.insertId, user_id: user.insertId };
+  }
+  const tech = f.technician;
   const [assignment] = await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Assigned')", [bookingId, tech.technician_id, f.adminId]);
-  const [job] = await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,current_status) VALUES (?,?,?,'Assigned')", [bookingId, assignment.insertId, today()]);
+  const [job] = await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status) VALUES (?,?,?,'00:00:00','Assigned')", [bookingId, assignment.insertId, today()]);
   return { jobId: job.insertId, userId: tech.user_id };
 }
 const reportContent = { workPerformed: 'Synthetic completed cleaning checks', problemFound: '', solutionApplied: 'Cleaned filters', checklist: 'Cooling checked', customerSignatureUrl: '', technicianSignatureUrl: '' };
@@ -69,6 +76,19 @@ test('End service and report submission award once without payments, including r
   await updateTechnicianJobStatus(db, first.userId, first.jobId, end);
   await updateTechnicianJobStatus(db, first.userId, first.jobId, end);
   assert.equal((await rewardsSummary(db, f.customerId)).balance, 125);
+  const customerCard = (await listBookings(db, 'history', f.userId)).find(b => b.bookingId === f.bookings[0]);
+  const customerDetail = await getBookingDetail(db, f.bookings[0], f.userId);
+  const rewardCard = (await listRewardBookings(db, f.customerId)).find(b => b.bookingId === f.bookings[0]);
+  assert.deepEqual(customerCard.amounts, customerDetail.amounts);
+  assert.deepEqual(customerCard.amounts, rewardCard.amounts);
+  const adminDetail = await getAdminBooking(db, f.bookings[0]);
+  const adminList = await listAdminBookings(db, { q:String(f.bookings[0]) });
+  assert.deepEqual(adminDetail.amounts, customerCard.amounts);
+  assert.deepEqual(adminList.rows.find(b => b.bookingId === f.bookings[0]).amounts, customerCard.amounts);
+  assert.equal(customerCard.amounts.baseAmount, 100);
+  assert.equal(customerCard.amounts.additionalFee, 25.99);
+  assert.equal(customerCard.amounts.netServiceAmount, 125.99);
+  assert.equal(customerCard.amounts.awardedPoints, 125);
   const saved = await getReport(db, first.userId, first.jobId);
   await saveReport(db, first.userId, first.jobId, { requestId: randomUUID(), expectedVersion: saved.version, report: reportContent });
   assert.equal((await rewardsSummary(db, f.customerId)).balance, 125, 'late report does not repeat earning');
@@ -187,6 +207,21 @@ test('reports show completed service values and reward discounts with service an
   assert.equal(row.rewardDiscount, 5); assert.equal(row.netServiceAmount, 95);
   assert.equal('receipts' in report.summary, false);
   assert.equal('refunds' in report.summary, false);
+  assert.ok(report.services.some(s => s.isCurrent));
+  assert.ok(report.services.some(s => !s.isCurrent), 'historical services remain discoverable separately');
+  // A direct legacy data correction must never rewrite the completion snapshot.
+  await c.execute('UPDATE booking SET total_amount=999 WHERE booking_id=?', [f.bookings[0]]);
+  const stable = await commerceReport(db, { from: today(), to: today(), serviceId: f.serviceId });
+  assert.equal(stable.orders.find(b => b.bookingId === f.bookings[0]).netServiceAmount, 95);
+  const [[pkg]] = await c.query("SELECT package_id FROM simple_package_catalog WHERE code='annual-cleaning'");
+  const [series] = await c.execute(`INSERT INTO annual_booking_series(customer_id,address_id,package_id,package_name,first_service_date,unit_count,total_amount)
+    VALUES (?,?,?,'Annual Cleaning Bundle',?,1,400)`, [f.customerId, f.addressId, pkg.package_id, today()]);
+  await c.execute(`INSERT INTO annual_booking_visit(booking_id,series_id,visit_number,scheduled_date,window_start,window_end) VALUES (?,?,1,?,?,?)`,
+    [f.bookings[0], series.insertId, today(), today(), addCalendarDays(today(), 30)]);
+  const annual = await commerceReport(db, { from: today(), to: today(), serviceGroup: 'annual' });
+  assert.ok(annual.orders.some(b => b.bookingId === f.bookings[0]));
+  assert.ok(!annual.orders.some(b => b.bookingId === f.bookings[1]), 'standalone cleaning is excluded from the annual filter');
+  assert.ok(Number(annual.bundles.plans) >= 1);
   assert.ok(report.summary.completedServiceAmount >= 300);
   const all = await commerceReport(db, { from: today(), to: today(), technicianId: 4294967295 });
   assert.equal(all.orders.length, 0);
@@ -237,6 +272,23 @@ test('commerce HTTP enforces role, CSRF and customer booking ownership', () => f
     assert.match(text, /Net service amount SGD/);
     assert.doesNotMatch(text, /receipts|refunds|netReceived/);
   } finally { await new Promise(resolve => server.close(resolve)); }
+}));
+
+test('completion and points timestamps are stable UTC instants across database session time zones', () => fixture(async (db, c, f) => {
+  try {
+    for (const [index, zone] of ['+00:00', '+08:00', '-05:00'].entries()) {
+      await c.query('SET time_zone=?', [zone]);
+      const before = Date.now() - 1000;
+      await complete(db, f.bookings[index]);
+      const rewards = await rewardsSummary(db, f.customerId);
+      const completed = rewards.bookings.find(b => b.bookingId === f.bookings[index]).completionReward;
+      assert.match(completed.completedAt, /Z$/);
+      assert.ok(Date.parse(completed.completedAt) >= before && Date.parse(completed.completedAt) <= Date.now());
+      const earned = rewards.history.find(h => h.bookingId === f.bookings[index] && h.type === 'Earned');
+      assert.ok(earned);
+      assert.ok(Date.parse(earned.createdAt) >= before && Date.parse(earned.createdAt) <= Date.now());
+    }
+  } finally { await c.query("SET time_zone='+00:00'"); }
 }));
 
 test('concurrent reservations and completions serialize wallets without overspending or duplicate rewards', async () => {

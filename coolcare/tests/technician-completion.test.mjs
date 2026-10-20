@@ -15,7 +15,8 @@ function database({owner=true,failReport=false,failReward=false,previous=null,st
  calls.push(sql);
  if(sql.startsWith('SELECT booking_id'))return [[{booking_id:2}]];
  if(sql.startsWith('SELECT w.assignment_id'))return [[{report_id:1,technician_id:7,started_at:null}]];
- if(sql.startsWith('SELECT w.*'))return [owner?[{job_id:1,booking_id:2,assignment_id:3,current_status:status,booking_status:status,assignment_status:'Accepted'}]:[]];
+ if(sql.startsWith('SELECT w.*'))return [owner?[{job_id:1,booking_id:2,assignment_id:3,current_status:status,booking_status:status,assignment_status:'Accepted',technician_id:7,serviceDate:new Date(Date.now()+8*3600000).toISOString().slice(0,10),serviceTime:'00:00:00'}]:[]];
+ if(sql.startsWith('SELECT w.job_id FROM work_order'))return [[]];
  if(sql.startsWith('SELECT payload_hash'))return [previous?[previous]:[]];
  if(sql.startsWith('SELECT * FROM booking'))return [[{booking_id:2,customer_id:4,booking_status:'Completed',total_amount:100}]];
  if(sql.startsWith('SELECT * FROM loyalty_account'))return [[{loyalty_account_id:5,current_points:0}]];

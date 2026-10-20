@@ -81,3 +81,47 @@ test('concurrent stock operations wait on the part lock and cannot read uncommit
   await first.rollback();const result=await waiting;assert.equal(result.stock_before,part.current_stock);assert.equal(result.stock_after,part.current_stock+1);
  }finally{await first.rollback();await second.rollback();first.release();second.release();}
 });
+
+test('inventory instants, correction audit and Singapore date filters stay stable in different MySQL session zones',async()=>rollback(async(db,c)=>{
+ const [[session]]=await c.query('SELECT @@session.time_zone AS zone');
+ const admin=await actors(c);
+ const part=await savePart(db,{part_name:`Inventory timezone ${randomUUID()}`,unit_price:'1',status:'Active',recommended_units_per_ac:1});
+ const received=await recordTransaction(db,{request_id:randomUUID(),part_id:part.part_id,transaction_type:'Stock In',quantity:2,expected_stock:0},admin);
+ const server=createApp({pool:db,secret:process.env.SESSION_SECRET}).listen(0,'127.0.0.1');
+ await new Promise(r=>server.once('listening',r));
+ let cookie='',csrf='';
+ async function req(path,method='GET',body){
+  const response=await fetch(`http://127.0.0.1:${server.address().port}`+path,{method,headers:{Cookie:cookie,'Content-Type':'application/json','X-CSRF-Token':csrf},body:body===undefined?undefined:JSON.stringify(body)});
+  if(response.headers.get('set-cookie'))cookie=response.headers.get('set-cookie').split(';')[0];
+  return response;
+ }
+ try {
+  csrf=(await(await req('/api/session')).json()).csrf;
+  const login=await req('/api/login','POST',{email:'norshida@coolcare.demo',password:'CoolCareDemo2026!'});
+  assert.equal(login.status,200);csrf=(await login.json()).csrf;
+  await c.query("SET time_zone='+08:00'");
+  const corrected=await req(`/api/transactions/${received.transaction_id}`,'PUT',{request_id:randomUUID(),expected_version:1,quantity:2,occurred_at:'2026-10-20T16:15:30Z',remarks:'Singapore midnight correction'});
+  assert.equal(corrected.status,200);
+  let originalRevision;
+  for(const zone of ['+00:00','+08:00','-05:00']){
+   await c.query('SET time_zone=?',[zone]);
+   const detail=await(await req(`/api/transactions/${received.transaction_id}`)).json();
+   assert.equal(detail.transaction.created_at_iso,'2026-10-20T16:15:30.000Z',zone);
+   assert.equal(detail.revisions[0].after_occurred_at_iso,'2026-10-20T16:15:30Z');
+   assert.ok(Math.abs(new Date(detail.transaction.modified_at_iso).getTime()-Date.now())<15000,zone);
+   assert.ok(Math.abs(new Date(detail.revisions[0].changed_at_iso).getTime()-Date.now())<15000,zone);
+   const revision=JSON.stringify(detail.revisions[0]);
+   if(originalRevision)assert.equal(revision,originalRevision);else originalRevision=revision;
+   const included=await(await req(`/api/transactions?part=${part.part_id}&from=2026-10-21&to=2026-10-21`)).json();
+   assert.equal(included.total,1,zone);assert.equal(included.rows[0].created_at_iso,detail.transaction.created_at_iso);
+   const excluded=await(await req(`/api/transactions?part=${part.part_id}&from=2026-10-20&to=2026-10-20`)).json();
+   assert.equal(excluded.total,0,zone);
+   const exported=await(await req(`/api/transactions/export?part=${part.part_id}&from=2026-10-21&to=2026-10-21`)).text();
+   assert.match(exported,/Date\/time \(Singapore, SGT\)/);
+   assert.match(exported,/21 Oct 2026.*00:15:30 SGT/);
+  }
+ }finally{
+  await c.query('SET time_zone=?',[session.zone]);
+  await new Promise(r=>server.close(r));
+ }
+}));

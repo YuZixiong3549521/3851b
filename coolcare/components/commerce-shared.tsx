@@ -8,7 +8,7 @@ export type RewardRule = { version: number; pointsPerDollar: number; redemptionP
 export type RewardBooking = {
   bookingId: number; customerId: number; status: string; serviceDate: string;
   customerName: string; email: string; serviceName: string; quote: number | null;
-  baseAmount: number | null; additionalFee: number; discount: number; netServiceAmount: number | null;
+  baseAmount: number | null; additionalFee: number | null; discount: number; netServiceAmount: number | null;
   rewardStatus: string | null; rewardPoints: number; canReserve: boolean;
   completionReward: { awardedPoints: number; redeemedPoints: number; discountAmount: number; netServiceAmount: number | null; completedAt: string; outcome: string; note: string } | null;
 };

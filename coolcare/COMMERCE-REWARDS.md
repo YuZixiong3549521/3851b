@@ -28,6 +28,15 @@ booking, wallet, applied discount and earning record therefore succeed or roll
 back together. The saved per-booking completion record freezes the earning
 basis and rule version. Identical retries, later report submissions or edits,
 and another completed return visit for that booking cannot award points twice.
+Migration 33 also preserves the base service and additional-fee breakdown for
+new completions. Booking cards, booking detail, rewards and analytics share
+`server/booking-amounts.mjs`: pending orders include reserved discounts, while
+completed orders use the recorded completion snapshot. Admin order lists and
+details expose the same `amounts` summary without changing the legacy
+`totalAmount` base-price field. Earlier snapshots without
+a reliable base/extra split show their recorded total rather than reconstructing
+an invented breakdown. An explicitly unknown completed price remains unknown.
+Technicians cannot change repair extras after order completion through the API.
 A return request which leaves an order awaiting further service is not a
 Completed order and does not earn points yet.
 
@@ -74,6 +83,11 @@ amount. Corrections use the points ledger rather than a receipt or refund form.
 ## Reports
 
 Filters accept a date range of up to 367 days, a service and/or a technician.
+The selector groups current and historical services without removing old
+records. **Annual Cleaning Bundle** filters actual annual-visit links via
+`serviceGroup=annual`; standalone Cleaning is excluded. Choose either this group
+or a `serviceId`, not both. CSV export uses the same applied filters and includes
+their human-readable labels.
 Order metrics use scheduled service dates and count each booking once,
 including combined Cleaning + Repair orders. A technician filter selects orders
 assigned to them or with a recorded visit by them. Service-value and parts
@@ -108,7 +122,7 @@ ownership is enforced on every reservation.
 
 | Method | Route after `/api/commerce` | Purpose |
 | --- | --- | --- |
-| GET | `/admin/reports?from=YYYY-MM-DD&to=YYYY-MM-DD` | Operational counts, service values and source rows; optional `serviceId` and `technicianId` |
+| GET | `/admin/reports?from=YYYY-MM-DD&to=YYYY-MM-DD` | Operational counts, service values and source rows; optional `serviceId` or `serviceGroup=annual`, plus `technicianId` |
 | GET | `/admin/reports.csv` with the same filters | CSV export |
 | GET | `/admin/rewards` | Customer rewards management and rule history |
 | GET | `/admin/rewards/:customerId` | Customer wallet, bookings, reservations and points history |

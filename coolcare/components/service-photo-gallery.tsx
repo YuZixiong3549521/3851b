@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { formatInstantDateTime } from '@/lib/sg-time';
 export type ServicePhoto = {
   photoId: number;
   url: string | null;
@@ -32,11 +33,7 @@ function Photo({ photo }: { photo: ServicePhoto }) {
           {photo.description || 'No note recorded'}
         </p>
         <p className="text-xs text-muted-foreground">
-          Recorded:{' '}
-          {new Date(photo.uploadedAt).toLocaleString('en-GB', {
-            timeZone: 'Asia/Singapore',
-          })}{' '}
-          (SGT)
+          Recorded: {formatInstantDateTime(photo.uploadedAt)}
         </p>
       </figcaption>
     </figure>

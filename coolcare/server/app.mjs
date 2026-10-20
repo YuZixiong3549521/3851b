@@ -22,12 +22,17 @@ import {
   toCsv,
 } from './inventory.mjs';
 
-const transactionSelect = `SELECT t.*, p.part_name, COALESCE(actor.full_name,u.full_name) AS admin_name, o.stock_before, o.stock_after,
+const transactionSelect = `SELECT t.*, UNIX_TIMESTAMP(t.created_at) AS created_at_epoch, p.part_name, COALESCE(actor.full_name,u.full_name) AS admin_name, o.stock_before, o.stock_after,
  CASE WHEN t.transaction_type IN ('Stock In', 'Return') THEN t.quantity WHEN t.transaction_type = 'Stock Out' THEN -t.quantity ELSE o.stock_delta END AS stock_delta
  FROM inventory_transaction t JOIN part p ON p.part_id=t.part_id
  LEFT JOIN user_account u ON u.user_id=t.admin_user_id
  LEFT JOIN user_account actor ON actor.user_id=t.performed_by_user_id
  LEFT JOIN inventory_web_operation o ON o.transaction_id=t.transaction_id`;
+const utcDateTimeIso = value => value ? String(value).replace(' ', 'T') + 'Z' : null;
+function serializeTransaction({created_at_epoch,...transaction}) {
+  return {...transaction, created_at_iso:new Date(Number(created_at_epoch)*1000).toISOString(), modified_at_iso:utcDateTimeIso(transaction.modified_at)};
+}
+const singaporeDateTime = new Intl.DateTimeFormat('en-SG',{timeZone:'Asia/Singapore',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
 const pageNumber = z.coerce.number().int().min(1).max(1000000).default(1);
 const pageSize = z.coerce.number().int().min(1).max(100).default(10);
 const date = z
@@ -119,12 +124,12 @@ function transactionFilter(query) {
     values.push(data.part);
   }
   if (data.from) {
-    clauses.push('t.created_at >= ?');
-    values.push(data.from);
+    clauses.push('t.created_at >= FROM_UNIXTIME(?)');
+    values.push(Date.parse(`${data.from}T00:00:00+08:00`)/1000);
   }
   if (data.to) {
-    clauses.push('t.created_at < DATE_ADD(?, INTERVAL 1 DAY)');
-    values.push(data.to);
+    clauses.push('t.created_at < FROM_UNIXTIME(?)');
+    values.push(Date.parse(`${data.to}T00:00:00+08:00`)/1000+86400);
   }
   return {
     data,
@@ -311,7 +316,7 @@ export function createApp({
       transactionSelect +
         ' ORDER BY t.created_at DESC,t.transaction_id DESC LIMIT 6',
     );
-    res.json({ summary, parts, recent, threshold });
+    res.json({ summary, parts, recent:recent.map(serializeTransaction), threshold });
   });
   app.get('/api/options', async (req, res) => {
     const [parts] = await pool.query(
@@ -417,7 +422,7 @@ export function createApp({
         ' ORDER BY t.created_at DESC,t.transaction_id DESC LIMIT ? OFFSET ?',
       [...f.values, f.data.pageSize, (page - 1) * f.data.pageSize],
     );
-    res.json({ rows, total, page, pageSize: f.data.pageSize });
+    res.json({ rows:rows.map(serializeTransaction), total, page, pageSize: f.data.pageSize });
   });
   app.get('/api/transactions/export', async (req, res) => {
     const f = transactionFilter(req.query);
@@ -438,7 +443,7 @@ export function createApp({
         toCsv(
           [
             'Transaction ID',
-            'Date/time (server local)',
+            'Date/time (Singapore, SGT)',
             'Part',
             'Type',
             'Quantity',
@@ -449,7 +454,7 @@ export function createApp({
           ],
           rows.map((t) => [
             t.transaction_id,
-            t.created_at,
+            singaporeDateTime.format(new Date(Number(t.created_at_epoch)*1000))+' SGT',
             t.part_name,
             t.transaction_type,
             t.quantity,
@@ -472,7 +477,11 @@ export function createApp({
     if(!transaction) throw new AppError('Transaction not found.',404);
     const [revisions]=await pool.execute(`SELECT r.*,u.full_name AS changed_by_name FROM inventory_transaction_revision r
       JOIN user_account u ON u.user_id=r.changed_by_user_id WHERE r.transaction_id=? ORDER BY r.after_version DESC`,[id]);
-    res.json({transaction,revisions});
+    res.json({transaction:serializeTransaction(transaction),revisions:revisions.map(r=>({...r,
+      changed_at_iso:utcDateTimeIso(r.changed_at),
+      before_occurred_at_iso:utcDateTimeIso(r.before_occurred_at),
+      after_occurred_at_iso:utcDateTimeIso(r.after_occurred_at),
+    }))});
   });
   app.put('/api/transactions/:id',async(req,res)=>res.json(await editTransaction(pool,idSchema.parse(req.params.id),req.body,req.session.user.user_id)));
   app.use('/api', (req, res) =>

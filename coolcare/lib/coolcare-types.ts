@@ -101,7 +101,21 @@ export type BookingOptions = {
   subscriptions: [];
 };
 
+export type BookingAmounts = {
+  baseAmount: number | null;
+  additionalFee: number | null;
+  grossAmount: number | null;
+  discountAmount: number;
+  netServiceAmount: number | null;
+  rewardStatus: string | null;
+  awardedPoints: number;
+  redeemedPoints: number;
+  completionOutcome: string | null;
+  isFinal: boolean;
+};
+
 export type Booking = {
+  amounts?: BookingAmounts;
   slotStart?: string | null;
   slotEnd?: string | null;
   serviceIds?: number[];

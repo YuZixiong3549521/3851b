@@ -25,7 +25,8 @@ export function BookingCard({
   showActions?: boolean;
 }) {
   const detailsUrl = `/customer/bookings/${booking.bookingId}`;
-  const extraFee = Number(booking.serviceProgress?.additionalRepairFee || 0);
+  const amounts = booking.amounts;
+  const displayedTotal = amounts ? amounts.netServiceAmount : booking.totalAmount;
   const quantity = booking.numberOfUnits ?? booking.units.length;
   return (
     <Card className="overflow-hidden border-border/80 shadow-sm">
@@ -120,34 +121,29 @@ export function BookingCard({
         <div className="mt-5 flex flex-wrap items-center justify-between gap-4 border-t border-border/70 pt-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              {extraFee > 0
-                ? 'Base visit estimate'
-                : booking.annualBundle
-                  ? 'This visit estimate'
-                  : history
-                    ? 'Recorded amount'
-                    : 'Visit estimate'}
+              {amounts?.isFinal ? 'Completed service after rewards' : history ? 'Recorded service amount' : 'Estimated service after rewards'}
             </p>
             <p className="mt-1 text-lg font-bold">
-              {booking.totalAmount == null
-                ? 'To be confirmed'
-                : formatMoney(booking.totalAmount)}
+              {displayedTotal == null
+                ? amounts?.isFinal ? 'Price not recorded' : 'To be confirmed'
+                : formatMoney(displayedTotal)}
             </p>
-            {extraFee > 0 && (
-              <div className="mt-2 text-sm">
-                <p>Additional repair quote: {formatMoney(extraFee)}</p>
-                {booking.totalAmount != null && (
-                  <p className="mt-1 font-semibold">
-                    Total including quoted extras:{' '}
-                    {formatMoney(Number(booking.totalAmount) + extraFee)}
-                  </p>
-                )}
-              </div>
+            {amounts && (
+              <dl className="mt-2 space-y-1 text-sm text-muted-foreground">
+                {amounts.baseAmount !== null && <div className="flex flex-wrap gap-x-2"><dt>Base service:</dt><dd>{formatMoney(amounts.baseAmount)}</dd></div>}
+                {amounts.additionalFee !== null && <div className="flex flex-wrap gap-x-2"><dt>Repair extras:</dt><dd>{formatMoney(amounts.additionalFee)}</dd></div>}
+                {amounts.isFinal && amounts.baseAmount === null && amounts.grossAmount !== null && <div><dt className="inline">Recorded total before rewards: </dt><dd className="inline">{formatMoney(amounts.grossAmount)} (breakdown unavailable)</dd></div>}
+                <div className="flex flex-wrap gap-x-2"><dt>{amounts.rewardStatus === 'Reserved' ? 'Reserved reward discount:' : 'Reward discount:'}</dt><dd>−{formatMoney(amounts.discountAmount)}</dd></div>
+                {amounts.rewardStatus === 'Reserved' && <div className="max-w-md text-xs">Reserved rewards are checked against the final service total and available points at completion.</div>}
+                {amounts.isFinal && <div className="font-medium text-foreground"><dt className="inline">Points earned: </dt><dd className="inline">{amounts.awardedPoints}</dd></div>}
+                {amounts.completionOutcome === 'Historical' && <div>Historical completion · no retrospective points awarded.</div>}
+                {amounts.completionOutcome === 'Legacy reward' && <div>Earlier reward history retained · no repeat award.</div>}
+              </dl>
             )}
             {booking.annualBundle && (
               <p className="mt-1 text-xs text-muted-foreground">
                 {formatMoney(booking.annualBundle.totalAmount)} for all four
-                visits · Pay after each service
+                visits before rewards or any repair extras
               </p>
             )}
           </div>

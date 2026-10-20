@@ -7,6 +7,7 @@ import {
   transactionSchema,
   stockDelta,
   projectedStock,
+  editTransactionSchema,
   toCsv,
 } from '../server/inventory.mjs';
 
@@ -100,4 +101,14 @@ test('CSV quotes strings and protects spreadsheet formula injection', () => {
   assert.ok(result.includes('"A, ""B"""'));
   assert.ok(result.includes('"\'=1+1"'));
   assert.ok(result.includes('"\' @SUM(A1)"'));
+});
+
+test('inventory corrections accept explicit UTC instants and keep the legacy UTC payload compatible', () => {
+  const correction = {request_id:randomUUID(),expected_version:1,quantity:1,remarks:''};
+  assert.equal(editTransactionSchema.parse({...correction,occurred_at:'2026-10-20T16:15:30Z'}).occurred_at,'2026-10-20 16:15:30');
+  assert.equal(editTransactionSchema.parse({...correction,occurred_at:'2026-10-20 16:15:30'}).occurred_at,'2026-10-20 16:15:30');
+  assert.equal(editTransactionSchema.parse({...correction,occurred_at:'2026-10-20T16:15'}).occurred_at,'2026-10-20 16:15:00');
+  for (const invalid of ['2026-02-29T12:00:00Z','2026-10-20T24:00:00Z','2026-10-20T12:60:00Z']) {
+    assert.equal(editTransactionSchema.safeParse({...correction,occurred_at:invalid}).success,false);
+  }
 });

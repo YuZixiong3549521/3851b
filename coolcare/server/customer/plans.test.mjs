@@ -46,6 +46,21 @@ test('renewal opens sixty days before expiry and an existing renewal cannot rene
   assert.equal(describeAnnualPlan({ ...series, existingRenewalSeriesId: 15 }, active, new Date('2026-12-01T00:00:00Z')).canRenew, false);
 });
 
+test('closed initial visits leave explicit remaining reservations instead of hiding or cancelling the plan', () => {
+  for (const closedStatus of ['Cancelled', 'Rejected', 'Expired']) {
+    const plan = describeAnnualPlan(series, visits([closedStatus, 'Submitted', 'Submitted', 'Submitted']), new Date('2026-02-01T01:00:00Z'));
+    assert.equal(plan.status, 'Active');
+    assert.equal(plan.remainingVisits, 3);
+    assert.equal(plan.unusedClosedVisits, 1);
+    assert.equal(plan.nextVisit.bookingId, 101);
+    assert.match(plan.attentionMessage, new RegExp(`Visit 1 is ${closedStatus.toLowerCase()}`));
+    assert.match(plan.attentionMessage, /other 3 quarterly visits remain reserved/);
+    assert.equal(plan.totalAmount, 260);
+  }
+  assert.equal(describeAnnualPlan(series, visits(['Completed', 'Submitted', 'Submitted', 'Submitted']), new Date('2026-02-01T01:00:00Z')).attentionMessage, null);
+  assert.equal(describeAnnualPlan(series, visits(['Cancelled', 'Cancelled', 'Cancelled', 'Cancelled']), new Date('2026-02-01T01:00:00Z')).attentionMessage, null);
+});
+
 test('reminders use Singapore time and only the next future active quarterly visit', () => {
   const now = new Date('2026-09-29T00:00:00Z');
   const plan = describeAnnualPlan(series, visits(['Completed', 'Cancelled', 'Completed', 'Confirmed']), now);

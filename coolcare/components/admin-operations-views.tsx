@@ -36,6 +36,7 @@ import {
 import { BookingStatus } from '@/components/booking-status';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { formatServiceWindow, formatTimeSlot } from '@/lib/format';
+import { formatInstantDateTime, formatSingaporeDateTime } from '@/lib/sg-time';
 import {
   bookingDateError,
   earliestBookingDate,
@@ -82,19 +83,7 @@ const displayDate = (value: string) =>
     year: 'numeric',
     timeZone: 'UTC',
   }).format(new Date(`${String(value).slice(0, 10)}T00:00:00Z`));
-const displayMoment = (value: string | null | undefined) =>
-  value ? String(value).replace('T', ' ').slice(0, 16) : 'Not recorded';
-const displayExpiry = (value: string) =>
-  new Intl.DateTimeFormat('en-SG', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Asia/Singapore',
-  }).format(
-    new Date(value.includes('T') ? value : value.replace(' ', 'T') + 'Z'),
-  ) + ' SGT';
+const displayExpiry = formatInstantDateTime;
 const timeSlots = [
   { value: '09:00 - 11:00', label: '09:00 AM - 11:00 AM' },
   { value: '11:00 - 13:00', label: '11:00 AM - 01:00 PM' },
@@ -166,8 +155,9 @@ export function OrdersPage({
   params: URLSearchParams;
 }) {
   const { go, version, refresh, actionSummary } = useInventory(),
+    reportsQueue = mode === 'review' && params.get('queue') === 'reports',
     status =
-      mode === 'review'
+      reportsQueue ? '' : mode === 'review'
         ? ['Submitted', 'Rejected', 'Expired'].includes(
             params.get('status') || '',
           )
@@ -180,7 +170,7 @@ export function OrdersPage({
       page: String(page),
       pageSize: '20',
       sort: params.get('sort') === 'deadline' ? 'deadline' : 'placed',
-      ...(mode === 'dispatch'
+      ...(reportsQueue ? { queue: 'reports' } : mode === 'dispatch'
         ? { queue: 'waiting' }
         : status === 'Submitted' && params.get('sort') !== 'deadline'
           ? { queue: 'review' }
@@ -195,9 +185,11 @@ export function OrdersPage({
     <>
       <Heading
         eyebrow={mode === 'review' ? 'ORDERS / REVIEW' : 'ORDERS / DISPATCH'}
-        title={mode === 'review' ? 'Booking review' : 'Dispatch queue'}
+        title={reportsQueue ? 'Pending service reports' : mode === 'review' ? 'Booking review' : 'Dispatch queue'}
         description={
-          mode === 'review'
+          reportsQueue
+            ? 'Follow up with the responsible technician until each finished or paused visit has a submitted report.'
+            : mode === 'review'
             ? 'Review requests in placement order, then confirm and assign an available technician together.'
             : 'Assign confirmed visits to an available technician automatically or manually.'
         }
@@ -226,7 +218,7 @@ export function OrdersPage({
               {actionSummary.totalRequiringAction} total
             </strong>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <button
               type="button"
               className="rounded-xl border bg-white p-4 text-left shadow-sm"
@@ -236,6 +228,14 @@ export function OrdersPage({
               <strong className="mt-2 block text-2xl">
                 {actionSummary.submitted}
               </strong>
+            </button>
+            <button
+              type="button"
+              className="rounded-xl border bg-white p-4 text-left shadow-sm"
+              onClick={() => go('/admin/orders?queue=reports')}
+            >
+              <span className="text-sm muted">Reports awaiting submission</span>
+              <strong className="mt-2 block text-2xl">{actionSummary.pendingReports}</strong>
             </button>
             <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
               <span className="text-sm text-orange-800">
@@ -275,17 +275,18 @@ export function OrdersPage({
             <NativeSelect
               id="order-status-filter"
               className="mt-1"
-              value={status}
+              value={reportsQueue ? 'reports' : status}
               onChange={(event) =>
-                go('/admin/orders?status=' + event.target.value)
+                go(event.target.value === 'reports' ? '/admin/orders?queue=reports' : '/admin/orders?status=' + event.target.value)
               }
             >
               <option value="Submitted">Awaiting confirmation</option>
               <option value="Rejected">Rejected</option>
               <option value="Expired">Expired</option>
+              <option value="reports">Reports awaiting submission</option>
             </NativeSelect>
           </label>
-          <label htmlFor="review-order-sort" className="text-sm font-semibold">
+          {!reportsQueue && <label htmlFor="review-order-sort" className="text-sm font-semibold">
             Order by
             <NativeSelect
               id="review-order-sort"
@@ -297,7 +298,7 @@ export function OrdersPage({
               <option value="placed">Oldest placed first</option>
               <option value="deadline">Earliest confirmation deadline</option>
             </NativeSelect>
-          </label>
+          </label>}
           {status === 'Submitted' && (
             <p className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm font-medium text-red-800">
               <AlertCircle className="size-4" />
@@ -330,7 +331,7 @@ export function OrdersPage({
                   <TableRow
                     key={row.bookingId}
                     className={
-                      row.status === 'Submitted' ? 'bg-red-50/50' : undefined
+                      row.status === 'Submitted' || row.reportPending ? 'bg-red-50/50' : undefined
                     }
                   >
                     <TableCell data-label="Booking">
@@ -338,7 +339,8 @@ export function OrdersPage({
                         BK-{String(row.bookingId).padStart(4, '0')}
                       </strong>
                       <small className="block muted">
-                        {money(row.totalAmount)}
+                        {money(row.amounts ? row.amounts.netServiceAmount : row.totalAmount)}
+                        <span className="block text-xs">{row.amounts?.isFinal ? 'Final after rewards' : 'Estimate after rewards'}</span>
                       </small>
                     </TableCell>
                     <TableCell data-label="Customer">
@@ -366,16 +368,17 @@ export function OrdersPage({
                         <small className="mt-1 block font-medium text-red-700">
                           {row.expiresAt
                             ? `Confirm by ${displayExpiry(row.expiresAt)}`
-                            : 'Awaiting confirmation · No expiry for this existing request'}
+                            : 'Awaiting confirmation · No automatic expiry'}
                         </small>
                       )}
+                      {row.reportPending && <small className="mt-1 block font-medium text-red-700">Report pending · {row.pendingReportTechnicianName || 'Technician not recorded'}</small>}
                     </TableCell>
                     <TableCell data-label="Action" className="text-right">
                       <Button
                         size="sm"
                         onClick={() => go(`/admin/orders/${row.bookingId}`)}
                       >
-                        {mode === 'review' ? 'Review' : 'Open dispatch'}
+                        {reportsQueue ? 'Follow up' : mode === 'review' ? 'Review' : 'Open dispatch'}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -388,7 +391,7 @@ export function OrdersPage({
               pageSize={data.pageSize}
               onPage={(next) =>
                 go(
-                  `/${mode === 'review' ? 'admin/orders' : 'admin/dispatch'}?page=${next}&status=${status}&sort=${params.get('sort') === 'deadline' ? 'deadline' : 'placed'}`,
+                  `/${mode === 'review' ? 'admin/orders' : 'admin/dispatch'}?page=${next}&status=${status}&sort=${params.get('sort') === 'deadline' ? 'deadline' : 'placed'}${reportsQueue ? '&queue=reports' : ''}`,
                 )
               }
             />
@@ -396,12 +399,12 @@ export function OrdersPage({
         ) : (
           <NoResults
             title={
-              mode === 'review'
+              reportsQueue ? 'No reports awaiting submission' : mode === 'review'
                 ? 'No bookings awaiting review'
                 : 'No confirmed bookings awaiting dispatch'
             }
             description={
-              mode === 'review'
+              reportsQueue ? 'Finished visits have their submitted reports. New unfinished reports will appear here.' : mode === 'review'
                 ? 'New customer requests will appear here.'
                 : 'Approved bookings will appear here until assigned.'
             }
@@ -986,6 +989,10 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
             description={`${displayDate(booking.preferredDate)} · ${displayServiceTime(booking)}`}
             actions={<BookingStatus status={booking.status} />}
           />
+          {booking.reportPending && <div role="status" className="mb-5 flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">
+            <AlertCircle className="mt-0.5 size-5 shrink-0" />
+            <div><strong>Report pending</strong><p className="mt-1">{booking.pendingReportTechnicianName || 'The assigned technician'} must submit the report for WO-{String(booking.pendingReportJobId).padStart(4, '0')}{booking.reportId ? ` (report #${booking.reportId})` : ''}. Service completion or a return request does not replace report submission.</p></div>
+          </div>}
           <div className="admin-detail-grid">
             <section className="panel">
               <h2>Request details</h2>
@@ -995,7 +1002,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   {booking.expiresAt
                     ? 'Confirmation deadline: ' +
                       displayExpiry(booking.expiresAt)
-                    : 'Awaiting confirmation. This existing request has no expiry deadline.'}
+                    : 'Awaiting individual confirmation. This reservation has no automatic expiry deadline.'}
                 </p>
               )}
               {booking.status === 'Expired' && (
@@ -1033,8 +1040,14 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </dd>
                 </div>
                 <div>
-                  <dt>Estimate</dt>
-                  <dd>{money(booking.totalAmount)}</dd>
+                  <dt>{booking.amounts?.isFinal ? 'Completed service after rewards' : 'Estimate after rewards'}</dt>
+                  <dd>{money(booking.amounts ? booking.amounts.netServiceAmount : booking.totalAmount)}</dd>
+                  {booking.amounts && <dd className="text-sm text-muted-foreground">
+                    {booking.amounts.baseAmount !== null && <>Base {money(booking.amounts.baseAmount)} · </>}
+                    {booking.amounts.additionalFee !== null && <>Extras {money(booking.amounts.additionalFee)} · </>}
+                    {booking.amounts.rewardStatus === 'Reserved' ? 'Reserved reward' : 'Reward discount'} {money(booking.amounts.discountAmount)}
+                    {booking.amounts.isFinal && <> · {booking.amounts.awardedPoints} points earned</>}
+                  </dd>}
                 </div>
                 <div>
                   <dt>Reported issue</dt>
@@ -1559,7 +1572,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                     <div>
                       <strong>{item.status}</strong>
                       <small>
-                        {displayMoment(item.changedAt)}
+                        {formatInstantDateTime(item.changedAt)}
                         {item.changedBy ? ` · ${item.changedBy}` : ''}
                       </small>
                       <p>{item.note || 'No note recorded.'}</p>
@@ -1569,7 +1582,8 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
               </ol>
               {booking.reports?.map((report) => (
                 <section key={report.reportId} className="mt-7 space-y-2">
-                  <h2>Service report</h2>
+                  <h2>Service report #{report.reportId}{report.archived ? ' · Earlier visit' : ''}</h2>
+                  <p className="text-sm muted">{report.technicianName || 'Technician not recorded'} · {report.serviceDate ? displayDate(report.serviceDate) : 'Service date not recorded'}{report.scheduledStart ? ` · ${formatTimeSlot(report.scheduledStart.slice(0, 5))}` : ''}</p>
                   <h3>Service process photos</h3>
                   <ServicePhotoGallery photos={report.photos || []} />
                   <p>
@@ -1606,11 +1620,11 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   <p>
                     Started:{' '}
                     {report.startedAt
-                      ? displayMoment(report.startedAt)
+                      ? formatSingaporeDateTime(report.startedAt)
                       : 'Not recorded'}{' '}
                     · Completed:{' '}
                     {report.completedAt
-                      ? displayMoment(report.completedAt)
+                      ? formatSingaporeDateTime(report.completedAt)
                       : 'Not recorded'}
                   </p>
                 </section>
@@ -1671,7 +1685,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                                   ? ' · Parts: ' + event.partNotes
                                   : ''}
                                 <small className="block muted">
-                                  {displayMoment(event.createdAt)}
+                                  {formatSingaporeDateTime(event.createdAt)}
                                 </small>
                               </p>
                             ))}
@@ -2041,7 +2055,7 @@ export function StaffPage({ role }: { role: 'Admin' | 'Technician' }) {
                               <span>Inactive</span>
                               <small className="block muted">
                                 {invitationOpen
-                                  ? `Invitation expires ${displayMoment(member.invitationExpiresAt)}`
+                                  ? `Invitation expires ${formatInstantDateTime(member.invitationExpiresAt)}`
                                   : member.invitationRevokedAt
                                     ? 'Invitation revoked'
                                     : 'Invitation unavailable'}

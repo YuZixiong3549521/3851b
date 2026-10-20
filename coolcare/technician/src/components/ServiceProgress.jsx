@@ -1,3 +1,4 @@
+import {formatInstantDateTime} from '@/lib/sg-time';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,7 +49,7 @@ export default function ServiceProgress({
     ...(['None', 'Completed', 'In Progress'].includes(follow)
       ? [['require-return', 'Return visit required']]
       : []),
-    ...(repairEligible ? [['repair-quote', 'Set additional repair fee']] : []),
+    ...(repairEligible && !progress.repairQuoteLocked ? [['repair-quote', 'Set additional repair fee']] : []),
   ];
   const reasons =
     action === 'extend'
@@ -120,6 +121,7 @@ export default function ServiceProgress({
         Updates stay with this work order. Each visit has its own service report,
         photos and signatures. Customers and administrators can view them.
       </p>
+      {repairEligible && progress.repairQuoteLocked && <p>Completed service charges are locked. The recorded additional repair fee cannot be changed.</p>}
       <div className="tech-guidance space-y-1">
         <p>
           Return visit:{' '}
@@ -344,7 +346,7 @@ export default function ServiceProgress({
               <li key={event.id} className="space-y-1">
                 <strong>{event.kind}</strong>
                 <small>
-                  {event.createdAt} · {event.createdBy}
+                  {formatInstantDateTime(event.createdAt)} · {event.createdBy}
                 </small>
                 <p>
                   {event.reason}

@@ -7,8 +7,10 @@ import {
   rejectBooking,
   editRejectionReason,
   getAdminBooking,
+  getAdminActionSummary,
   dispatchBooking,
   listAdminBookings,
+  listAdminSchedule,
   listDispatchOptions,
 } from '../server/admin-operations.mjs';
 import { expireSubmittedBookings } from '../server/order-expiry.mjs';
@@ -397,7 +399,72 @@ test('submitted requests are listed oldest first regardless of appointment date'
     });
     assert.equal(result.rows[0].bookingId, oldest);
     assert.equal(result.rows[1].bookingId, newer);
-    assert.equal(String(result.rows[0].createdAt), '1990-01-01 08:00:00');
+    const [[stored]] = await c.execute('SELECT UNIX_TIMESTAMP(created_at) AS epoch FROM booking WHERE booking_id=?', [oldest]);
+    assert.equal(result.rows[0].createdAt, new Date(Number(stored.epoch) * 1000).toISOString());
+  }));
+
+test('admin report queue identifies the responsible technician until finished and return-visit reports are submitted', () =>
+  fixture(async ({ c, db, actor, create }) => {
+    const baseline = (await getAdminActionSummary(db)).pendingReports;
+    const [[technician]] = await c.execute(`SELECT t.technician_id,u.full_name FROM technician t
+      JOIN user_account u ON u.user_id=t.user_id ORDER BY t.technician_id LIMIT 1`);
+    const jobs = [];
+    for (const status of ['Completed', 'Awaiting return arrangement', 'In Progress']) {
+      const bookingId = await create(status === 'Completed' ? 'Completed' : 'In Progress');
+      const [assignment] = await c.execute(`INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status)
+        VALUES (?,?,?,'Assigned')`, [bookingId, technician.technician_id, actor.userId]);
+      const [work] = await c.execute(`INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status)
+        VALUES (?,?,'2091-01-08 09:00:00','09:00:00',?)`, [bookingId, assignment.insertId, status]);
+      if (status !== 'Completed') await c.execute("INSERT INTO service_report(job_id,work_performed,submitted_time) VALUES (?,'Draft report.',NULL)", [work.insertId]);
+      jobs.push({ bookingId, jobId: work.insertId });
+    }
+    assert.equal((await getAdminActionSummary(db)).pendingReports, baseline + 2);
+    for (const item of jobs.slice(0, 2)) {
+      const queue = await listAdminBookings(db, { queue: 'reports', q: String(item.bookingId) });
+      assert.equal(queue.total, 1);
+      assert.equal(queue.rows[0].reportPending, true);
+      assert.equal(queue.rows[0].pendingReportJobId, item.jobId);
+      assert.equal(queue.rows[0].pendingReportTechnicianName, technician.full_name);
+      const detail = await getAdminBooking(db, item.bookingId);
+      assert.equal(detail.reportPending, true);
+      assert.equal(detail.pendingReportTechnicianName, technician.full_name);
+    }
+    assert.equal((await getAdminBooking(db, jobs[0].bookingId)).reportId, null, 'missing historical reports still require follow-up');
+    assert.equal((await listAdminBookings(db, { queue: 'reports', q: String(jobs[2].bookingId) })).total, 0, 'a live draft is not an overdue report');
+    for (const item of jobs.slice(0, 2)) {
+      await c.execute(`INSERT INTO service_report(job_id,work_performed,submitted_time)
+        VALUES (?,'Submitted report for isolated queue validation.',CURRENT_TIMESTAMP)
+        ON DUPLICATE KEY UPDATE submitted_time=CURRENT_TIMESTAMP`, [item.jobId]);
+      assert.equal((await listAdminBookings(db, { queue: 'reports', q: String(item.bookingId) })).total, 0);
+      assert.equal((await getAdminBooking(db, item.bookingId)).reportPending, false);
+    }
+    assert.equal((await getAdminActionSummary(db)).pendingReports, baseline);
+  }));
+
+test('admin timestamps preserve their instants across database session timezone changes', () =>
+  fixture(async ({ c, db, actor, create }) => {
+    const [[session]] = await c.execute('SELECT @@session.time_zone AS zone');
+    try {
+      await c.query("SET SESSION time_zone='+00:00'");
+      const bookingId = await create('Confirmed');
+      await c.execute("UPDATE booking SET created_at='2026-10-20 01:02:03' WHERE booking_id=?", [bookingId]);
+      await c.execute(`INSERT INTO booking_status_history(booking_id,new_status,changed_by_user_id,change_note,changed_at)
+        VALUES (?,'Confirmed',?,'Timezone test.','2026-10-20 02:03:04')`, [bookingId, actor.userId]);
+      const [[technician]] = await c.execute('SELECT technician_id FROM technician ORDER BY technician_id LIMIT 1');
+      await c.execute(`INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status,assigned_at)
+        VALUES (?,?,?,'Assigned','2026-10-20 03:04:05')`, [bookingId, technician.technician_id, actor.userId]);
+      for (const zone of ['+08:00', '-05:00']) {
+        await c.query('SET SESSION time_zone=?', [zone]);
+        const detail = await getAdminBooking(db, bookingId);
+        assert.equal(detail.createdAt, '2026-10-20T01:02:03.000Z');
+        assert.equal(detail.timeline[0].changedAt, '2026-10-20T02:03:04.000Z');
+        assert.equal(detail.assignments[0].assignedAt, '2026-10-20T03:04:05.000Z');
+        assert.equal((await listAdminBookings(db, { q: String(bookingId) })).rows[0].createdAt, detail.createdAt);
+        assert.equal((await listAdminSchedule(db, { from: '2091-01-08', to: '2091-01-08' })).rows.find(row => row.bookingId === bookingId).createdAt, detail.createdAt);
+      }
+    } finally {
+      await c.query('SET SESSION time_zone=?', [session.zone]);
+    }
   }));
 
 test('a submitted request stays unconfirmed when no technician can be assigned', () =>

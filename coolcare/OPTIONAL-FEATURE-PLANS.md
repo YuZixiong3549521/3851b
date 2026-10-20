@@ -6,6 +6,14 @@ Each plan displays its original price and property snapshot, address, AC count, 
 
 Plan state is derived on each read from the current bookings and Singapore date. Four completed quarterly bookings mean Completed. Four closed, unused bookings mean Cancelled (all-expired means Expired). At the end of the final quarter, an unfinished ordinary plan is Expired; an ongoing service or return obligation stays visible as Active until resolved. Individual changes and cancellations use the existing booking detail flow, retaining ownership, 72-hour notice, quarterly windows and service-start restrictions.
 
+## Confirmation and retained visits
+
+The first quarterly booking uses the normal confirmation deadline (48 hours by default). Visits 2–4 reserve their quarterly dates and capacity with `expires_at=NULL`; they still require individual administrator confirmation and dispatch. A customer rescheduling one of these subsequent visits retains that no-expiry policy. A later visit is not a fresh purchase and must not expire two days after the annual plan is requested.
+
+Cancellation, rejection or expiry is scoped to the affected visit, including visit 1. Other quarterly bookings, their price snapshots and the annual series are preserved. My Plans explicitly identifies closed visits alongside the remaining reservations and links each booking for management. There is no automatic replacement of closed visits and no automatic cancellation of the whole series.
+
+Migration `31-annual-confirmation.sql` removes incorrect deadlines only from future Submitted visits 2–4. It does not reopen Expired, Cancelled or Rejected bookings, change past bookings or alter contract snapshots. The expiry worker and mutation guard also exclude subsequent annual visits with legacy deadlines. An administrator can still reject or a customer can still cancel an individual reservation under the existing rules.
+
 ## Renewal and reminders
 
 There is no automatic charging or automatic renewal. Renewal opens 60 days before the final quarterly window ends, or after all four visits are complete. The customer opens `/customer/book?renewPlan=<seriesId>`, reviews the latest catalogue price, property type and all four dates, then submits normally. The new first visit must be on or after the prior term's end and obey the existing minimum 14 days / weekday rule.

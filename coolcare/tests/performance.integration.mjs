@@ -1,3 +1,4 @@
+import {arrangeVisitForNow} from './service-visit-fixture.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -57,6 +58,8 @@ async function fixture(fn) {
       "UPDATE booking SET booking_status='Assigned' WHERE booking_id=?",
       [a.bookingId],
     );
+    await arrangeVisitForNow(c,a.jobId);
+    await c.execute("UPDATE work_order SET appointment_time=TIME(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR)) WHERE job_id=?",[a.jobId]);
     await updateTechnicianJobStatus(db, a.technicianUserId, a.jobId, {
       requestId: randomUUID(),
       expectedStatus: 'Assigned',
@@ -259,6 +262,8 @@ test('reassignment and return visit never move a previous report score onto a ne
       "UPDATE work_order SET current_status='Return visit',appointment_time='15:00:00' WHERE job_id=?",
       [a.jobId],
     );
+    await arrangeVisitForNow(c,a.jobId);
+    await c.execute("UPDATE work_order SET appointment_time=TIME(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR)) WHERE job_id=?",[a.jobId]);
     await updateTechnicianJobStatus(db, other.userId, a.jobId, {
       requestId: randomUUID(),
       expectedStatus: 'Return visit',

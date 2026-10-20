@@ -86,7 +86,7 @@ export async function storeSignature(pool, userId, jobId, signer, raw) {
   if (!/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+=*$/.test(d.image))
     throw new AppError('Choose a PNG or JPEG image.', 400);
   const [[owner]] = await pool.execute(
-    `SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id WHERE w.job_id=? AND t.user_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status IN ('In Progress','Completed')`,
+    `SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id WHERE w.job_id=? AND t.user_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status IN ('In Progress','Completed','Awaiting return arrangement') AND NOT EXISTS(SELECT 1 FROM service_report r WHERE r.job_id=w.job_id AND r.visit_technician_id IS NOT NULL AND r.visit_technician_id<>t.technician_id)`,
     [jobId, userId],
   );
   if (!owner) throw new AppError('Report not found for this technician.', 404);

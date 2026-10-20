@@ -1,3 +1,4 @@
+import {arrangeVisitForNow} from './service-visit-fixture.mjs';
 import { recordStockBatch,recordTransaction } from '../server/inventory.mjs';
 import {getServiceProgress,updateServiceProgress} from '../server/service-progress.mjs';
 import { test, after } from 'node:test';
@@ -420,6 +421,7 @@ test('service photo uploads store notes, retry without duplication and serve pri
       // Use the real Start service transition: each visit must have an active report.
       const { updateTechnicianJobStatus } = await import('../server/technician.mjs');
       await c.execute("UPDATE work_order SET current_status='Assigned' WHERE job_id=?",[a.jobId]);
+ await arrangeVisitForNow(c,a.jobId);
       await updateTechnicianJobStatus(db,a.userId,a.jobId,{
         requestId:randomUUID(),expectedStatus:'Assigned',status:'In Progress',
       });
@@ -519,6 +521,7 @@ test('start and end service independently of report submission, with customer hi
  const {updateTechnicianJobStatus}=await import('../server/technician.mjs');
  const {listBookings,getBookingReport}=await import('../server/customer/booking-service.mjs');
  await c.execute("UPDATE work_order SET current_status='Assigned' WHERE job_id=?",[a.jobId]);
+ await arrangeVisitForNow(c,a.jobId);
  await c.execute('UPDATE service_report SET submitted_time=NULL,started_at=NULL,completed_at=NULL WHERE job_id=?',[a.jobId]);
  const [[owner]]=await c.execute('SELECT b.booking_id AS bookingId,cu.user_id AS userId FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id WHERE w.job_id=?',[a.jobId]);
  await updateTechnicianJobStatus(db,a.userId,a.jobId,{requestId:randomUUID(),expectedStatus:'Assigned',status:'In Progress'});
@@ -526,12 +529,12 @@ test('start and end service independently of report submission, with customer hi
  await updateTechnicianJobStatus(db,a.userId,a.jobId,end);
  assert.equal((await updateTechnicianJobStatus(db,a.userId,a.jobId,end)).replayed,true);
  const ended=await getReport(db,a.userId,a.jobId);
- assert.equal(ended.status,'Completed');assert.ok(ended.report.startedAt);assert.ok(ended.report.completedAt);assert.equal(ended.report.submittedAt,null);
+ assert.equal(ended.reportPending,true);assert.equal(ended.status,'Completed');assert.ok(ended.report.startedAt);assert.ok(ended.report.completedAt);assert.equal(ended.report.submittedAt,null);
  const bookings=await listBookings(db,'history',owner.userId);const history=bookings.find(b=>b.bookingId===owner.bookingId);
  assert.equal(history.status,'Completed');assert.equal(history.reportId,null);
  await assert.rejects(getBookingReport(db,owner.bookingId,owner.userId),e=>e.status===404||e.statusCode===404);
  await saveReport(db,a.userId,a.jobId,{requestId:randomUUID(),expectedVersion:ended.version,report});
- const submitted=await getReport(db,a.userId,a.jobId);assert.ok(submitted.report.submittedAt);assert.equal(submitted.report.completedAt,ended.report.completedAt);
+ const submitted=await getReport(db,a.userId,a.jobId);assert.equal(submitted.reportPending,false);assert.ok(submitted.report.submittedAt);assert.equal(submitted.report.completedAt,ended.report.completedAt);
  assert.ok((await getBookingReport(db,owner.bookingId,owner.userId)).reportId);
 }));
 
@@ -625,6 +628,11 @@ test('technician repair quotes are audited without customer approval, and requir
   assert.equal((await request(path,'PATCH',changed,'')).status,403);
   const response=await request(path,'PATCH',changed);assert.equal(response.status,200);assert.equal((await getServiceProgress(db,a.jobId)).additionalRepairFee,95);
   assert.equal((await request('/api/technician/jobs/4294967295/service-progress','PATCH',changed)).status,404);
+  await c.execute("UPDATE work_order SET current_status='Completed' WHERE job_id=?",[a.jobId]);
+  const completedProgress=await getServiceProgress(db,a.jobId);
+  assert.equal((await request(path,'PATCH',{...changed,requestId:randomUUID(),expectedVersion:completedProgress.version,amount:120})).status,409);
+  assert.equal((await getServiceProgress(db,a.jobId)).additionalRepairFee,95);
+  assert.equal((await request(path,'PATCH',changed)).status,200,'an exact retry still returns its committed result');
  }finally{await new Promise(resolve=>server.close(resolve));}
 }));
 

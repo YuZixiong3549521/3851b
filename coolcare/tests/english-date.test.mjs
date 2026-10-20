@@ -12,6 +12,7 @@ async function helperModule(file) {
 const dateModule = await helperModule('english-date.ts');
 const formatModule = await helperModule('format.ts');
 const scheduleModule = await helperModule('booking-schedule.ts');
+const sgTimeModule = await helperModule('sg-time.ts');
 const { calendarDateUnavailable, parseCalendarDate, englishCalendarDate } = await import(dateModule);
 
 test('English dates retain the selected calendar day under Chinese language and distant system time zones', () => {
@@ -42,4 +43,38 @@ test('calendar rejects impossible dates and preserves leap dates without JavaScr
     assert.equal(calendarDateUnavailable(invalid), true);
   }
   assert.equal(englishCalendarDate('2028-02-29'), '29 Feb 2028');
+});
+
+test('actual instants and Singapore wall-clock dates stay English and distinct on Chinese systems', () => {
+  for (const timeZone of ['Asia/Shanghai', 'America/Los_Angeles', 'Pacific/Kiritimati']) {
+    const script = `const f = await import(${JSON.stringify(sgTimeModule)}); console.log(JSON.stringify({
+      instant:f.formatInstantDateTime('2026-10-20T16:15:30Z'),
+      legacyUtc:f.formatInstantDateTime('2026-10-20 16:15:30'),
+      wallClock:f.formatSingaporeDateTime('2026-10-21 00:15:30'),
+      explicit:f.formatSingaporeDateTime('2026-10-20T16:15:30Z'),
+      input:f.toSingaporeDateTimeInput('2026-10-20T16:15:30Z'),
+      saved:f.fromSingaporeDateTimeInput('2026-10-21T00:15:30')
+    }));`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, LANG: 'zh_CN.UTF-8', LC_ALL: 'zh_CN.UTF-8', TZ: timeZone }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const value = JSON.parse(result.stdout.trim());
+    assert.match(value.instant, /21 Oct 2026/);
+    assert.match(value.instant, /12:15:30 am SGT/i);
+    assert.equal(value.instant,value.legacyUtc);
+    assert.equal(value.instant,value.wallClock);
+    assert.equal(value.instant,value.explicit);
+    assert.equal(value.input,'2026-10-21T00:15:30');
+    assert.equal(value.saved,'2026-10-20T16:15:30Z');
+    assert.doesNotMatch(value.instant,/[\u3400-\u9fff]/);
+  }
+});
+
+test('Singapore editor preserves seconds, leap days and rejects impossible date/time values', async () => {
+  const f = await import(sgTimeModule);
+  assert.equal(f.fromSingaporeDateTimeInput('2028-02-29T00:00'),'2028-02-28T16:00:00Z');
+  for (const bad of ['', '2026-02-29T10:30:00', '2026-10-21T24:00:00','2026-10-21T12:60:00','2026-10-21T12:30:60','21/10/2026T12:30:00']) {
+    assert.equal(f.fromSingaporeDateTimeInput(bad),null,bad);
+  }
+  assert.equal(f.formatInstantDateTime(null),'Not recorded');
+  assert.equal(f.formatSingaporeDateTime('not a date'),'Not recorded');
 });
