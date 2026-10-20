@@ -6,7 +6,7 @@ export default function Header({ page, total, today, technician, user }) {
     <header className="header technician-header">
       <div>
         <h1>
-          {{ jobs: 'My Jobs', reports: 'Service Reports', profile: 'Profile' }[
+          {{ jobs: 'My Jobs', reports: 'Service Reports', profile: 'Profile', performance: 'My Performance' }[
             page
           ] || 'Technician Dashboard'}
         </h1>
@@ -15,6 +15,8 @@ export default function Header({ page, total, today, technician, user }) {
             'View and complete service reports'
           ) : page === 'profile' ? (
             'Manage your profile and availability'
+          ) : page === 'performance' ? (
+            'Your visit feedback, quality reviews and service start records'
           ) : page === 'jobs' ? (
             `${total} jobs assigned`
           ) : (

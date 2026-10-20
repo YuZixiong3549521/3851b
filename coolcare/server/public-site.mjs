@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { AppError } from './inventory.mjs';
 import { lockCustomer, assertAddressBookingLimit, resolveBookingSelection, restoreMembershipVisit, attachBookingSelections,getBookingOptions,bookingIncludesCleaning } from './customer/booking-options.mjs';
 import { writeSelectedBookings,describeCreatedBooking } from './customer/booking-writer.mjs';
+import { releaseBookingRewardReservation } from './commerce.mjs';
 import { assertAnnualRescheduleWindow } from './customer/annual-bookings.mjs';
 import { isCalendarDate,assertChangeNotice,assertRescheduleDate } from './customer/booking-schedule.mjs';
 import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './customer/address-service.mjs';
@@ -33,7 +34,7 @@ export async function sessionUser(pool,req,role) {
  return user;
 }
 export async function createPublicBooking(pool,user,input,{legacy=false}={}) {
- const data=z.object({expectedUserId:z.coerce.number().int().positive().optional(),serviceType:z.string().min(1).max(120).optional(),serviceId:z.coerce.number().int().positive().optional(),serviceIds:z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),packageId:z.coerce.number().int().positive().optional(),propertyType:z.string().trim().max(40).optional(),postalCode:z.string().trim().regex(/^\d{6}$/).optional(),subscriptionId:z.coerce.number().int().positive().optional(),servicePackage:z.string().max(120).optional(),numberOfUnits:z.coerce.number().int().min(1).max(10),preferredDate:legacy?z.string():date,timeWindow:legacy?z.string():z.enum(times),serviceAddress:addressLineSchema,addressId:z.coerce.number().int().positive().optional(),phone:z.string().max(30).optional(),symptoms:z.string().max(1000).optional(),specialNotes:z.string().max(1000).optional(),requestId:z.uuid().optional()}).parse(input);
+ const data=z.object({expectedUserId:z.coerce.number().int().positive().optional(),serviceType:z.string().min(1).max(120).optional(),serviceId:z.coerce.number().int().positive().optional(),serviceIds:z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),packageId:z.coerce.number().int().positive().optional(),renewalOfSeriesId:z.coerce.number().int().positive().optional(),propertyType:z.string().trim().max(40).optional(),postalCode:z.string().trim().regex(/^\d{6}$/).optional(),subscriptionId:z.coerce.number().int().positive().optional(),servicePackage:z.string().max(120).optional(),numberOfUnits:z.coerce.number().int().min(1).max(10),preferredDate:legacy?z.string():date,timeWindow:legacy?z.string():z.enum(times),serviceAddress:addressLineSchema,addressId:z.coerce.number().int().positive().optional(),phone:z.string().max(30).optional(),symptoms:z.string().max(1000).optional(),specialNotes:z.string().max(1000).optional(),requestId:z.uuid().optional()}).parse(input);
  if(data.expectedUserId !== undefined && data.expectedUserId !== Number(user.id))throw new AppError('Your signed-in account changed. Reload before booking.',409);
  const conn=await pool.getConnection();
  try {
@@ -45,7 +46,7 @@ export async function createPublicBooking(pool,user,input,{legacy=false}={}) {
   const unitIds=await addressUnitIds(conn,customer.customerId,address.addressId,data.numberOfUnits);
   const booking=await writeSelectedBookings(conn,selection,{customerId:customer.customerId,userId:user.id,addressId:address.addressId,addressLine:address.addressLine,
     unitIds,preferredDate:data.preferredDate,timeSlot:data.timeWindow,
-    problemDescription:data.symptoms,phone:data.phone||user.phone,specialNotes:data.specialNotes,servicePackage:data.servicePackage,requestId:data.requestId,legacy,source:'Created from AC Care website.'});
+    problemDescription:data.symptoms,phone:data.phone||user.phone,specialNotes:data.specialNotes,servicePackage:data.servicePackage,requestId:data.requestId,renewalOfSeriesId:data.renewalOfSeriesId,legacy,source:'Created from AC Care website.'});
   await conn.commit();return {...booking,id:booking.bookingId};
  }catch(e){await conn.rollback();throw e;}finally{conn.release();}
 }
@@ -88,6 +89,7 @@ export async function changePublicBooking(pool,user,id,action,input){
  } else {
   await c.execute("UPDATE booking SET booking_status='Cancelled',expires_at=NULL WHERE booking_id=?",[bookingId]);
   await restoreMembershipVisit(c,bookingId);
+  await releaseBookingRewardReservation(c,bookingId,'Customer cancelled the booking.');
  }
  await c.execute('INSERT INTO booking_change_request(booking_id,request_type,requested_service_date,requested_time_slot,reason,request_status) VALUES (?,?,?,?,?,?)',[bookingId,action==='reschedule'?'Reschedule':'Cancel',patch.preferredDate||null,patch.timeWindow||null,'Customer self-service with at least 72 hours notice','Approved']);
  const oldServiceTime=b.slot_start&&b.slot_end?`${String(b.slot_start).slice(0,5)} - ${String(b.slot_end).slice(0,5)}`:b.preferred_time_slot;

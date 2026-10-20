@@ -3,6 +3,8 @@ import { assertBookableDate } from './booking-schedule.mjs';
 import { assertAddressBookingLimit,saveBookingSelection,attachBookingSelections } from './booking-options.mjs';
 import { assertTeamCapacity,bookingServiceSlot } from '../scheduling.mjs';
 import {bookingExpiryDate} from '../order-expiry.mjs';
+import { assertAnnualPlanRenewal, linkAnnualPlanRenewal } from './plans.mjs';
+import { HttpError } from './errors.mjs';
 
 export async function describeCreatedBooking(connection,bookingId) {
   const [[row]]=await connection.execute(`SELECT booking_id AS bookingId,created_at AS createdAt,
@@ -14,6 +16,13 @@ export async function describeCreatedBooking(connection,bookingId) {
 
 // The caller holds the customer lock and owns the transaction for all four visits.
 export async function writeSelectedBookings(connection,selection,context) {
+  if (context.renewalOfSeriesId) {
+    if (!selection.annual) throw new HttpError(400, 'Choose an annual cleaning bundle to renew this plan.');
+    await assertAnnualPlanRenewal(connection, {
+      renewalOfSeriesId: context.renewalOfSeriesId, customerId: context.customerId,
+      packageId: selection.package.packageId, preferredDate: context.preferredDate,
+    });
+  }
   const schedule=selection.annual?annualVisitSchedule(context.preferredDate,selection.totalAmount):[
     {visitNumber:1,preferredDate:context.preferredDate,totalAmount:selection.totalAmount},
   ];
@@ -30,6 +39,7 @@ export async function writeSelectedBookings(connection,selection,context) {
     [context.customerId,context.addressId,selection.package.packageId,selection.package.name,context.preferredDate,context.unitIds.length,selection.totalAmount,context.requestId,
       selection.package.propertyType??null,selection.package.propertyLabel??null,selection.package.includedUnits,selection.package.price,selection.package.additionalUnitPrice]);
     seriesId=series.insertId;
+    if (context.renewalOfSeriesId) await linkAnnualPlanRenewal(connection, context.renewalOfSeriesId, seriesId);
   }
   let firstBookingId;
   for(const visit of schedule) {

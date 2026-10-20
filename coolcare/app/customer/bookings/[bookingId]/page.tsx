@@ -370,6 +370,12 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
                 <Mail className="size-4" />
                 Contact support
               </Button>
+              <Button nativeButton={false} render={<Link href={`/customer/rewards?booking=${bookingId}`} />} variant="outline">
+                Payments & rewards
+              </Button>
+              {booking.status === 'Completed' && <Button nativeButton={false} render={<Link href="/customer/feedback" />} variant="outline">
+                Give service feedback
+              </Button>}
             </div>
             {!canModify &&
               !['Completed', 'Rejected', 'Cancelled', 'Expired'].includes(

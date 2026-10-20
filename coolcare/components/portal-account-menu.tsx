@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { ChevronDown, ClipboardCheck, Home, LayoutDashboard, LogOut, MapPin, UserRound } from 'lucide-react';
+import { ChevronDown, ClipboardCheck, Gift, Home, LayoutDashboard, LogOut, MapPin, Package, Star, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { getPortalHome, signOutSession } from '@/lib/portal-session.mjs';
@@ -22,9 +22,12 @@ export function PortalAccountMenu({ user, disabled = false, onNavigate, beforeSi
     { label: user.role === 'Admin' ? 'Admin portal' : user.role === 'Technician' ? 'Technician portal' : 'Customer portal', href: getPortalHome(user.role), Icon: LayoutDashboard },
     ...(user.role === 'Customer' ? [
       { label: 'My Bookings', href: '/customer/bookings', Icon: ClipboardCheck },
+      { label: 'My Plans', href: '/customer/plans', Icon: Package },
+      { label: 'My Rewards', href: '/customer/rewards', Icon: Gift },
+      { label: 'Service Feedback', href: '/customer/feedback', Icon: Star },
       { label: 'My profile', href: '/customer/account', Icon: UserRound },
       { label: 'Saved addresses', href: '/customer/addresses', Icon: MapPin },
-    ] : user.role === 'Technician' ? [{ label: 'My profile', href: '/technician/index.html#profile', Icon: UserRound }] : []),
+    ] : user.role === 'Technician' ? [{ label: 'My profile', href: '/technician/index.html#profile', Icon: UserRound }, { label: 'My Performance', href: '/technician/index.html#performance', Icon: Star }] : []),
   ];
   async function signOut() {
     if (pending.current) return;
@@ -49,7 +52,7 @@ export function PortalAccountMenu({ user, disabled = false, onNavigate, beforeSi
         <span className="hidden min-w-0 text-left sm:block"><span className="block max-w-36 truncate text-sm font-semibold text-foreground">{user.name}</span><span className="block text-xs text-muted-foreground">{user.role}</span></span>
         <ChevronDown className="size-4 text-muted-foreground" aria-hidden="true" />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="portal-account-menu w-64 max-w-[calc(100vw-24px)] p-2">
+      <DropdownMenuContent align="end" className="portal-account-menu w-64 max-w-[calc(100vw-24px)] max-h-[calc(100dvh-100px)] overflow-y-auto p-2">
         <DropdownMenuGroup>
           <DropdownMenuLabel className="px-2 py-2"><span className="block truncate font-semibold text-foreground">{user.name}</span><span className="block pt-1">{user.role} account</span></DropdownMenuLabel>
           {links.map(({ label, href, Icon }) => <DropdownMenuItem key={label} disabled={busy} className="min-h-11 gap-3 px-2 py-3" render={<a href={href} onClick={event => { if (onNavigate) { event.preventDefault(); onNavigate(href); } }} />}><Icon aria-hidden="true" />{label}</DropdownMenuItem>)}

@@ -4,6 +4,7 @@ import {
   BriefcaseBusiness,
   FileText,
   UserRound,
+  Star,
 } from 'lucide-react';
 
 export default function Sidebar({ page, technician }) {
@@ -23,6 +24,7 @@ export default function Sidebar({ page, technician }) {
           ['dashboard', 'Dashboard', LayoutDashboard],
           ['jobs', 'My Jobs', BriefcaseBusiness],
           ['reports', 'Service Reports', FileText],
+          ['performance', 'My Performance', Star],
           ['profile', 'Profile', UserRound],
         ].map(([key, label, Icon]) => (
           <a

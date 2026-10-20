@@ -1,5 +1,6 @@
 import ServiceReports from './pages/ServiceReports.jsx';
 import Profile from './pages/Profile.jsx';
+import Performance from './pages/Performance.jsx';
 import { Button } from '@/components/ui/button';
 import { usePortalSession } from '@/lib/use-portal-session';
 import { useEffect, useRef, useState } from 'react';
@@ -15,7 +16,7 @@ import {
   mockMode,
 } from './services/jobService.js';
 const readPage = () =>
-  ['jobs', 'reports', 'profile'].includes(location.hash.slice(1))
+  ['jobs', 'reports', 'profile', 'performance'].includes(location.hash.slice(1))
     ? location.hash.slice(1)
     : 'dashboard';
 export default function App() {
@@ -137,6 +138,8 @@ function TechnicianPortal({ user }) {
             <ServiceReports onChanged={changed} />
           ) : page === 'profile' ? (
             <Profile onChanged={changed} />
+          ) : page === 'performance' ? (
+            <Performance />
           ) : loading ? (
             <output className="panel empty">Loading your jobs…</output>
           ) : error ? (

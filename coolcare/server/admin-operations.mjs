@@ -2,6 +2,7 @@ import { registerReturnRoutes } from './return-visits.mjs';
 import { registerAdminWorkspaceRoutes } from './admin-workspace.mjs';
 import { getServiceProgress } from './service-progress.mjs';
 import { assertBookingNotExpired } from './order-expiry.mjs';
+import { releaseBookingRewardReservation } from './commerce.mjs';
 import {
   addDispatchProximity,
   compareDispatchCandidates,
@@ -222,6 +223,7 @@ export async function rejectBooking(pool, actor, bookingId, raw) {
       "UPDATE booking SET booking_status='Rejected',rejection_reason=?,rejection_version=rejection_version+1 WHERE booking_id=?",
       [data.reason, bookingId],
     );
+    await releaseBookingRewardReservation(connection, bookingId, 'Administrator rejected the booking.');
     await connection.execute(
       `INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)
       VALUES (?,'Submitted','Rejected',?,?)`,

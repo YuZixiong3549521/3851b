@@ -202,6 +202,7 @@ export type ServiceReport = {
 };
 
 export type BookingInput = {
+  renewalOfSeriesId?: number;
   propertyType?: string;
   postalCode?: string;
   specialNotes?: string;

@@ -11,6 +11,7 @@ import { updateCustomerProfile,getBookingAvailability,getBookingSlotAvailability
 import { getOwnedReportPhoto } from './report-photos.mjs';
 import { getAssistantDraft,saveAssistantDraft,reviewAssistantDraft,confirmAssistantDraft,newAssistantDraft } from './assistant-workflow.mjs';
 import {registerBookingNotifications} from './booking-notifications.mjs';
+import {registerAnnualPlanRoutes} from './plans.mjs';
 
 function identifier(value) {
   const id=Number(value);
@@ -30,6 +31,7 @@ app.get('/health', asyncRoute(async (request, response) => {
 app.use(async (req,_res,next)=>{req.customerUser=await sessionUser(pool,req,'Customer');next();});
 registerReturnRoutes(app,pool,'customer');
 registerBookingNotifications(app,pool);
+registerAnnualPlanRoutes(app,pool);
 
 app.get('/customer-context', asyncRoute(async (request, response) => {
   const customer = await getDemoCustomer(pool, request.customerUser.id);

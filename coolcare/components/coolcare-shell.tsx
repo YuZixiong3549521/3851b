@@ -4,7 +4,7 @@ import Link from 'next/link';
 import {BookingNotifications} from '@/components/booking-notifications';
 import { useState, useEffect, useId, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import { CalendarDays, ClipboardCheck, Gauge, History, MessageCircle, Snowflake, Sparkles } from 'lucide-react';
+import { CalendarDays, ClipboardCheck, Gauge, Gift, History, MessageCircle, Package, Snowflake, Sparkles, Star } from 'lucide-react';
 import { CustomerAssistant } from '@/components/customer-assistant';
 import { Button } from '@/components/ui/button';
 import { PortalAccountMenu } from '@/components/portal-account-menu';
@@ -17,6 +17,11 @@ const navItems = [
   { label: 'Book Service', shortLabel: 'Book', href: '/customer/book', icon: CalendarDays },
   { label: 'My Bookings', shortLabel: 'Bookings', href: '/customer/bookings', icon: ClipboardCheck },
   { label: 'Booking History', shortLabel: 'History', href: '/customer/history', icon: History },
+];
+const careItems = [
+  { label: 'My Plans', href: '/customer/plans', icon: Package },
+  { label: 'My Rewards', href: '/customer/rewards', icon: Gift },
+  { label: 'Service Feedback', href: '/customer/feedback', icon: Star },
 ];
 
 export function CoolCareShell({ children }: { children: ReactNode }) {
@@ -48,8 +53,8 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
     <div className="customer-shell min-h-screen bg-background text-foreground" lang="en-SG">
       <aside className="customer-shell-navigation fixed inset-y-0 left-0 z-30 hidden w-[280px] border-r border-border bg-white px-5 py-7 lg:flex lg:flex-col">
         <Brand />
-        <nav aria-label="Primary navigation" className="space-y-1.5">
-          {navItems.map(({ label, href, icon: Icon }) => {
+        <nav aria-label="Primary navigation" className="min-h-0 overflow-y-auto space-y-1.5">
+          {[...navItems, ...careItems].map(({ label, href, icon: Icon }) => {
             const active = isActive(href);
             return (
               <Link key={label} href={href} aria-current={active ? 'page' : undefined} className={`flex min-h-12 items-center gap-3 rounded-xl px-4 text-sm font-semibold transition-colors ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>

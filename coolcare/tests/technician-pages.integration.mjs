@@ -417,10 +417,17 @@ test('service photo uploads store notes, retry without duplication and serve pri
         uploadServicePhoto(db, 4294967295, a.jobId, payload),
         (e) => e.status === 404,
       );
-      await c.execute(
-        "UPDATE work_order SET current_status='In Progress' WHERE job_id=?",
-        [a.jobId],
-      );
+      // Use the real Start service transition: each visit must have an active report.
+      const { updateTechnicianJobStatus } = await import('../server/technician.mjs');
+      await c.execute("UPDATE work_order SET current_status='Assigned' WHERE job_id=?",[a.jobId]);
+      await updateTechnicianJobStatus(db,a.userId,a.jobId,{
+        requestId:randomUUID(),expectedStatus:'Assigned',status:'In Progress',
+      });
+      const [[active]] = await c.execute('SELECT report_id FROM service_report WHERE job_id=?',[a.jobId]);
+      payload.reportId = active.report_id;
+      await assert.rejects(uploadServicePhoto(db,a.userId,a.jobId,{
+        ...payload,requestId:randomUUID(),reportId:4294967295,
+      }),e=>e.status===409);
       const result = await uploadServicePhoto(db, a.userId, a.jobId, payload);
       const [[record]] = await c.execute(
         'SELECT photo_url,description FROM photo WHERE photo_id=?',

@@ -26,12 +26,12 @@ export function getSafeReturnTo(value, role) {
   const url = new URL(value, 'https://coolcare.invalid');
   if (url.origin !== 'https://coolcare.invalid' || /[%\\]/.test(url.pathname)) return null;
   const routes = {
-    Customer: /^\/customer(?:\/(?:book|account|addresses|bookings(?:\/\d+)?|history(?:\/\d+)?))?\/?$/,
-    Admin: /^\/admin\/(?:overview|audit|orders(?:\/\d+)?|dispatch|technicians|admins|inventory(?:\/(?:parts(?:\/(?:new|\d+(?:\/edit)?))?|transactions(?:\/new)?))?)\/?$/,
+    Customer: /^\/customer(?:\/(?:book|plans|rewards|feedback|account|addresses|bookings(?:\/\d+)?|history(?:\/\d+)?))?\/?$/,
+    Admin: /^\/admin\/(?:overview|audit|reports|payments|performance|orders(?:\/\d+)?|dispatch|technicians|admins|inventory(?:\/(?:parts(?:\/(?:new|\d+(?:\/edit)?))?|transactions(?:\/new)?))?)\/?$/,
     Technician: /^\/technician\/index\.html$/,
   };
   if (!routes[role]?.test(url.pathname)) return null;
-  if (role === 'Technician' && url.hash && !/^#(?:dashboard|jobs|reports|profile)(?:\?.*)?$/.test(url.hash)) return null;
+  if (role === 'Technician' && url.hash && !/^#(?:dashboard|jobs|reports|profile|performance)(?:\?.*)?$/.test(url.hash)) return null;
   return url.pathname + url.search + url.hash;
 }
 

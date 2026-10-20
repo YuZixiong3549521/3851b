@@ -137,3 +137,12 @@ Return visit dates must be at least 14 calendar days after the work order servic
 
 ## Independent reports for each visit
 Migration 25 preserves existing report IDs and adds an archived work-order link. `job_id` is the unique active-report pointer; archived reports keep `archived_job_id` and are read-only. Starting a Return visit atomically archives the current report and inserts a blank report with a new ID. It does not reuse checklist text, remarks, signatures or submission time. Photos and revisions are bound to report IDs; old media retains ownership checks. Reports by visit is available to customers, administrators and technicians. Previous legacy combined content is retained as-is; historical visit snapshots are not fabricated into separate signed reports. Apply migrations before restarting the API.
+## Plans, rewards, reporting and performance
+
+Customer pages `/customer/plans`, `/customer/rewards` and `/customer/feedback` use `CoolCareShell`. Desktop navigation, the account menu and dashboard links expose these pages without expanding the five-item mobile bottom bar. My Plans reuses the existing booking detail/change flow and opens `/customer/book?renewPlan=<seriesId>` for a reviewed renewal; all prefill loading completes before the booking form becomes interactive.
+
+Admin routes `/admin/reports`, `/admin/payments` and `/admin/performance` use `InventoryApp` and its shared navigation. Reporting uses the existing Recharts dependency and includes accessible tables and CSV output. Payment forms record offline receipts/refunds and show quoted, discounted, received and outstanding amounts separately. They do not initiate a real-world financial transfer.
+
+`components/performance.tsx` is shared by Admin, Customer and the technician Vite entry at `#performance`, with role-specific controls and server-side ownership checks. Each visit retains the technician and schedule captured at service start; legitimate returns and missing historical timing are explained without fabricated deductions. Date controls and rendered dates remain English and use Singapore business time.
+
+Feature contracts and configurable rules are documented in [COMMERCE-REWARDS.md](COMMERCE-REWARDS.md), [OPTIONAL-FEATURE-PLANS.md](OPTIONAL-FEATURE-PLANS.md) and [OPTIONAL-FEATURE-PERFORMANCE.md](OPTIONAL-FEATURE-PERFORMANCE.md). New backend routes are mounted behind the existing session and CSRF middleware; migrations 27–29 preserve existing business data.

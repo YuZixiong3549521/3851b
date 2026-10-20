@@ -17,6 +17,7 @@ export const createBookingSchema = z.object({
   serviceType: z.string().trim().min(1).max(120).optional(),
   serviceIds: z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),
   packageId: z.coerce.number().int().positive().optional(),
+  renewalOfSeriesId: z.coerce.number().int().positive().optional(),
   propertyType:z.string().trim().max(40).optional(),
   postalCode:z.string().trim().regex(/^\d{6}$/,'Enter a six-digit Singapore postal code.').optional(),
   subscriptionId: z.coerce.number().int().positive().optional(),
@@ -94,7 +95,7 @@ export async function createBooking(pool, untrustedInput, userId) {
     const selection=await resolveBookingSelection(connection,customer.customerId,input,uniqueUnitIds.length);
     const booking=await writeSelectedBookings(connection,selection,{customerId:customer.customerId,userId:customer.userId,
       addressId:address.addressId,addressLine:address.addressLine,unitIds:uniqueUnitIds,preferredDate:input.preferredDate,
-      timeSlot:input.timeSlot,problemDescription:input.problemDescription,specialNotes:input.specialNotes,phone:customer.phone,requestId:input.requestId,source:'Created from customer portal.'});
+      timeSlot:input.timeSlot,problemDescription:input.problemDescription,specialNotes:input.specialNotes,phone:customer.phone,requestId:input.requestId,renewalOfSeriesId:input.renewalOfSeriesId,source:'Created from customer portal.'});
     await connection.commit();
     return {
       ...booking,

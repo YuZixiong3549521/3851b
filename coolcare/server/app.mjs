@@ -4,6 +4,8 @@ import express from 'express';
 import { createCustomerRouter } from './customer/router.mjs';
 import { createTechnicianRouter } from './technician.mjs';
 import { createPublicRouter } from './public-site.mjs';
+import { registerCommerceRoutes } from './commerce.mjs';
+import { createPerformanceRouter } from './performance.mjs';
 import { createAdminOperationsRouter } from './admin-operations.mjs';
 import session from 'express-session';
 import { rateLimit } from 'express-rate-limit';
@@ -229,6 +231,8 @@ export function createApp({
   app.use('/api/public', createPublicRouter(pool));
   app.use('/api/customer', createCustomerRouter(pool));
   app.use('/api/technician', createTechnicianRouter(pool));
+  registerCommerceRoutes(app, pool);
+  app.use('/api/performance', createPerformanceRouter(pool));
   app.post(
     '/api/login',
     rateLimit({

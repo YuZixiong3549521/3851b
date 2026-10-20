@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { capturePerformanceVisitEnd } from './performance.mjs';
 import { z } from 'zod';
 import { AppError } from './inventory.mjs';
 import { assertBookableDate, assertReturnDate, minimumReturnDate } from './customer/booking-schedule.mjs';
@@ -52,6 +53,7 @@ export async function snapshotVisit(c, jobId, outcome) {
       JSON.stringify(w),
     ],
   );
+  await capturePerformanceVisitEnd(c,jobId,outcome);
 }
 export async function listReturns(pool, role, userId) {
   const [rows] = await pool.execute(

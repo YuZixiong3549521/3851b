@@ -1,4 +1,5 @@
 import {snapshotVisit} from './return-visits.mjs';
+import {capturePerformanceVisitStart} from './performance.mjs';
 import {registerTechnicianPages} from './technician-pages.mjs';
 import {getServiceProgress,updateServiceProgress} from './service-progress.mjs';
 import express from 'express';
@@ -173,6 +174,7 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
       await connection.execute(`INSERT INTO service_report(job_id,work_performed,started_at)
         VALUES (?,'',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))
         ON DUPLICATE KEY UPDATE started_at=COALESCE(started_at,VALUES(started_at))`,[jobId]);
+      await capturePerformanceVisitStart(connection,jobId);
     }
     if(data.status==='Completed'&&data.report&&(work.customer_signature_url||work.technician_signature_url))throw new AppError('Use Service Reports to update a signed report.',409);
     if(data.status==='Completed'&&!data.report){

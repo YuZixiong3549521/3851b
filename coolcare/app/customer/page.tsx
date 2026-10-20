@@ -55,6 +55,13 @@ export default function Home() {
       </div>
 
       {annualBundles.length > 0 && <section className="mt-7" aria-labelledby="annual-bookings-heading"><h2 id="annual-bookings-heading" className="mb-4 text-xl font-bold">Your annual cleaning plan</h2><div className="grid gap-4 lg:grid-cols-2">{annualBundles.map(bundle => <AnnualBookingSummary key={bundle.seriesId} saved={bundle} totalAmount={bundle.totalAmount} compact collapsible />)}</div></section>}
+      <nav aria-label="Your care and rewards" className="mt-6 grid gap-3 sm:grid-cols-3">
+        {[
+          { href: '/customer/plans', label: 'My Plans', detail: 'Manage quarterly visits and renewal reminders' },
+          { href: '/customer/rewards', label: 'My Rewards', detail: 'View points and apply them to a booking' },
+          { href: '/customer/feedback', label: 'Service Feedback', detail: 'Rate your completed service visits' },
+        ].map(item => <Link key={item.href} href={item.href} className="rounded-2xl border bg-card p-4 shadow-sm hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-primary"><span className="flex items-center justify-between font-semibold">{item.label}<ArrowRight className="size-4 text-primary" /></span><p className="mt-2 text-sm text-muted-foreground">{item.detail}</p></Link>)}
+      </nav>
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><p>Booking updates refresh when you return to this page.</p><Button variant="ghost" size="sm" onClick={() => void refresh()} disabled={refreshing}><RefreshCw className={`size-3.5 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? 'Refreshing' : 'Refresh'}</Button></div>
     </>}
   </div></CoolCareShell>;

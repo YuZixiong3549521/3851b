@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { coolcareApi } from '@/lib/coolcare-api';
+import { customerPlansApi, type AnnualPlanRenewal } from '@/lib/customer-plans-api';
 import { bookingServiceChanged, createDefaultCustomerBookingForm, type CustomerBookingForm } from '@/lib/customer-booking-form';
 import { formatDate, formatMoney, formatServiceWindow } from '@/lib/format';
 import { annualVisitDates,assertBookingConfirmation } from '@/lib/annual-booking';
@@ -45,28 +46,50 @@ export default function BookServicePage() {
   const pendingRequest = useRef<BookingInput | null>(null);
   const [retryLocked, setRetryLocked] = useState(false);
   const [addressEditorOpen, setAddressEditorOpen] = useState(false);
+  const [renewal, setRenewal] = useState<AnnualPlanRenewal | null>(null);
+  const [initializing, setInitializing] = useState(true);
 
   useEffect(() => {
+    let active = true;
     requestId.current = crypto.randomUUID();
     Promise.all([coolcareApi.getCustomerContext(), coolcareApi.getBookingOptions()])
       .then(async ([nextContext, nextOptions]) => {
-        setContext(nextContext);
-        setOptions(nextOptions);
-        setForm(createDefaultCustomerBookingForm(nextContext.addresses, earliestBookingDate()));
-        const rebook=Number(new URLSearchParams(window.location.search).get('rebook'));
-        if(Number.isSafeInteger(rebook)&&rebook>0){
-          const previous=await coolcareApi.getBooking(rebook);
-          const serviceIds=previous.serviceIds?.length ? previous.serviceIds : nextOptions.services.filter(service=>previous.serviceName.includes(service.name)).map(service=>service.serviceId);
-          setSelection(previous.annualBundle && previous.packageId ? {mode:'bundle',packageId:previous.packageId,serviceIds:[],propertyType:previous.propertyType ?? previous.annualBundle.propertyType ?? undefined} : {mode:'custom',serviceIds});
-          setForm(current=>({...current,serviceAddress:previous.addressLine,postalCode:previous.postalCode ?? '',numberOfUnits:previous.numberOfUnits,problemDescription:previous.problemDescription ?? '',specialNotes:previous.specialNotes ?? ''}));
+        let nextForm = createDefaultCustomerBookingForm(nextContext.addresses, earliestBookingDate());
+        let nextSelection = emptyBookingSelection;
+        let nextPlan: AnnualPlanRenewal | null = null;
+        const params = new URLSearchParams(window.location.search);
+        const renewPlan = Number(params.get('renewPlan'));
+        if (Number.isSafeInteger(renewPlan) && renewPlan > 0) {
+          const nextRenewal = await customerPlansApi.getRenewal(renewPlan);
+          if (!active) return;
+          if ('existingRenewalSeriesId' in nextRenewal) {
+            window.location.replace(`/customer/plans#plan-${nextRenewal.existingRenewalSeriesId}`);
+            return;
+          }
+          nextPlan = nextRenewal;
+          nextSelection = { mode: 'bundle', packageId: nextRenewal.packageId, serviceIds: [], propertyType: nextRenewal.propertyType };
+          nextForm = { ...nextForm, serviceAddress: nextRenewal.serviceAddress, postalCode: nextRenewal.postalCode,
+            numberOfUnits: nextRenewal.numberOfUnits, preferredDate: nextRenewal.minimumFirstDate };
+        } else {
+          const rebook=Number(params.get('rebook'));
+          if(Number.isSafeInteger(rebook)&&rebook>0){
+            const previous=await coolcareApi.getBooking(rebook);
+            const serviceIds=previous.serviceIds?.length ? previous.serviceIds : nextOptions.services.filter(service=>previous.serviceName.includes(service.name)).map(service=>service.serviceId);
+            nextSelection = previous.annualBundle && previous.packageId ? {mode:'bundle',packageId:previous.packageId,serviceIds:[],propertyType:previous.propertyType ?? previous.annualBundle.propertyType ?? undefined} : {mode:'custom',serviceIds};
+            nextForm = {...nextForm,serviceAddress:previous.addressLine,postalCode:previous.postalCode ?? '',numberOfUnits:previous.numberOfUnits,problemDescription:previous.problemDescription ?? '',specialNotes:previous.specialNotes ?? ''};
+          }
         }
+        if (!active) return;
+        setContext(nextContext); setOptions(nextOptions); setForm(nextForm); setSelection(nextSelection); setRenewal(nextPlan);
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Unable to load booking information.'));
+      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'Unable to load booking information.'); })
+      .finally(() => { if (active) setInitializing(false); });
+    return () => { active = false; };
   }, []);
 
   const selectedServices = getBookingSelection(options, selection, Math.max(1, form.numberOfUnits));
   const total = form.numberOfUnits > 0 ? selectedServices.estimate : 0;
-  const minimumDate = earliestBookingDate();
+  const minimumDate = [earliestBookingDate(), renewal?.minimumFirstDate ?? ''].sort().at(-1)!;
   const availability = useBookingAvailability({ serviceAddress: form.serviceAddress, selectedDate: form.preferredDate, serviceIds: selectedServices.payload.serviceIds, packageId: selectedServices.payload.packageId, enabled: Boolean(context && !created && step >= 2 && !retryLocked) });
   const slotDates=selectedServices.isAnnual?annualVisitDates(form.preferredDate):form.preferredDate?[form.preferredDate]:[];
   const slotAvailability=useSlotAvailability(slotDates,Boolean(context&&!created&&step>=3&&!retryLocked),selectedServices.durationMinutes);
@@ -160,6 +183,7 @@ export default function BookServicePage() {
     if (step === 2 && (!Number.isInteger(form.numberOfUnits) || form.numberOfUnits < 1 || form.numberOfUnits > 10)) return 'Enter an AC unit count from 1 to 10.';
     if (step === 2 && form.postalCode && !/^\d{6}$/.test(form.postalCode)) return 'Enter a six-digit Singapore postal code.';
     if (step === 3 && bookingDateError(form.preferredDate)) return bookingDateError(form.preferredDate);
+    if (step === 3 && form.preferredDate < minimumDate) return `Choose a date on or after ${formatDate(minimumDate)} for this renewal.`;
     if (step === 3 && availability.selectedDateBlocked) return bookingConflictMessage;
     if (step === 3 && !form.timeSlot) return 'Choose a preferred time slot.';
     if (step === 3 && selectedSlotFull) return 'This service time is fully booked. Choose another available time.';
@@ -179,6 +203,7 @@ export default function BookServicePage() {
     try {
       await submitBooking({
         ...selectedServices.payload,
+        renewalOfSeriesId: renewal?.renewalOfSeriesId,
         serviceAddress: form.serviceAddress.trim(),
         numberOfUnits: form.numberOfUnits,
         preferredDate: form.preferredDate,
@@ -202,6 +227,12 @@ export default function BookServicePage() {
     const changed = bookingServiceChanged(selection, nextSelection);
     setSelection(nextSelection);
     if (!changed) return;
+    if (renewal && nextSelection.mode === 'bundle') {
+      setFieldError('');
+      return;
+    }
+    setRenewal(null);
+    if (renewal) window.history.replaceState(null, '', '/customer/book');
     setForm(createDefaultCustomerBookingForm(context?.addresses, earliestBookingDate()));
     setFieldError('');
   }
@@ -210,6 +241,8 @@ export default function BookServicePage() {
     pendingRequest.current = null;
     requestId.current = crypto.randomUUID();
     setSelection(emptyBookingSelection);
+    setRenewal(null);
+    window.history.replaceState(null, '', '/customer/book');
     setRetryLocked(false);
     coolcareApi.getBookingOptions().then(setOptions).catch(() => setError('Unable to refresh booking options. Please reload before booking again.'));
     setForm(createDefaultCustomerBookingForm(context?.addresses, earliestBookingDate()));
@@ -223,10 +256,13 @@ export default function BookServicePage() {
       <div className="mx-auto max-w-5xl px-5 pb-28 pt-8 sm:px-8 lg:px-10 lg:py-10">
         <div className="mb-8"><p className="text-sm font-semibold text-primary">BOOK SERVICE</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Plan your maintenance visit</h1><p className="mt-2 text-sm text-muted-foreground">Choose a service, enter your address and unit count, then select a preferred schedule.</p></div>
 
-        {!context && !error && <PageLoading />}
+        {(initializing || !context) && !error && <PageLoading />}
         {error && <PageError message={`${error} Please refresh this page to retry.`} />}
-        {context && options && !error && !created && (
+        {!initializing && context && options && !error && !created && (
           <>
+            {renewal && <Alert className="mb-5"><AlertTitle>Renew your annual cleaning plan</AlertTitle><AlertDescription>
+              Review the current price and all four proposed visits before submitting. Your new plan starts on or after {formatDate(renewal.minimumFirstDate)}. No payment is taken automatically.
+            </AlertDescription></Alert>}
             <ol aria-label="Booking progress" className="mb-6 grid grid-cols-4 gap-2">
               {steps.map((label, index) => {
                 const number = index + 1;
@@ -290,6 +326,10 @@ export default function BookServicePage() {
         {created && (
           <>
           <Alert className="rounded-3xl border-secondary/25 bg-[linear-gradient(145deg,#eff5ff,#ecfffb)] p-7 sm:p-10"><div className="grid size-14 place-items-center rounded-full bg-secondary text-white"><Check className="size-7" aria-hidden="true" /></div><div className="ml-0 sm:ml-2"><AlertTitle className="text-2xl font-bold">{created.annualBundle ? 'Four booking requests saved' : 'Booking submitted'}</AlertTitle><AlertDescription className="mt-3 max-w-xl text-base leading-7">{created.annualBundle ? 'Your four quarterly cleaning visits have been saved as requests. The service team will confirm each date and time.' : 'Your ' + created.serviceName + ' request has been saved. The service team will confirm availability.'}</AlertDescription><div className="mt-5 flex flex-wrap gap-6"><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Reference</p><p className="mt-1 font-mono font-bold text-foreground">{created.bookingReference}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</p><p className="mt-1 font-semibold text-amber-700">{bookingStatusLabel(created.status)}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{created.annualBundle ? 'Annual estimate' : 'Visit estimate'}</p><p className="mt-1 font-semibold text-foreground">{formatMoney(created.annualBundle?.totalAmount ?? created.totalAmount)}</p></div></div><div className="mt-7 flex flex-wrap gap-3"><Button nativeButton={false} render={<Link href="/customer/bookings" />}>View my bookings</Button><Button variant="outline" onClick={startAnotherBooking}>Book another service</Button></div></div></Alert>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Button variant="outline" nativeButton={false} render={<Link href={`/customer/rewards?booking=${created.bookingId}`} />}>Use my reward points</Button>
+            {created.annualBundle && <Button variant="outline" nativeButton={false} render={<Link href="/customer/plans" />}>View my annual plans</Button>}
+          </div>
           {created.annualBundle && <div className="mt-5"><AnnualBookingSummary saved={created.annualBundle} totalAmount={created.annualBundle.totalAmount} /></div>}
           </>
         )}

@@ -1,4 +1,5 @@
 import { AppError } from './inventory.mjs';
+import { releaseBookingRewardReservation } from './commerce.mjs';
 
 export function bookingExpiryDate(now = new Date()) {
   const configured = Number(process.env.BOOKING_CONFIRMATION_HOURS ?? 48);
@@ -55,6 +56,7 @@ export async function expireSubmittedBookings(pool, { limit = 100 } = {}) {
             "UPDATE booking SET booking_status='Expired' WHERE booking_id=? AND booking_status='Submitted'",
             [booking.booking_id],
           );
+          await releaseBookingRewardReservation(connection, booking.booking_id, 'The booking expired before confirmation.');
           await connection.execute(
             `INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)
             VALUES (?,'Submitted','Expired',NULL,'The request expired before confirmation. Please book a new appointment.')`,
