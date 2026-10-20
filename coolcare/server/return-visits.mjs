@@ -1,3 +1,4 @@
+import { withBookingReference } from './booking-reference.mjs';
 import { createHash } from 'node:crypto';
 import { capturePerformanceVisitEnd } from './performance.mjs';
 import { z } from 'zod';
@@ -58,7 +59,7 @@ export async function snapshotVisit(c, jobId, outcome) {
 }
 export async function listReturns(pool, role, userId) {
   const [rows] = await pool.execute(
-    `SELECT w.job_id AS jobId,b.booking_id AS bookingId,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,u.full_name AS customer,p.revision AS version,p.follow_up_status AS status,
+    `SELECT w.job_id AS jobId,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,u.full_name AS customer,p.revision AS version,p.follow_up_status AS status,
  DATE_FORMAT(p.follow_up_date,'%Y-%m-%d') AS date,p.follow_up_start AS start,p.follow_up_end AS end,
  b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,
  (SELECT e.reason FROM service_progress_event e WHERE e.job_id=w.job_id AND e.kind='Return required' ORDER BY e.revision DESC LIMIT 1) AS reason,
@@ -70,7 +71,7 @@ export async function listReturns(pool, role, userId) {
  WHERE p.follow_up_status NOT IN ('None','Completed') ${role === 'customer' ? 'AND cu.user_id=?' : ''} ORDER BY w.job_id DESC`,
     role === 'customer' ? [userId] : [],
   );
-  return { rows: rows.map(row => ({...row, earliestReturnDate: minimumReturnDate(row.serviceDate)})) };
+  return { rows: rows.map(row => ({...withBookingReference(row), earliestReturnDate: minimumReturnDate(row.serviceDate)})) };
 }
 export async function returnAvailability(pool, userId, jobId, date) {
   assertBookableDate(date);

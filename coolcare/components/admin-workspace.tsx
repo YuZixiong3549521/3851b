@@ -303,7 +303,7 @@ export function DispatchReviewButton({
               <div>
                 <dt className="muted">Booking / customer</dt>
                 <dd>
-                  BK-{String(booking.bookingId).padStart(4, '0')} ·{' '}
+                  {booking.bookingReference} ·{' '}
                   {booking.customerName}
                 </dd>
               </div>
@@ -704,6 +704,7 @@ type Overview = {
   failures: Array<{
     emailId: number;
     bookingId: number;
+    bookingReference: string;
     recipient: string;
     lastError: string;
   }>;
@@ -805,7 +806,7 @@ export function AdminOverviewPage() {
                   >
                     <div className="min-w-0 text-sm">
                       <strong>
-                        BK-{String(row.bookingId).padStart(4, '0')}
+                        {row.bookingReference}
                       </strong>
                       <p className="break-all">
                         {row.recipient} · {row.lastError}
@@ -833,6 +834,7 @@ export function AdminOverviewPage() {
 type AuditRow = {
   requestId: string;
   bookingId: number;
+  bookingReference: string;
   action: string;
   createdAt: string;
   actor: string;
@@ -880,11 +882,10 @@ export function AdminAuditPage({ params }: { params: URLSearchParams }) {
           }}
         >
           <label htmlFor="audit-booking-filter">
-            Booking ID
+            Booking reference
             <Input
               id="audit-booking-filter"
-              type="number"
-              min={1}
+              type="text"
               value={bookingFilter}
               onChange={(e) => setBookingFilter(e.target.value)}
               placeholder="All bookings"
@@ -949,7 +950,7 @@ export function AdminAuditPage({ params }: { params: URLSearchParams }) {
                   variant="outline"
                   onClick={() => go(`/admin/orders/${row.bookingId}`)}
                 >
-                  BK-{String(row.bookingId).padStart(4, '0')}
+                  {row.bookingReference}
                 </Button>
               </article>
             ))}

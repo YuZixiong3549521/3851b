@@ -7,7 +7,7 @@ import { assertBookableDate,isCalendarDate } from './booking-schedule.mjs';
 import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './address-service.mjs';
 import { assertTeamCapacity,bookingServiceSlot } from '../scheduling.mjs';
 import { describeCreatedBooking,writeSelectedBookings } from './booking-writer.mjs';
-import { bookingReference } from './booking-service.mjs';
+import { bookingReference } from '../booking-reference.mjs';
 import { normalizePhoneNumber,phoneNumberError } from '../../lib/phone-number.mjs';
 
 const timeWindows=['09:00 AM - 11:00 AM','11:00 AM - 01:00 PM','02:00 PM - 04:00 PM','04:00 PM - 06:00 PM','11:30 AM - 01:30 PM','04:30 PM - 06:30 PM'];
@@ -48,14 +48,34 @@ function stateView(row,userId) {
     draft:readJson(row.draft_data),quote:readJson(row.reviewed_quote),booking:readJson(row.booking_receipt),updatedAt:row.updated_at_iso};
 }
 
+// Enrich legacy saved receipts on read, without rewriting their immutable payloads.
+async function receiptReferences(connection, row) {
+  if (!row?.booking_receipt) return row;
+  const receipt = readJson(row.booking_receipt);
+  const bookingId = receipt.bookingId ?? receipt.id;
+  const visits = receipt.annualBundle?.visits ?? [];
+  const ids = [...new Set([bookingId, ...visits.map(v => v.bookingId)])]
+    .filter(id => Number.isSafeInteger(id) && id > 0);
+  if (!ids.length) return row;
+  const [bookings] = await connection.execute(
+    `SELECT booking_id AS bookingId,created_at AS createdAt FROM booking WHERE customer_id=? AND booking_id IN (${ids.map(() => '?').join(',')})`,
+    [row.customer_id, ...ids],
+  );
+  const references = new Map(bookings.map(b => [b.bookingId, bookingReference(b.bookingId, b.createdAt)]));
+  const booking = { ...receipt, bookingReference: references.get(bookingId) ?? 'Reference unavailable' };
+  if (receipt.annualBundle) booking.annualBundle = { ...receipt.annualBundle,
+    visits: visits.map(v => ({ ...v, bookingReference: references.get(v.bookingId) ?? 'Reference unavailable' })) };
+  return { ...row, booking_receipt: booking };
+}
+
 async function currentRow(connection,customerId) {
   const [[row]]=await connection.execute("SELECT d.*,DATE_FORMAT(d.updated_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS updated_at_iso FROM assistant_booking_draft d WHERE current_customer_id=?",[customerId]);
-  return row;
+  return receiptReferences(connection, row);
 }
 
 async function ownedRow(connection,customerId,draftId) {
   const [[row]]=await connection.execute("SELECT d.*,DATE_FORMAT(d.updated_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS updated_at_iso FROM assistant_booking_draft d WHERE draft_id=? AND customer_id=?",[draftId,customerId]);
-  return row;
+  return receiptReferences(connection, row);
 }
 
 async function transaction(pool,user,action) {
@@ -97,7 +117,7 @@ async function insertDraft(connection,customer,user,draft) {
 
 export async function getAssistantDraft(pool,user) {
   const [[row]]=await pool.execute(`SELECT d.*,DATE_FORMAT(d.updated_at,'%Y-%m-%dT%H:%i:%s.%fZ') AS updated_at_iso FROM assistant_booking_draft d JOIN customer c ON c.customer_id=d.current_customer_id WHERE c.user_id=?`,[user.id]);
-  return {state:stateView(row,user.id)};
+  return {state:stateView(await receiptReferences(pool, row),user.id)};
 }
 
 export async function saveAssistantDraft(pool,user,untrustedInput) {

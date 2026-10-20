@@ -1,5 +1,6 @@
 import {lockTechnicianRoster} from './scheduling.mjs';
 import {visitStartBlockReason,visitCompletionBlockReason} from './visit-start.mjs';
+import { withBookingReference } from './booking-reference.mjs';
 import {snapshotVisit} from './return-visits.mjs';
 import {capturePerformanceVisitStart} from './performance.mjs';
 import {awardCompletedBookingRewards} from './commerce.mjs';
@@ -23,7 +24,7 @@ export async function getTechnician(pool, email = process.env.DEMO_TECHNICIAN_EM
 }
 
 export async function getTechnicianJobs(pool, technicianId, jobId) {
-  const [rows] = await pool.execute(`SELECT w.job_id AS jobId, w.booking_id AS bookingId,
+  const [rows] = await pool.execute(`SELECT w.job_id AS jobId, w.booking_id AS bookingId,b.created_at AS bookingCreatedAt,
     u.full_name AS customer, DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,
     COALESCE(DATE_FORMAT(w.appointment_time,'%H:%i'),'') AS time,b.slot_end AS endTime,
     COALESCE((SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ') FROM booking_service bs WHERE bs.booking_id=b.booking_id),sc.service_name) AS serviceType, sa.address_line AS address,
@@ -53,7 +54,7 @@ export async function getTechnicianJobs(pool, technicianId, jobId) {
     ORDER BY w.appointment_date,w.appointment_time,w.job_id`,jobId === undefined ? [technicianId] : [technicianId,jobId]);
   const [[active]]=await pool.execute(`SELECT w.job_id AS jobId FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id WHERE a.technician_id=? AND w.current_status='In Progress' LIMIT 1`,[technicianId]);
   const now=new Date();
-  return rows.map(({lastModifiedEpoch,reportSubmittedAtEpoch,...row})=>{const startBlockedReason=visitStartBlockReason(row.date,row.time,now,active?.jobId!==row.jobId?active?.jobId:null);return {...row,lastModified:lastModifiedEpoch?new Date(Number(lastModifiedEpoch)*1000).toISOString():null,reportSubmittedAt:reportSubmittedAtEpoch?new Date(Number(reportSubmittedAtEpoch)*1000).toISOString():null,reportPending:Boolean(row.reportPending),canStart:!startBlockedReason,startBlockedReason,canComplete:!visitCompletionBlockReason(row.date,now),completionBlockedReason:visitCompletionBlockReason(row.date,now),cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
+  return rows.map(({lastModifiedEpoch,reportSubmittedAtEpoch,...row})=>{const startBlockedReason=visitStartBlockReason(row.date,row.time,now,active?.jobId!==row.jobId?active?.jobId:null);return {...withBookingReference(row),lastModified:lastModifiedEpoch?new Date(Number(lastModifiedEpoch)*1000).toISOString():null,reportSubmittedAt:reportSubmittedAtEpoch?new Date(Number(reportSubmittedAtEpoch)*1000).toISOString():null,reportPending:Boolean(row.reportPending),canStart:!startBlockedReason,startBlockedReason,canComplete:!visitCompletionBlockReason(row.date,now),completionBlockedReason:visitCompletionBlockReason(row.date,now),cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
     status:row.status==='On The Way'?'On the Way':row.status,
     initials:row.customer.split(/\s+/).map(s=>s[0]).slice(0,2).join('')};});
 }
@@ -101,7 +102,7 @@ export async function saveCleaningAssessment(pool,technicianUserId,jobId,raw) {
 export async function getTechnicianJobDetails(pool, technicianId, jobId) {
   const [job]=await getTechnicianJobs(pool,technicianId,jobId);
   if(!job)throw new AppError('Job not found for this technician.',404);
-  const reportSelect=`SELECT r.report_id AS reportId,w.job_id AS jobId,b.booking_id AS bookingId,
+  const reportSelect=`SELECT r.report_id AS reportId,w.job_id AS jobId,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,
     b.subscription_id AS subscriptionId,mp.package_name AS packageName,sa.address_line AS address,
     DATE_FORMAT(r.visit_service_date,'%Y-%m-%d') AS date,r.visit_technician_id AS technicianId,ru.full_name AS technician,r.visit_start_time AS scheduledStart,r.work_performed AS workPerformed,
     r.problem_found AS problemFound,r.solution_applied AS solutionApplied,r.checklist_result AS checklist,
@@ -138,7 +139,7 @@ export async function getTechnicianJobDetails(pool, technicianId, jobId) {
   const progressByJob=new Map(await Promise.all(jobIds.map(async id=>[id,await getServiceProgress(pool,id)])));
   const instant=value=>value?new Date(Number(value)*1000).toISOString():null;
   const inventoryDates=inventory.map(r=>({...r,occurredAt:instant(r.occurredAtEpoch)}));
-  const attach=r=>({...r,submittedAt:instant(r.submittedAtEpoch),inventory:inventoryDates.filter(t=>t.jobId===r.jobId),serviceProgress:progressByJob.get(r.jobId)});
+  const attach=r=>({...withBookingReference(r),submittedAt:instant(r.submittedAtEpoch),inventory:inventoryDates.filter(t=>t.jobId===r.jobId),serviceProgress:progressByJob.get(r.jobId)});
   const serviceProgress=progressByJob.get(jobId);
   return {job:{...job,serviceProgress,report:report?{...attach(report),serviceProgress}:null,inventory:inventoryDates.filter(t=>t.jobId===jobId),cleaningAssessment:cleaningAssessment??null},addressHistory:addressHistory.map(attach),packageHistory:packageHistory.map(attach),packages,annualHistory:annualHistory.map(attach),cleaningAssessmentHistory};
 }

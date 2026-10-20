@@ -47,6 +47,7 @@ export type User = {
 export type AdminBooking = {
   amounts?: BookingAmounts;
   bookingId: number;
+  bookingReference: string;
   status: string;
   preferredDate: string;
   timeSlot: string;

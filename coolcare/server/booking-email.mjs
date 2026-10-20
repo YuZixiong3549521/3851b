@@ -1,3 +1,4 @@
+import { bookingReference } from './booking-reference.mjs';
 import nodemailer from 'nodemailer';
 import { randomUUID } from 'node:crypto';
 
@@ -6,8 +7,9 @@ export function mailMode() { return ['smtp', 'disabled'].includes(process.env.MA
 
 export function buildAssignedBookingMail(booking, technicianName) {
   const date = new Intl.DateTimeFormat('en-SG', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${booking.preferred_service_date}T00:00:00Z`));
+  const reference = bookingReference(booking.booking_id, booking.created_at);
   const fields = [
-    ['Booking reference', `#${booking.booking_id}`],
+    ['Booking reference', reference],
     ['Services', booking.services],
     ['Service date', date],
     ['Service time',booking.slot_start&&booking.slot_end?`${String(booking.slot_start).slice(0,5)} - ${String(booking.slot_end).slice(0,5)} (Singapore time)`:booking.preferred_time_slot],
@@ -17,7 +19,7 @@ export function buildAssignedBookingMail(booking, technicianName) {
   ];
   const intro = 'Your booking has been reviewed, confirmed and assigned to a technician.';
   return {
-    subject: `CoolCare booking #${booking.booking_id} confirmed`,
+    subject: `CoolCare booking ${reference} confirmed`,
     text: `Hi ${booking.full_name},\n\n${intro}\n\n${fields.map(([name,value])=>`${name}: ${value}`).join('\n')}\n\nView the latest status in My Bookings.\nCoolCare`,
     html: `<div style="font:16px Arial,sans-serif;max-width:600px;color:#172b4d"><h1 style="color:#003f87">Booking confirmed and technician assigned</h1><p>Hi ${escapeHtml(booking.full_name)},</p><p>${escapeHtml(intro)}</p><table style="width:100%;border-collapse:collapse">${fields.map(([name,value])=>`<tr><th style="padding:10px;text-align:left;vertical-align:top;border-bottom:1px solid #ddd">${escapeHtml(name)}</th><td style="padding:10px;border-bottom:1px solid #ddd">${escapeHtml(value)}</td></tr>`).join('')}</table><p>View the latest status in My Bookings.</p><p>CoolCare</p></div>`,
   };
@@ -35,12 +37,12 @@ async function enqueueMail(connection,{eventKey,eventType,bookingId=null,invitat
 
 export async function enqueueBookingLifecycleEmail(connection,bookingId,eventType,{technicianName='',eventKey=`${eventType}:${bookingId}`}={}) {
   if(eventType!=='booking.assigned')throw new Error('Unsupported booking mail event.');
-  const [[booking]]=await connection.execute(`SELECT b.booking_id,b.preferred_service_date,b.preferred_time_slot,b.slot_start,b.slot_end,b.estimated_duration_minutes,
+  const [[booking]]=await connection.execute(`SELECT b.booking_id,b.created_at,b.preferred_service_date,b.preferred_time_slot,b.slot_start,b.slot_end,b.estimated_duration_minutes,
     u.full_name,u.email,sa.address_line,COALESCE(GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', '),MAX(sc.service_name)) AS services
     FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN user_account u ON u.user_id=c.user_id
     JOIN service_address sa ON sa.address_id=b.address_id JOIN service_catalog sc ON sc.service_id=b.service_id
     LEFT JOIN booking_service bs ON bs.booking_id=b.booking_id WHERE b.booking_id=?
-    GROUP BY b.booking_id,b.preferred_service_date,b.preferred_time_slot,b.slot_start,b.slot_end,b.estimated_duration_minutes,u.full_name,u.email,sa.address_line`,[bookingId]);
+    GROUP BY b.booking_id,b.created_at,b.preferred_service_date,b.preferred_time_slot,b.slot_start,b.slot_end,b.estimated_duration_minutes,u.full_name,u.email,sa.address_line`,[bookingId]);
   if(!booking)throw new Error('Cannot queue mail for a missing booking.');
   const mail=buildAssignedBookingMail(booking,technicianName);
   return enqueueMail(connection,{eventKey,eventType,bookingId,recipient:booking.email,...mail});

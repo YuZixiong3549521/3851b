@@ -1,3 +1,4 @@
+import { withBookingReference } from '../booking-reference.mjs';
 import { annualVisitSchedule } from './annual-bookings.mjs';
 import { assertBookableDate } from './booking-schedule.mjs';
 import { assertAddressBookingLimit,saveBookingSelection,attachBookingSelections } from './booking-options.mjs';
@@ -11,7 +12,7 @@ export async function describeCreatedBooking(connection,bookingId) {
     booking_status AS status,total_amount AS totalAmount,estimated_duration_minutes AS estimatedDurationMinutes,
     slot_start AS slotStart,slot_end AS slotEnd FROM booking WHERE booking_id=?`,[bookingId]);
   const [booking]=await attachBookingSelections(connection,[row]);
-  return {...booking,totalAmount:booking.totalAmount==null?null:Number(booking.totalAmount)};
+  return {...withBookingReference(booking),totalAmount:booking.totalAmount==null?null:Number(booking.totalAmount)};
 }
 
 // The caller holds the customer lock and owns the transaction for all four visits.

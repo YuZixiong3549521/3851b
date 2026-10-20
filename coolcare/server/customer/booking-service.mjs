@@ -1,3 +1,5 @@
+import { bookingReference } from '../booking-reference.mjs';
+export { bookingReference } from '../booking-reference.mjs';
 import { z } from 'zod';
 import { getDemoCustomer } from './customer.mjs';
 import { HttpError } from './errors.mjs';
@@ -42,11 +44,6 @@ export const createBookingSchema = z.object({
     if(input.unitIds===undefined)context.addIssue({code:'custom',path:['unitIds'],message:'Choose at least one aircon unit.'});
   }
 });
-
-export function bookingReference(bookingId, createdAt) {
-  const year = String(createdAt ?? new Date().getFullYear()).slice(0, 4);
-  return `BK-${year}-${String(bookingId).padStart(4, '0')}`;
-}
 
 const timestampIso=seconds=>seconds===null||seconds===undefined?null:new Date(Number(seconds)*1000).toISOString();
 

@@ -1,3 +1,4 @@
+import { withBookingReference } from '../booking-reference.mjs';
 import { HttpError } from './errors.mjs';
 import { isCalendarDate,nextWeekday } from './booking-schedule.mjs';
 
@@ -45,7 +46,7 @@ export async function attachAnnualBundles(executor,bookings,idKey='bookingId') {
     WHERE v.booking_id IN (${ids.map(()=>'?').join(',')})`,ids);
   if(!links.length)return bookings.map(b=>({...b,annualBundle:null}));
   const seriesIds=[...new Set(links.map(v=>v.seriesId))];
-  const [visits]=await executor.execute(`SELECT v.series_id AS seriesId,b.booking_id AS bookingId,v.visit_number AS visitNumber,
+  const [visits]=await executor.execute(`SELECT v.series_id AS seriesId,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,v.visit_number AS visitNumber,
     b.preferred_service_date AS preferredDate,COALESCE(CONCAT(TIME_FORMAT(b.slot_start,'%H:%i'),' - ',TIME_FORMAT(b.slot_end,'%H:%i')),b.preferred_time_slot) AS timeSlot,
     b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.total_amount AS totalAmount,
     b.booking_status AS status,v.window_start AS windowStart,v.window_end AS windowEnd
@@ -53,7 +54,7 @@ export async function attachAnnualBundles(executor,bookings,idKey='bookingId') {
     WHERE v.series_id IN (${seriesIds.map(()=>'?').join(',')}) ORDER BY v.visit_number`,seriesIds);
   return bookings.map(booking=>{
     const link=links.find(v=>v.bookingId===booking[idKey]);
-    return {...booking,annualBundle:link?{...link,totalAmount:Number(link.totalAmount),visits:visits.filter(v=>v.seriesId===link.seriesId).map(v=>({...v,totalAmount:Number(v.totalAmount)}))}:null};
+    return {...booking,annualBundle:link?{...link,totalAmount:Number(link.totalAmount),visits:visits.filter(v=>v.seriesId===link.seriesId).map(v=>({...withBookingReference(v),totalAmount:Number(v.totalAmount)}))}:null};
   });
 }
 

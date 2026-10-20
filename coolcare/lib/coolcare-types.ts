@@ -34,7 +34,7 @@ export type BookingAvailabilityInput = {
 };
 export type BookingAvailability = {
   blockedDates: string[];
-  existingBookings: Array<{ bookingId: number; preferredDate: string; timeSlot: string; status: string }>;
+  existingBookings: Array<{ bookingId: number; bookingReference: string; preferredDate: string; timeSlot: string; status: string }>;
   earliestDate: string;
   timeZone: 'Asia/Singapore';
 };
@@ -157,6 +157,7 @@ export type BookingDetail = Booking & {
 
 export type AnnualVisit = {
   bookingId: number;
+  bookingReference?: string;
   visitNumber: number;
   preferredDate: string;
   timeSlot: string;

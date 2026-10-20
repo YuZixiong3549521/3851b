@@ -10,6 +10,7 @@ type Row = {
   earliestReturnDate: string;
   jobId: number;
   bookingId: number;
+  bookingReference: string;
   version: number;
   customer: string;
   status: string;
@@ -237,7 +238,7 @@ function ReturnCard({
   return (
     <article className="rounded-xl border bg-white p-5 space-y-3">
       <h3 className="font-semibold">
-        WO-{row.jobId} · {row.customer}
+        Booking {row.bookingReference} · {row.customer}
       </h3>
       <p>{row.status}</p>
       <p>Reason: {row.reason}</p>

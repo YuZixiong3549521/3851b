@@ -28,6 +28,7 @@ export interface User {
 }
 export interface Booking {
   id: number;
+  bookingReference: string;
   user_id: number;
   service_type: string;
   service_package: string;

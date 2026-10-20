@@ -1,5 +1,32 @@
 # Shared UI and application architecture
 
+## Booking references
+
+Every portal displays the server-provided booking reference, such as
+`BK-2026-0001`. `server/booking-reference.mjs` owns the common rule: the booking's
+creation year and its numeric ID padded to at least four digits. Rescheduling,
+return visits and later points activity never change the reference. Missing
+creation dates display `Reference unavailable`, without guessing the current year.
+The numeric API IDs and existing URLs remain unchanged; no schema migration is
+needed. Annual visits retain distinct references under their existing plan.
+
+Customer bookings, plans, assistant receipts, availability notices, rewards,
+reports, Admin orders/schedules/audit/analytics, Technician jobs/reports/performance,
+new assignment emails and CSV exports share this display. Work-order (`WO-…`)
+and report (`SR-…`) IDs remain separate, labelled identities. Technician work-order
+views show the associated booking reference alongside the work-order ID.
+
+Admin booking search and audit filters accept full references (including the
+creation-year check), numeric IDs, `#1` and legacy `BK-0001` forms. Existing sent
+emails and immutable audit text are retained; only their linked order labels and
+newly generated emails/exports use the unified display. Account-only points
+adjustments continue to display `Account`.
+
+The Orders page's **Find a booking** form searches all statuses by reference,
+customer name or email. Search terms survive pagination and browser navigation;
+clearing the search returns to the review filters. Technician job/report searches
+also accept the displayed associated booking reference.
+
 ## Admin operations workspace update
 
 `components/admin-workspace.tsx` adds the Operations overview, booking operation log, final dispatch review, waiting-dispatch control, weekly alternative-time planner and customer email status. These reuse the shared buttons, English date picker, native selects and Base UI dialogs. `/admin/overview` and `/admin/audit` join the existing Admin shell and permitted login-return routes.

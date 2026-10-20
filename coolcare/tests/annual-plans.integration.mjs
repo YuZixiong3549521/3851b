@@ -8,6 +8,7 @@ import { createBooking } from '../server/customer/booking-service.mjs';
 import { annualVisitSchedule, addCalendarMonths } from '../server/customer/annual-bookings.mjs';
 import { nextWeekday, addCalendarDays, singaporeToday } from '../server/customer/booking-schedule.mjs';
 import { openPrivilegedFixtureConnection } from './privileged-fixture.mjs';
+import { bookingReference } from '../server/booking-reference.mjs';
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: process.env.DB_USER,
@@ -118,6 +119,11 @@ test('annual renewal reviews current prices, validates term boundaries and creat
   };
   const created = await createBooking(db, payload, userId);
   assert.equal(created.annualBundle.visits.length, 4);
+  assert.equal(new Set(created.annualBundle.visits.map(v => v.bookingReference)).size, 4);
+  for (const visit of created.annualBundle.visits) {
+    const [[booking]] = await c.execute('SELECT created_at FROM booking WHERE booking_id=?', [visit.bookingId]);
+    assert.equal(visit.bookingReference, bookingReference(visit.bookingId, booking.created_at));
+  }
   assert.equal(created.annualBundle.totalAmount, prefill.currentAnnualPrice);
   assert.equal((await createBooking(db, payload, userId)).bookingId, created.bookingId, 'same request returns the original booking');
   await assert.rejects(createBooking(db, { ...payload, requestId: randomUUID() }, userId), error => error.status === 409);

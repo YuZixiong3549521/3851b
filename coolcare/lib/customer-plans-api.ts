@@ -1,6 +1,7 @@
 export type AnnualPlanVisit = {
   seriesId: number;
   bookingId: number;
+  bookingReference: string;
   visitNumber: number;
   reference: string;
   status: string;

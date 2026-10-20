@@ -1,3 +1,4 @@
+import { bookingReference as reference } from '../booking-reference.mjs';
 import { asyncRoute, HttpError } from './errors.mjs';
 import { addCalendarDays, appointmentInstant, minimumBookingDate, nextWeekday, singaporeToday } from './booking-schedule.mjs';
 import { addCalendarMonths } from './annual-bookings.mjs';
@@ -10,7 +11,6 @@ const id = value => {
   return result;
 };
 const day = value => String(value).slice(0, 10);
-const reference = (bookingId, createdAt) => `BK-${String(createdAt).slice(0, 4)}-${String(bookingId).padStart(4, '0')}`;
 
 /** Booking status, not report/return count, determines the quarterly entitlement. */
 export function describeAnnualPlan(series, visits, now = new Date()) {
@@ -108,7 +108,7 @@ async function readPlans(executor, userId, { seriesId, now = new Date() } = {}) 
     FROM annual_booking_visit v JOIN booking b ON b.booking_id=v.booking_id
     WHERE v.series_id IN (${ids.map(() => '?').join(',')}) ORDER BY v.visit_number`, ids);
   return series.map(item => describeAnnualPlan(item, visits.filter(visit => visit.seriesId === item.seriesId)
-    .map(visit => ({ ...visit, totalAmount: Number(visit.totalAmount), reference: reference(visit.bookingId, visit.createdAt) })), now));
+    .map(visit => ({ ...visit, totalAmount: Number(visit.totalAmount), reference: reference(visit.bookingId, visit.createdAt), bookingReference: reference(visit.bookingId, visit.createdAt) })), now));
 }
 
 export async function listAnnualPlans(executor, userId, now = new Date()) {

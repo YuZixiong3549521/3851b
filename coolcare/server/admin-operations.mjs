@@ -1,3 +1,4 @@
+import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
 import { registerReturnRoutes } from './return-visits.mjs';
 import { registerAdminWorkspaceRoutes } from './admin-workspace.mjs';
 import { getServiceProgress } from './service-progress.mjs';
@@ -125,7 +126,7 @@ const pendingReportColumns = `
     WHERE w.booking_id=b.booking_id AND ${reportPendingCondition} ORDER BY w.job_id DESC LIMIT 1) AS pendingReportTechnicianName`;
 const timestampIso = seconds => seconds == null ? null : new Date(Number(seconds) * 1000).toISOString();
 const describeAdminBooking = ({ createdAtEpoch, reportPending, ...row }) => ({
-  ...row, createdAt: timestampIso(createdAtEpoch), reportPending: Boolean(reportPending),
+  ...withBookingReference(row), createdAt: timestampIso(createdAtEpoch), reportPending: Boolean(reportPending),
 });
 
 const canonicalPayload = (value) =>
@@ -1090,10 +1091,18 @@ export async function listAdminBookings(pool, query) {
   }
   if (data.queue === 'review') where.push('b.admin_waiting_since IS NULL');
   if (data.q) {
-    where.push(
-      '(u.full_name LIKE ? OR u.email LIKE ? OR CAST(b.booking_id AS CHAR)=?)',
-    );
-    values.push(`%${data.q}%`, `%${data.q}%`, data.q.replace(/^BK-0*/i, ''));
+    const reference = parseBookingSearch(data.q);
+    if (reference) {
+      where.push('b.booking_id=?');
+      values.push(reference.id);
+      if (reference.year !== null) {
+        where.push('YEAR(b.created_at)=?');
+        values.push(reference.year);
+      }
+    } else {
+      where.push('(u.full_name LIKE ? OR u.email LIKE ?)');
+      values.push(`%${data.q}%`, `%${data.q}%`);
+    }
   }
   const clause = where.length ? ' WHERE ' + where.join(' AND ') : '';
   const [[{ total }]] = await pool.execute(
@@ -1107,7 +1116,7 @@ export async function listAdminBookings(pool, query) {
   );
   const [rows] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS preferredDate,
-    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.total_amount AS totalAmount,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,u.full_name AS customerName,u.email,
+    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.total_amount AS totalAmount,b.created_at AS createdAt,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,u.full_name AS customerName,u.email,
     ${pendingReportColumns},
     sa.address_line AS addressLine,COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
     (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
@@ -1137,7 +1146,7 @@ export async function listAdminSchedule(pool, query) {
   const [rows] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,
     b.preferred_service_date AS preferredDate,b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,
-    b.total_amount AS totalAmount,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,u.full_name AS customerName,u.email,
+    b.total_amount AS totalAmount,b.created_at AS createdAt,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,u.full_name AS customerName,u.email,
     sa.address_line AS addressLine,
     COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
     (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
@@ -1164,7 +1173,7 @@ export async function listAdminSchedule(pool, query) {
 export async function getAdminBooking(pool, bookingId) {
   const [[booking]] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS preferredDate,
-    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.problem_description AS problemDescription,b.total_amount AS totalAmount,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,b.rejection_reason AS rejectionReason,b.rejection_version AS rejectionVersion,
+    b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.problem_description AS problemDescription,b.total_amount AS totalAmount,b.created_at AS createdAt,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,b.rejection_reason AS rejectionReason,b.rejection_version AS rejectionVersion,
     ${pendingReportColumns},
     b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,
     (SELECT details.special_notes FROM web_booking_details details WHERE details.booking_id=b.booking_id) AS otherRemarks,

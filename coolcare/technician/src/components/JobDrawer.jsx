@@ -76,7 +76,7 @@ function History({ items, empty }) {
     items.map((report) => (
       <details key={report.reportId} className="tech-history">
         <summary>
-          {formatDate(report.date)} · WO-{String(report.jobId).padStart(4, '0')}
+          {formatDate(report.date)} · Booking {report.bookingReference} · Work order WO-{String(report.jobId).padStart(4, '0')}
           {report.packageName && ` · ${report.packageName}`}
         </summary>
         <p className="cell-icon">
@@ -545,7 +545,7 @@ export default function JobDrawer({
       >
         <div className="drawer-inner">
           <div className="drawer-heading">
-            <span className="job-id">{job.id}</span>
+            <div><span className="job-id">Work order: {job.id}</span><p>Booking reference: {job.bookingReference || 'Reference unavailable'}</p></div>
             <Button
               variant="ghost"
               className="icon-button"
