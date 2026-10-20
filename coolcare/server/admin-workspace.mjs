@@ -1,3 +1,4 @@
+import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
 import { z } from 'zod';
 import { AppError, idSchema } from './inventory.mjs';
 import {
@@ -254,7 +255,7 @@ export async function getBookingPlanner(pool, bookingId, query) {
 
 const auditQuery = z.object({
   page: z.coerce.number().int().min(1).max(100000).default(1),
-  bookingId: z.coerce.number().int().min(1).optional(),
+  bookingId: z.union([z.string(), z.number()]).transform(value => parseBookingSearch(value)).refine(Boolean, 'Enter a valid booking reference or ID.').optional(),
   action: z
     .enum([
       '',
@@ -276,7 +277,11 @@ export async function listAdminAudit(pool, query) {
     values = [];
   if (data.bookingId) {
     where.push('o.booking_id=?');
-    values.push(data.bookingId);
+    values.push(data.bookingId.id);
+    if (data.bookingId.year !== null) {
+      where.push('YEAR(b.created_at)=?');
+      values.push(data.bookingId.year);
+    }
   }
   if (data.action) {
     where.push('o.operation_type=?');
@@ -284,16 +289,16 @@ export async function listAdminAudit(pool, query) {
   }
   const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
   const [[{ total }]] = await pool.execute(
-    `SELECT COUNT(*) AS total FROM booking_admin_operation o${clause}`,
+    `SELECT COUNT(*) AS total FROM booking_admin_operation o JOIN booking b ON b.booking_id=o.booking_id${clause}`,
     values,
   );
   const page = Math.min(data.page, Math.max(1, Math.ceil(Number(total) / 25)));
   const [rows] = await pool.execute(
-    `SELECT o.request_id AS requestId,o.booking_id AS bookingId,o.operation_type AS action,o.created_at AS createdAt,u.full_name AS actor
-    FROM booking_admin_operation o JOIN user_account u ON u.user_id=o.actor_user_id${clause} ORDER BY o.created_at DESC,o.request_id DESC LIMIT 25 OFFSET ?`,
+    `SELECT o.request_id AS requestId,o.booking_id AS bookingId,b.created_at AS bookingCreatedAt,o.operation_type AS action,o.created_at AS createdAt,u.full_name AS actor
+    FROM booking_admin_operation o JOIN booking b ON b.booking_id=o.booking_id JOIN user_account u ON u.user_id=o.actor_user_id${clause} ORDER BY o.created_at DESC,o.request_id DESC LIMIT 25 OFFSET ?`,
     [...values, (page - 1) * 25],
   );
-  return { rows, total: Number(total), page, pageSize: 25 };
+  return { rows: rows.map(withBookingReference), total: Number(total), page, pageSize: 25 };
 }
 
 export const csvCell = (value) =>
@@ -335,7 +340,7 @@ export async function getOperationsOverview(pool) {
     [today, today],
   );
   const [failures] =
-    await pool.execute(`SELECT email_id AS emailId,booking_id AS bookingId,recipient,last_error AS lastError,next_attempt_at AS nextAttemptAt FROM booking_email_outbox
+    await pool.execute(`SELECT email_id AS emailId,booking_id AS bookingId,(SELECT b.created_at FROM booking b WHERE b.booking_id=booking_email_outbox.booking_id) AS bookingCreatedAt,recipient,last_error AS lastError,next_attempt_at AS nextAttemptAt FROM booking_email_outbox
     WHERE event_type='booking.assigned' AND status='Pending' AND last_error IS NOT NULL ORDER BY next_attempt_at,email_id LIMIT 10`);
   return {
     today,
@@ -347,7 +352,7 @@ export async function getOperationsOverview(pool) {
       ]),
     ),
     workload,
-    failures,
+    failures: failures.map(withBookingReference),
   };
 }
 
@@ -367,7 +372,7 @@ export function registerAdminWorkspaceRoutes(router, pool) {
       ...result.rows.map((row) => [
         row.createdAt,
         row.actor,
-        row.bookingId,
+        row.bookingReference,
         row.action,
         row.requestId,
       ]),

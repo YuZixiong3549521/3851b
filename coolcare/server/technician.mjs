@@ -1,3 +1,4 @@
+import { withBookingReference } from './booking-reference.mjs';
 import {snapshotVisit} from './return-visits.mjs';
 import {capturePerformanceVisitStart} from './performance.mjs';
 import {awardCompletedBookingRewards} from './commerce.mjs';
@@ -21,7 +22,7 @@ export async function getTechnician(pool, email = process.env.DEMO_TECHNICIAN_EM
 }
 
 export async function getTechnicianJobs(pool, technicianId, jobId) {
-  const [rows] = await pool.execute(`SELECT w.job_id AS jobId, w.booking_id AS bookingId,
+  const [rows] = await pool.execute(`SELECT w.job_id AS jobId, w.booking_id AS bookingId,b.created_at AS bookingCreatedAt,
     u.full_name AS customer, DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,
     COALESCE(DATE_FORMAT(w.appointment_time,'%H:%i'),'') AS time,b.slot_end AS endTime,
     COALESCE((SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ') FROM booking_service bs WHERE bs.booking_id=b.booking_id),sc.service_name) AS serviceType, sa.address_line AS address,
@@ -46,7 +47,7 @@ export async function getTechnicianJobs(pool, technicianId, jobId) {
     WHERE a.technician_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
     ${jobId === undefined ? '' : 'AND w.job_id=?'}
     ORDER BY w.appointment_date,w.appointment_time,w.job_id`,jobId === undefined ? [technicianId] : [technicianId,jobId]);
-  return rows.map(row=>({...row,cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
+  return rows.map(row=>({...withBookingReference(row),cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
     status:row.status==='On The Way'?'On the Way':row.status,
     initials:row.customer.split(/\s+/).map(s=>s[0]).slice(0,2).join('')}));
 }
@@ -94,7 +95,7 @@ export async function saveCleaningAssessment(pool,technicianUserId,jobId,raw) {
 export async function getTechnicianJobDetails(pool, technicianId, jobId) {
   const [job]=await getTechnicianJobs(pool,technicianId,jobId);
   if(!job)throw new AppError('Job not found for this technician.',404);
-  const reportSelect=`SELECT r.report_id AS reportId,w.job_id AS jobId,b.booking_id AS bookingId,
+  const reportSelect=`SELECT r.report_id AS reportId,w.job_id AS jobId,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,
     b.subscription_id AS subscriptionId,mp.package_name AS packageName,sa.address_line AS address,
     DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,r.work_performed AS workPerformed,
     r.problem_found AS problemFound,r.solution_applied AS solutionApplied,r.checklist_result AS checklist,
@@ -128,7 +129,7 @@ export async function getTechnicianJobDetails(pool, technicianId, jobId) {
   const [inventory]=await pool.query(`SELECT t.transaction_id AS transactionId,t.job_id AS jobId,p.part_name AS partName,p.stock_unit AS stockUnit,t.transaction_type AS type,t.quantity,t.remarks,t.created_at AS occurredAt,t.modified_at AS lastModified
     FROM inventory_transaction t JOIN part p ON p.part_id=t.part_id WHERE t.job_id IN (?) AND t.transaction_type IN ('Stock Out','Return') ORDER BY t.created_at DESC,t.transaction_id DESC`,[jobIds]);
   const progressByJob=new Map(await Promise.all(jobIds.map(async id=>[id,await getServiceProgress(pool,id)])));
-  const attach=r=>({...r,inventory:inventory.filter(t=>t.jobId===r.jobId),serviceProgress:progressByJob.get(r.jobId)});
+  const attach=r=>({...withBookingReference(r),inventory:inventory.filter(t=>t.jobId===r.jobId),serviceProgress:progressByJob.get(r.jobId)});
   const serviceProgress=progressByJob.get(jobId);
   return {job:{...job,serviceProgress,report:report?{...attach(report),serviceProgress}:null,inventory:inventory.filter(t=>t.jobId===jobId),cleaningAssessment:cleaningAssessment??null},addressHistory:addressHistory.map(attach),packageHistory:packageHistory.map(attach),packages,annualHistory:annualHistory.map(attach),cleaningAssessmentHistory};
 }

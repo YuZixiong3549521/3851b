@@ -43,6 +43,7 @@ export type User = {
 };
 export type AdminBooking = {
   bookingId: number;
+  bookingReference: string;
   status: string;
   preferredDate: string;
   timeSlot: string;

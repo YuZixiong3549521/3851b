@@ -1,4 +1,4 @@
-import {bookingReference} from './booking-service.mjs';
+import {bookingReference} from '../booking-reference.mjs';
 import {asyncRoute,HttpError} from './errors.mjs';
 
 export async function listBookingNotices(pool,userId){
@@ -9,7 +9,7 @@ export async function listBookingNotices(pool,userId){
   WHERE c.user_id=? AND b.booking_status IN ('Rejected','Expired') AND NOT EXISTS
    (SELECT 1 FROM customer_booking_notice n WHERE n.booking_id=b.booking_id AND n.user_id=? AND n.notice_key=CONCAT(b.booking_status,':',b.rejection_version))
   ORDER BY b.booking_id DESC LIMIT 20`,[userId,userId]);
- return rows.map(row=>({...row,reference:bookingReference(row.bookingId,row.createdAt)}));
+ return rows.map(row=>({...row,reference:bookingReference(row.bookingId,row.createdAt),bookingReference:bookingReference(row.bookingId,row.createdAt)}));
 }
 export async function markBookingNoticeRead(pool,userId,id,noticeKey){
  if(!Number.isSafeInteger(Number(id))||Number(id)<1||typeof noticeKey!=='string'||!/^(Rejected|Expired):\d+$/.test(noticeKey))throw new HttpError(400,'Invalid booking notice.');

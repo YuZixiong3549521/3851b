@@ -186,6 +186,12 @@ export function OrdersPage({
           ? { queue: 'review' }
           : {}),
     });
+  const search = params.get('q')?.trim() || '';
+  if (search) {
+    query.set('q', search);
+    query.delete('status');
+    query.delete('queue');
+  }
   const resource = useResource<List<AdminBooking>>(
     `/admin/bookings?${query}`,
     version,
@@ -194,10 +200,10 @@ export function OrdersPage({
   return (
     <>
       <Heading
-        eyebrow={mode === 'review' ? 'ORDERS / REVIEW' : 'ORDERS / DISPATCH'}
-        title={mode === 'review' ? 'Booking review' : 'Dispatch queue'}
+        eyebrow={search ? 'ORDERS / SEARCH' : mode === 'review' ? 'ORDERS / REVIEW' : 'ORDERS / DISPATCH'}
+        title={search ? 'Booking search' : mode === 'review' ? 'Booking review' : 'Dispatch queue'}
         description={
-          mode === 'review'
+          search ? 'Find an order by booking reference, customer name or email across all statuses.' : mode === 'review'
             ? 'Review requests in placement order, then confirm and assign an available technician together.'
             : 'Assign confirmed visits to an available technician automatically or manually.'
         }
@@ -208,6 +214,30 @@ export function OrdersPage({
           </Button>
         }
       />
+      <form
+        className="panel mb-5 flex flex-wrap items-end gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const next = new URLSearchParams(params);
+          const value = String(new FormData(event.currentTarget).get('q') || '').trim();
+          if (value) next.set('q', value); else next.delete('q');
+          next.delete('page');
+          go(`/admin/orders?${next}`);
+        }}
+      >
+        <label htmlFor="booking-reference-search" className="min-w-0 basis-full flex-1 text-sm font-semibold sm:basis-0">
+          Find a booking
+          <Input id="booking-reference-search" name="q" key={search} defaultValue={search}
+            maxLength={100} placeholder="Booking reference, customer name or email" className="mt-1" />
+        </label>
+        <Button type="submit" variant="outline">Search</Button>
+        {search && <Button type="button" variant="ghost" onClick={() => {
+          const next = new URLSearchParams(params);
+          next.delete('q'); next.delete('page');
+          go(`/admin/orders?${next}`);
+        }}>Clear search</Button>}
+        {search && <p className="basis-full text-sm muted">Search results include all order statuses.</p>}
+      </form>
       {mode === 'review' && (
         <section className="mb-6" aria-labelledby="admin-action-centre-title">
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -265,7 +295,7 @@ export function OrdersPage({
         </section>
       )}
       <ReturnVisitsPanel viewerRole="admin" />
-      {mode === 'review' && (
+      {mode === 'review' && !search && (
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <label
             htmlFor="order-status-filter"
@@ -335,7 +365,7 @@ export function OrdersPage({
                   >
                     <TableCell data-label="Booking">
                       <strong>
-                        BK-{String(row.bookingId).padStart(4, '0')}
+                        {row.bookingReference}
                       </strong>
                       <small className="block muted">
                         {money(row.totalAmount)}
@@ -375,7 +405,7 @@ export function OrdersPage({
                         size="sm"
                         onClick={() => go(`/admin/orders/${row.bookingId}`)}
                       >
-                        {mode === 'review' ? 'Review' : 'Open dispatch'}
+                        {search ? 'View details' : mode === 'review' ? 'Review' : 'Open dispatch'}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -386,22 +416,22 @@ export function OrdersPage({
               total={data.total}
               page={data.page}
               pageSize={data.pageSize}
-              onPage={(next) =>
-                go(
-                  `/${mode === 'review' ? 'admin/orders' : 'admin/dispatch'}?page=${next}&status=${status}&sort=${params.get('sort') === 'deadline' ? 'deadline' : 'placed'}`,
-                )
-              }
+              onPage={(page) => {
+                const next = new URLSearchParams(params);
+                next.set('page', String(page));
+                go(`/${mode === 'review' ? 'admin/orders' : 'admin/dispatch'}?${next}`);
+              }}
             />
           </section>
         ) : (
           <NoResults
             title={
-              mode === 'review'
+              search ? 'No matching bookings' : mode === 'review'
                 ? 'No bookings awaiting review'
                 : 'No confirmed bookings awaiting dispatch'
             }
             description={
-              mode === 'review'
+              search ? 'Check the booking reference, including its creation year, or search by customer.' : mode === 'review'
                 ? 'New customer requests will appear here.'
                 : 'Approved bookings will appear here until assigned.'
             }
@@ -568,13 +598,13 @@ export function DispatchCalendarPage({ params }: { params: URLSearchParams }) {
                             onClick={() =>
                               go(`/admin/orders/${booking.bookingId}`)
                             }
-                            aria-label={`Open booking ${booking.bookingId} for ${booking.customerName}`}
+                            aria-label={`Open booking ${booking.bookingReference} for ${booking.customerName}`}
                           >
                             <span className="schedule-booking-time">
                               {displayServiceTime(booking)}
                             </span>
                             <strong>
-                              BK-{String(booking.bookingId).padStart(4, '0')}
+                              {booking.bookingReference}
                             </strong>
                             <span>{booking.customerName}</span>
                             <small>{booking.serviceName}</small>
@@ -645,7 +675,7 @@ export function DispatchCalendarPage({ params }: { params: URLSearchParams }) {
                   <TableRow key={row.bookingId}>
                     <TableCell data-label="Booking">
                       <strong>
-                        BK-{String(row.bookingId).padStart(4, '0')}
+                        {row.bookingReference}
                       </strong>
                       <small className="block muted">
                         Placed {displayExpiry(row.createdAt)}
@@ -981,7 +1011,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       {booking && (
         <>
           <Heading
-            eyebrow={`BOOKING / BK-${String(booking.bookingId).padStart(4, '0')}`}
+            eyebrow={`BOOKING / ${booking.bookingReference}`}
             title={`${booking.customerName} · ${booking.serviceName}`}
             description={`${displayDate(booking.preferredDate)} · ${displayServiceTime(booking)}`}
             actions={<BookingStatus status={booking.status} />}

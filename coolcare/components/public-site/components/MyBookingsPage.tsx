@@ -744,10 +744,7 @@ const MyBookingsPage:
                             0
                         }}
                       >
-                        Booking #
-                        {
-                          booking.id
-                        }
+                        {booking.bookingReference}
                       </p>
                     </div>
 

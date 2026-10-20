@@ -1,3 +1,4 @@
+import { withBookingReference } from '../booking-reference.mjs';
 import { z } from 'zod';
 import { HttpError } from './errors.mjs';
 import { getDemoCustomer } from './customer.mjs';
@@ -52,13 +53,13 @@ export async function getBookingAvailability(pool,userId,untrustedInput) {
   }
   let existingBookings=[];
   if(addressLine) {
-    const [rows]=await pool.execute(`SELECT b.booking_id AS bookingId,b.preferred_service_date AS preferredDate,
+    const [rows]=await pool.execute(`SELECT b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,b.preferred_service_date AS preferredDate,
       b.preferred_time_slot AS timeSlot,b.booking_status AS status,sa.address_line AS addressLine
       FROM booking b JOIN service_address sa ON sa.address_id=b.address_id
       WHERE b.customer_id=? AND b.booking_status NOT IN ('Cancelled','Rejected','Expired') AND b.booking_id<>? AND ${cleaningBookingPredicate}
       AND b.preferred_service_date BETWEEN ? AND ? ORDER BY b.preferred_service_date,b.booking_id`,
       [customer.customerId,input.excludeBookingId??0,addCalendarDays(input.from,-6),addCalendarDays(input.to,6)]);
-    existingBookings=rows.filter(row=>normalizeAddress(row.addressLine)===normalizeAddress(addressLine)).map(({addressLine,...booking})=>booking);
+    existingBookings=rows.filter(row=>normalizeAddress(row.addressLine)===normalizeAddress(addressLine)).map(({addressLine,...booking})=>withBookingReference(booking));
   }
   const earliestDate=nextWeekday(input.excludeBookingId?new Date(Date.now()+72*3600000+8*3600000).toISOString().slice(0,10):minimumBookingDate());
   let includesCleaning=input.excludeBookingId?await bookingIncludesCleaning(pool,input.excludeBookingId):input.includesCleaning!=='false';

@@ -156,7 +156,7 @@ function ReportEditor({ row, onClose, onSaved }) {
         ) : (
           <>
             <div className="report-meta">
-              <span>Job: WO-{row.jobId}</span>
+              <span>Work order: WO-{String(row.jobId).padStart(4, '0')}</span><span>Booking reference: {row.bookingReference}</span>
               <span>Submitted: {moment(data.report?.submittedAt)}</span>
               <span>Started: {moment(data.report?.startedAt)}</span>
               <span>Completed: {moment(data.report?.completedAt)}</span>
@@ -336,7 +336,7 @@ export default function ServiceReports({ onChanged }) {
     (r) =>
       (!status || (r.submittedAt ? 'Submitted' : 'Pending') === status) &&
       (!date || r.date === date) &&
-      `SR-${r.reportId ?? ''} WO-${r.jobId} ${r.customer}`
+      `SR-${r.reportId ?? ''} WO-${r.jobId} ${r.bookingReference} ${r.customer}`
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
@@ -370,7 +370,7 @@ export default function ServiceReports({ onChanged }) {
             <Search size={17} />
             <Input
               aria-label="Search reports"
-              placeholder="Search by Report ID, Job ID or customer…"
+              placeholder="Search by report, work order, booking or customer…"
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
@@ -432,7 +432,7 @@ export default function ServiceReports({ onChanged }) {
                 <tr>
                   {[
                     'Report ID',
-                    'Job ID',
+                    'Work order / Booking reference',
                     'Customer',
                     'Service type',
                     'Service date',
@@ -447,7 +447,7 @@ export default function ServiceReports({ onChanged }) {
                 {visible.map((r) => (
                   <tr key={r.jobId}>
                     <td>{r.reportId ? 'SR-' + r.reportId : 'Not submitted'}</td>
-                    <td>WO-{r.jobId}</td>
+                    <td>WO-{String(r.jobId).padStart(4, '0')}<small className="block whitespace-nowrap">Booking: {r.bookingReference}</small></td>
                     <td>{r.customer}</td>
                     <td>{r.serviceType}</td>
                     <td>{formatDate(r.date)}</td>

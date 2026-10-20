@@ -1,3 +1,4 @@
+import { bookingReference } from './booking-reference.mjs';
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
@@ -129,7 +130,7 @@ export function createPublicRouter(pool){
    (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS number_of_units,
    b.preferred_service_date AS preferred_date,b.preferred_time_slot AS time_window,sa.address_line AS service_address,
    b.problem_description AS symptoms,d.special_notes,b.booking_status,b.created_at,b.total_amount
-   FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN service_catalog sc ON sc.service_id=b.service_id JOIN service_address sa ON sa.address_id=b.address_id LEFT JOIN web_booking_details d ON d.booking_id=b.booking_id WHERE c.user_id=? ORDER BY b.created_at DESC,b.booking_id DESC`,[req.customerUser.id]);res.json({success:true,bookings:await attachBookingSelections(pool,bookings,'id')});
+   FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN service_catalog sc ON sc.service_id=b.service_id JOIN service_address sa ON sa.address_id=b.address_id LEFT JOIN web_booking_details d ON d.booking_id=b.booking_id WHERE c.user_id=? ORDER BY b.created_at DESC,b.booking_id DESC`,[req.customerUser.id]);res.json({success:true,bookings:await attachBookingSelections(pool,bookings.map(row=>({...row,bookingReference:bookingReference(row.id,row.created_at)})),'id')});
  });
  r.post('/bookings',async(req,res)=>res.status(201).json({success:true,booking:await createPublicBooking(pool,req.customerUser,req.body)}));
  r.patch('/bookings/:id/status',async(req,res)=>res.json(await changePublicBooking(pool,req.customerUser,req.params.id,'cancel',req.body)));

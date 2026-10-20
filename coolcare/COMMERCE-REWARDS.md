@@ -101,6 +101,12 @@ Admin pages are `/admin/reports` and `/admin/rewards`. The old
 `/admin/payments` page redirects to `/admin/rewards`; its payment forms are gone.
 Customer points remain at `/customer/rewards`.
 
+All order labels, including points activity, reward reservations and report CSV
+exports, use `BK-{creation year}-{booking ID padded to at least four digits}`.
+The server supplies `bookingReference` alongside the unchanged numeric `bookingId`.
+The year comes from the booking, never the points transaction or service date.
+Account adjustments without a booking continue to show `Account`.
+
 Active API routes remain under `/api/commerce` for compatibility. Existing
 session authentication and global CSRF protection apply, and the module reloads
 the active user's role from MySQL. Responses are private/no-store. Customer

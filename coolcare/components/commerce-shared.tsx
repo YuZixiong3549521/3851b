@@ -6,13 +6,13 @@ import { AppContext } from '@/lib/inventory-client';
 
 export type RewardRule = { version: number; pointsPerDollar: number; redemptionPoints: number; redemptionValue: number };
 export type RewardBooking = {
-  bookingId: number; customerId: number; status: string; serviceDate: string;
+  bookingId: number; bookingReference: string; customerId: number; status: string; serviceDate: string;
   customerName: string; email: string; serviceName: string; quote: number | null;
   baseAmount: number | null; additionalFee: number; discount: number; netServiceAmount: number | null;
   rewardStatus: string | null; rewardPoints: number; canReserve: boolean;
   completionReward: { awardedPoints: number; redeemedPoints: number; discountAmount: number; netServiceAmount: number | null; completedAt: string; outcome: string; note: string } | null;
 };
-export type RewardHistory = { id: number; bookingId: number | null; type: string; points: number; description: string; createdAt: string; adjustedBy?: string };
+export type RewardHistory = { id: number; bookingId: number | null; bookingReference: string; type: string; points: number; description: string; createdAt: string; adjustedBy?: string };
 export type RewardsData = { rules: RewardRule; balance: number; reserved: number; available: number; debt: number; history: RewardHistory[]; bookings: RewardBooking[] };
 export const money = (v: number | string | null) => v === null ? 'Not recorded' : new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(Number(v));
 export const day = (v: string) => new Intl.DateTimeFormat('en-SG', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(v.slice(0, 10) + 'T00:00:00Z'));
@@ -82,5 +82,5 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   return <label className="grid min-w-0 gap-2 text-sm font-medium">{label}{children}</label>;
 }
 export function RewardHistoryTable({ rows }: { rows: RewardHistory[] }) {
-  return rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-left text-sm"><caption className="sr-only">Points transaction history</caption><thead><tr className="border-b">{['Date', 'Points', 'Booking', 'Reason'].map(v => <th className="p-3 font-medium" key={v}>{v}</th>)}</tr></thead><tbody>{rows.map(r => <tr className="border-b align-top" key={r.id}><td className="p-3">{moment(r.createdAt)}</td><td className="p-3 whitespace-nowrap font-medium">{r.points > 0 ? '+' : ''}{r.points}<div className="text-xs text-muted-foreground">{r.type}</div></td><td className="p-3">{r.bookingId ? `#${r.bookingId}` : 'Account'}</td><td className="max-w-md p-3">{r.description}{r.adjustedBy && <div className="text-xs text-muted-foreground">Adjusted by {r.adjustedBy}</div>}</td></tr>)}</tbody></table></div> : <p className="text-sm text-muted-foreground">No points transactions yet.</p>;
+  return rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-left text-sm"><caption className="sr-only">Points transaction history</caption><thead><tr className="border-b">{['Date', 'Points', 'Booking', 'Reason'].map(v => <th className="p-3 font-medium" key={v}>{v}</th>)}</tr></thead><tbody>{rows.map(r => <tr className="border-b align-top" key={r.id}><td className="p-3">{moment(r.createdAt)}</td><td className="p-3 whitespace-nowrap font-medium">{r.points > 0 ? '+' : ''}{r.points}<div className="text-xs text-muted-foreground">{r.type}</div></td><td className="p-3 whitespace-nowrap">{r.bookingId ? r.bookingReference : 'Account'}</td><td className="max-w-md p-3">{r.description}{r.adjustedBy && <div className="text-xs text-muted-foreground">Adjusted by {r.adjustedBy}</div>}</td></tr>)}</tbody></table></div> : <p className="text-sm text-muted-foreground">No points transactions yet.</p>;
 }

@@ -1,3 +1,4 @@
+import { withBookingReference } from './booking-reference.mjs';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { AppError, idSchema } from './inventory.mjs';
@@ -191,7 +192,7 @@ export async function updateRewardRule(pool, actorId, raw) {
 }
 
 export async function listRewardBookings(pool, customerId) {
-  const [rows] = await pool.execute(`SELECT b.booking_id AS bookingId,b.customer_id AS customerId,b.booking_status AS status,b.preferred_service_date AS serviceDate,
+  const [rows] = await pool.execute(`SELECT b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,b.customer_id AS customerId,b.booking_status AS status,b.preferred_service_date AS serviceDate,
     b.total_amount AS baseAmount,u.full_name AS customerName,u.email,
     COALESCE((SELECT bp.package_name FROM booking_package bp WHERE bp.booking_id=b.booking_id),
       (SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ') FROM booking_service bs WHERE bs.booking_id=b.booking_id),s.service_name) AS serviceName,
@@ -206,7 +207,7 @@ export async function listRewardBookings(pool, customerId) {
   return rows.map(row => {
     const quote = row.baseAmount === null ? null : (dollars(row.baseAmount) + dollars(row.additionalFee)) / 100;
     const { completionOutcome, completedGrossAmount, completedDiscount, completedNetAmount, awardedPoints, redeemedPoints, completedAt, completionNote, ...booking } = row;
-    return { ...booking, baseAmount: row.baseAmount === null ? null : number(row.baseAmount), additionalFee: number(row.additionalFee), quote, discount: number(row.discount),
+    return { ...withBookingReference(booking), baseAmount: row.baseAmount === null ? null : number(row.baseAmount), additionalFee: number(row.additionalFee), quote, discount: number(row.discount),
       netServiceAmount: quote === null ? null : Math.max(0, dollars(quote) - dollars(row.discount)) / 100,
       canReserve: !terminal.has(row.status) && row.status !== 'Completed' && !completionOutcome && row.rewardStatus !== 'Redeemed' && quote !== null,
       completionReward: completionOutcome ? { outcome: completionOutcome, grossAmount: completedGrossAmount === null ? null : number(completedGrossAmount), discountAmount: number(completedDiscount), netServiceAmount: completedNetAmount === null ? null : number(completedNetAmount), awardedPoints, redeemedPoints, completedAt, note: completionNote } : null };
@@ -217,12 +218,12 @@ export async function rewardsSummary(pool, customerId) {
   const [[account]] = await pool.execute(`SELECT a.loyalty_account_id AS id,a.current_points AS balance,
     (SELECT COALESCE(SUM(points),0) FROM reward_reservation WHERE loyalty_account_id=a.loyalty_account_id AND status='Reserved') AS reserved
     FROM loyalty_account a WHERE customer_id=?`, [customerId]);
-  const [history] = account ? await pool.execute(`SELECT t.loyalty_transaction_id AS id,t.booking_id AS bookingId,t.transaction_type AS type,t.points,t.description,t.created_at AS createdAt,u.full_name AS adjustedBy
-    FROM loyalty_transaction t LEFT JOIN reward_adjustment_audit a ON a.loyalty_transaction_id=t.loyalty_transaction_id LEFT JOIN user_account u ON u.user_id=a.actor_user_id
+  const [history] = account ? await pool.execute(`SELECT t.loyalty_transaction_id AS id,t.booking_id AS bookingId,b.created_at AS bookingCreatedAt,t.transaction_type AS type,t.points,t.description,t.created_at AS createdAt,u.full_name AS adjustedBy
+    FROM loyalty_transaction t LEFT JOIN booking b ON b.booking_id=t.booking_id LEFT JOIN reward_adjustment_audit a ON a.loyalty_transaction_id=t.loyalty_transaction_id LEFT JOIN user_account u ON u.user_id=a.actor_user_id
     WHERE t.loyalty_account_id=? ORDER BY t.loyalty_transaction_id DESC LIMIT 200`, [account.id]) : [[]];
   const balance = number(account?.balance), reserved = number(account?.reserved);
   const bookings = await listRewardBookings(pool, customerId);
-  return { rules: config, balance, reserved, available: Math.max(0, balance - reserved), debt: Math.max(0, -balance), history, bookings };
+  return { rules: config, balance, reserved, available: Math.max(0, balance - reserved), debt: Math.max(0, -balance), history: history.map(withBookingReference), bookings };
 }
 
 export const reportFilterSchema = z.object({ from: date, to: date, serviceId: idSchema.optional(), technicianId: idSchema.optional() }).strict().refine(v => v.from <= v.to && (Date.parse(v.to) - Date.parse(v.from)) / 86400000 <= 366, 'Choose a date range of at most 367 days.');
@@ -238,7 +239,7 @@ function bookingFilter(filters, alias = 'b') {
 }
 export async function commerceReport(pool, raw) {
   const filters = reportFilterSchema.parse(raw), f = bookingFilter(filters);
-  const [orders] = await pool.execute(`SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS serviceDate,
+  const [orderRows] = await pool.execute(`SELECT b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,b.booking_status AS status,b.preferred_service_date AS serviceDate,
     b.total_amount AS baseAmount,done.gross_amount AS completionGrossAmount,done.net_amount AS completionNetAmount,
     COALESCE(IF(done.outcome IN ('Awarded','Unknown price'),done.discount_amount,NULL),IF(r.status='Redeemed',r.discount_amount,0),0) AS rewardDiscount,
     COALESCE((SELECT bp.package_name FROM booking_package bp WHERE bp.booking_id=b.booking_id),
@@ -251,6 +252,7 @@ export async function commerceReport(pool, raw) {
     FROM booking b JOIN service_catalog s ON s.service_id=b.service_id LEFT JOIN booking_completion_reward done ON done.booking_id=b.booking_id
     LEFT JOIN reward_reservation r ON r.booking_id=b.booking_id
     WHERE b.preferred_service_date BETWEEN ? AND ?${f.sql} ORDER BY b.preferred_service_date,b.booking_id`, [...(filters.technicianId ? [filters.technicianId, filters.technicianId] : []), filters.from, filters.to, ...f.values]);
+  const orders = orderRows.map(withBookingReference);
   const [parts] = await pool.execute(`SELECT p.part_id AS partId,p.part_name AS name,p.stock_unit AS unit,
     SUM(IF(i.transaction_type='Stock Out',i.quantity,0)) AS issued,SUM(IF(i.transaction_type='Return',i.quantity,0)) AS returned
     FROM inventory_transaction i JOIN part p ON p.part_id=i.part_id JOIN work_order w ON w.job_id=i.job_id JOIN booking b ON b.booking_id=w.booking_id
@@ -292,7 +294,7 @@ function reportCsv(data) {
     ['Metric', 'Value'], ...Object.entries(data.summary),
     ['Service filter', data.filters.serviceId ?? 'All'], ['Technician filter', data.filters.technicianId ?? 'All'],
     [], ['Scheduled service date', 'Completed bookings', 'Service amount SGD', 'Reward discounts SGD', 'Net service amount SGD'], ...data.dailyService.map(r => [r.date, r.completed, r.serviceAmount, r.rewardDiscounts, r.netServiceAmount]),
-    [], ['Booking', 'Service date', 'Service', 'Status', 'Started visits', 'Return requests', 'Service amount SGD', 'Reward discount SGD', 'Net service amount SGD'], ...data.orders.map(r => [r.bookingId, r.serviceDate, r.serviceName, r.status, r.visits, r.returns, r.serviceAmount, r.rewardDiscount, r.netServiceAmount]),
+    [], ['Booking', 'Service date', 'Service', 'Status', 'Started visits', 'Return requests', 'Service amount SGD', 'Reward discount SGD', 'Net service amount SGD'], ...data.orders.map(r => [r.bookingReference, r.serviceDate, r.serviceName, r.status, r.visits, r.returns, r.serviceAmount, r.rewardDiscount, r.netServiceAmount]),
     [], ['Part', 'Unit', 'Issued', 'Returned'], ...data.parts.map(r => [r.name, r.unit, r.issued, r.returned]),
   ]);
 }

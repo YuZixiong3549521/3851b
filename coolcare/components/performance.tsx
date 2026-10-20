@@ -13,6 +13,7 @@ type Visit = {
   reportId: number;
   jobId: number;
   bookingId: number;
+  bookingReference: string;
   technicianId: number;
   technician: string;
   customer: string;
@@ -509,7 +510,7 @@ function VisitCard({
       <header className="flex flex-wrap justify-between gap-3">
         <div>
           <p className="text-xs font-medium text-primary">
-            Booking #{v.bookingId} · Report #{v.reportId}
+            Booking {v.bookingReference} · Report #{v.reportId}
           </p>
           <h3 className="mt-1 text-lg font-semibold">{v.service}</h3>
           <p className="text-sm text-muted-foreground">

@@ -1,3 +1,4 @@
+import { withBookingReference } from './booking-reference.mjs';
 import express from 'express';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -173,7 +174,7 @@ function filters(raw) {
   return f;
 }
 const visitSelect = `SELECT p.report_id AS reportId,p.job_id AS jobId,p.technician_id AS technicianId,
-  tech.full_name AS technician,b.booking_id AS bookingId,customer.full_name AS customer,
+  tech.full_name AS technician,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,customer.full_name AS customer,
   sa.address_line AS address,COALESCE((SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ')
     FROM booking_service bs WHERE bs.booking_id=b.booking_id),sc.service_name) AS service,
   DATE_FORMAT(p.scheduled_start,'%Y-%m-%d %H:%i:%s') AS scheduledStart,
@@ -223,7 +224,7 @@ export async function listPerformance(pool, user, raw = {}) {
     values,
   );
   const visits = rows.map((r) => ({
-    ...r,
+    ...withBookingReference(r),
     checklistRecorded: Boolean(r.checklistRecorded),
     punctualityScore: punctualityScore(r, settings),
   }));

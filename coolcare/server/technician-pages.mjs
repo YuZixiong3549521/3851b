@@ -1,3 +1,4 @@
+import { bookingReference, withBookingReference } from './booking-reference.mjs';
 import {snapshotVisit} from './return-visits.mjs';
 import {awardCompletedBookingRewards} from './commerce.mjs';
 import {registerTechnicianPhotos} from './service-photo-upload.mjs';
@@ -49,6 +50,7 @@ async function ownedWork(c, userId, jobId, lock = false) {
 }
 export async function getReport(c, userId, jobId) {
   const work = await ownedWork(c, userId, jobId);
+  const [[booking]] = await c.execute('SELECT created_at FROM booking WHERE booking_id=?', [work.booking_id]);
   const [[eligibility]]=await c.execute(`SELECT (EXISTS(SELECT 1 FROM booking b JOIN simple_service_catalog ss ON ss.service_id=b.service_id WHERE b.booking_id=? AND ss.code='repair') OR EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog ss ON ss.service_id=bs.service_id WHERE bs.booking_id=? AND ss.code='repair')) AS repairEligible`,[work.booking_id,work.booking_id]);
   const [[report]] = await c.execute(reportSelect, [jobId]);
   const [history] = await c.execute(
@@ -57,6 +59,8 @@ export async function getReport(c, userId, jobId) {
   );
   return {
     jobId,
+    bookingId: work.booking_id,
+    bookingReference: bookingReference(work.booking_id, booking?.created_at),
     status: work.current_status,
     repairEligible:Boolean(eligibility.repairEligible),
     serviceProgress: await getServiceProgress(c,jobId),
@@ -297,10 +301,10 @@ export function registerTechnicianPages(router, pool) {
   );
   router.get('/reports', async (req, res) => {
     const [rows] = await pool.execute(
-      `SELECT w.job_id AS jobId,r.report_id AS reportId,u.full_name AS customer,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,sc.service_name AS serviceType,w.current_status AS jobStatus,r.submitted_time AS submittedAt FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN user_account u ON u.user_id=cu.user_id JOIN service_catalog sc ON sc.service_id=b.service_id LEFT JOIN service_report r ON r.job_id=w.job_id WHERE t.user_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status IN ('In Progress','Completed','Awaiting return arrangement','Return visit') ORDER BY w.appointment_date DESC,w.job_id DESC`,
+      `SELECT w.job_id AS jobId,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,r.report_id AS reportId,u.full_name AS customer,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,sc.service_name AS serviceType,w.current_status AS jobStatus,r.submitted_time AS submittedAt FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN user_account u ON u.user_id=cu.user_id JOIN service_catalog sc ON sc.service_id=b.service_id LEFT JOIN service_report r ON r.job_id=w.job_id WHERE t.user_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status IN ('In Progress','Completed','Awaiting return arrangement','Return visit') ORDER BY w.appointment_date DESC,w.job_id DESC`,
       [req.technicianUser.id],
     );
-    res.json({ reports: rows });
+    res.json({ reports: rows.map(withBookingReference) });
   });
   router.get('/reports/:jobId', async (req, res) =>
     res.json(

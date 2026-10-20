@@ -234,6 +234,8 @@ test('commerce HTTP enforces role, CSRF and customer booking ownership', () => f
     const csv = await fetch(`${origin}/api/commerce/admin/reports.csv?from=${today()}&to=${today()}`, { headers: { Cookie: cookie } });
     assert.equal(csv.status, 200);
     const text = await csv.text();
+    const reportBooking = (await listRewardBookings(db, f.customerId)).find(b => b.bookingId === f.bookings[0]);
+    assert.ok(text.includes(reportBooking.bookingReference), 'CSV uses the same full reference as the rewards API');
     assert.match(text, /Net service amount SGD/);
     assert.doesNotMatch(text, /receipts|refunds|netReceived/);
   } finally { await new Promise(resolve => server.close(resolve)); }

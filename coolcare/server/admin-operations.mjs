@@ -1,3 +1,4 @@
+import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
 import { registerReturnRoutes } from './return-visits.mjs';
 import { registerAdminWorkspaceRoutes } from './admin-workspace.mjs';
 import { getServiceProgress } from './service-progress.mjs';
@@ -1062,10 +1063,18 @@ export async function listAdminBookings(pool, query) {
   }
   if (data.queue === 'review') where.push('b.admin_waiting_since IS NULL');
   if (data.q) {
-    where.push(
-      '(u.full_name LIKE ? OR u.email LIKE ? OR CAST(b.booking_id AS CHAR)=?)',
-    );
-    values.push(`%${data.q}%`, `%${data.q}%`, data.q.replace(/^BK-0*/i, ''));
+    const reference = parseBookingSearch(data.q);
+    if (reference) {
+      where.push('b.booking_id=?');
+      values.push(reference.id);
+      if (reference.year !== null) {
+        where.push('YEAR(b.created_at)=?');
+        values.push(reference.year);
+      }
+    } else {
+      where.push('(u.full_name LIKE ? OR u.email LIKE ?)');
+      values.push(`%${data.q}%`, `%${data.q}%`);
+    }
   }
   const clause = where.length ? ' WHERE ' + where.join(' AND ') : '';
   const [[{ total }]] = await pool.execute(
@@ -1099,7 +1108,7 @@ export async function listAdminBookings(pool, query) {
     LIMIT ? OFFSET ?`,
     [...values, data.pageSize, (page - 1) * data.pageSize],
   );
-  return { rows, total: Number(total), page, pageSize: data.pageSize };
+  return { rows: rows.map(withBookingReference), total: Number(total), page, pageSize: data.pageSize };
 }
 
 export async function listAdminSchedule(pool, query) {
@@ -1128,7 +1137,7 @@ export async function listAdminSchedule(pool, query) {
     ORDER BY b.preferred_service_date,b.slot_start,b.booking_id`,
     [data.from, data.to],
   );
-  return { from: data.from, to: data.to, rows };
+  return { from: data.from, to: data.to, rows: rows.map(withBookingReference) };
 }
 
 export async function getAdminBooking(pool, bookingId) {
@@ -1166,7 +1175,7 @@ export async function getAdminBooking(pool, bookingId) {
     [bookingId],
   );
   return {
-    ...booking,
+    ...withBookingReference(booking),
     timeline,
     assignments: await Promise.all(
       assignments.map(async (item) => ({
