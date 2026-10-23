@@ -154,6 +154,7 @@ function WorkStatusActions({
     <section className="tech-status-actions">
       <h3>Work order status</h3>
       <p>Start the visit when you begin work. End service when the visit is finished; the customer will see it in History. You can submit the service report afterwards.</p>
+      {job.serviceTimingTestMode && <p role="status">Test mode: appointment time restrictions are off. Service actions still update this order.</p>}
       {startBlocked && <p role="status">{job.startBlockedReason}</p>}
       {completionBlocked && <p role="status">{job.completionBlockedReason}</p>}
       {error && (

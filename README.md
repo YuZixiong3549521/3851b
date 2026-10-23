@@ -15,6 +15,8 @@ npm start
 
 打开 http://localhost:3000/ 。以后可在 Docker Desktop 运行后双击 `启动整合网站.cmd`。`npm run db:down` 仅停止数据库，保留数据卷。
 
+课堂测试需要提前开始服务时，在本机 `coolcare/.env.local` 设置 `SERVICE_TIMING_TEST_MODE=true`，然后重新运行 `npm start`。技师工单和报告页会显示英文 Test mode 提示，可以在预约日期或时间之前 Start service、End service 和提交报告。操作仍写入本地数据库并正常处理积分；预约日期不变，开始与结束时间记录实际操作时间。工单归属、状态顺序和每名技师只能同时进行一单的限制继续有效。设置为 `false` 并重启可恢复预约时间限制；未设置时默认关闭，`NODE_ENV=production` 时始终关闭。此本机配置不提交 GitHub，组员需要各自开启。自动测试默认保留严格时间规则，另有测试覆盖提前开工模式。
+
 新电脑只需要当前仓库中的文件，不需要旧 ZIP、旧项目目录或 Git LFS。`coolcare/` 包含两端前端源码、共享组件、Node API、数据库结构和迁移；根目录保留统一启动脚本、团队约定及 Postman 工作区。
 
 `db:sample` 是可选的本机合成数据导入步骤：提供 28 笔相互关联的预约、2 份年度套餐、10 份维护报告和完整库存流水。已有业务数据时会拒绝覆盖；只有停止网站并明确使用 `--replace` 才会在备份后替换，日常 `db:up` 不清理数据。试运行、指定日期、账号和备份说明见 [SAMPLE-DATA.md](coolcare/SAMPLE-DATA.md)。

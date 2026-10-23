@@ -1,5 +1,5 @@
 import {lockTechnicianRoster} from './scheduling.mjs';
-import {visitStartBlockReason,visitCompletionBlockReason} from './visit-start.mjs';
+import {visitStartBlockReason,visitCompletionBlockReason,serviceTimingTestMode} from './visit-start.mjs';
 import { withBookingReference } from './booking-reference.mjs';
 import {snapshotVisit} from './return-visits.mjs';
 import {capturePerformanceVisitStart} from './performance.mjs';
@@ -56,6 +56,7 @@ export async function getTechnicianJobs(pool, technicianId, jobId) {
   const now=new Date();
   return rows.map(({lastModifiedEpoch,reportSubmittedAtEpoch,...row})=>{const startBlockedReason=visitStartBlockReason(row.date,row.time,now,active?.jobId!==row.jobId?active?.jobId:null);return {...withBookingReference(row),lastModified:lastModifiedEpoch?new Date(Number(lastModifiedEpoch)*1000).toISOString():null,reportSubmittedAt:reportSubmittedAtEpoch?new Date(Number(reportSubmittedAtEpoch)*1000).toISOString():null,reportPending:Boolean(row.reportPending),canStart:!startBlockedReason,startBlockedReason,canComplete:!visitCompletionBlockReason(row.date,now),completionBlockedReason:visitCompletionBlockReason(row.date,now),cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
     status:row.status==='On The Way'?'On the Way':row.status,
+    serviceTimingTestMode:serviceTimingTestMode(),
     initials:row.customer.split(/\s+/).map(s=>s[0]).slice(0,2).join('')};});
 }
 

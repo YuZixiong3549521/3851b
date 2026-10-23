@@ -1,4 +1,4 @@
-import {visitCompletionBlockReason} from './visit-start.mjs';
+import {visitCompletionBlockReason,serviceTimingTestMode} from './visit-start.mjs';
 import { bookingReference, withBookingReference } from './booking-reference.mjs';
 import {snapshotVisit} from './return-visits.mjs';
 import {awardCompletedBookingRewards} from './commerce.mjs';
@@ -64,6 +64,7 @@ export async function getReport(c, userId, jobId) {
     bookingId: work.booking_id,
     bookingReference: bookingReference(work.booking_id, booking?.created_at),
     status: work.current_status,
+    serviceTimingTestMode:serviceTimingTestMode(),
     repairEligible:Boolean(eligibility.repairEligible),
     serviceProgress: await getServiceProgress(c,jobId),
     report: reportDates(report),

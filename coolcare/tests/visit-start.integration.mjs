@@ -69,3 +69,117 @@ test('start dates are enforced by the API, and simultaneous starts allow only on
   await c.commit();await c.end();
  }
 });
+
+test('local timing test mode runs future visits through both completion paths without relaxing ownership or duplicate protections',async()=>{
+ const c=await openPrivilegedFixtureConnection();
+ const oldMode=process.env.SERVICE_TIMING_TEST_MODE,oldEnvironment=process.env.NODE_ENV;
+ // Keep every synthetic account, order, report, performance visit and reward in
+ // one outer transaction. Application commits release a savepoint only.
+ const executor={execute:c.execute.bind(c),query:c.query.bind(c),
+  beginTransaction:()=>c.query('SAVEPOINT timing_mode_operation'),
+  commit:()=>c.query('RELEASE SAVEPOINT timing_mode_operation'),
+  rollback:()=>c.query('ROLLBACK TO SAVEPOINT timing_mode_operation'),release(){}};
+ const db={...executor,getConnection:async()=>executor};
+ try {
+  process.env.SERVICE_TIMING_TEST_MODE='true';
+  process.env.NODE_ENV='test';
+  await c.beginTransaction();
+  const [[admin]]=await c.query('SELECT user_id FROM admin_profile LIMIT 1');
+  const [[service]]=await c.query("SELECT service_id FROM simple_service_catalog WHERE code='cleaning' LIMIT 1");
+  const [[date]]=await c.query("SELECT DATE_FORMAT(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 90 DAY),'%Y-%m-%d') AS scheduledDate");
+  const users=[];
+  for(const [role,name] of [['Customer','Timing mode customer'],['Technician','Timing mode technician'],['Technician','Timing mode other technician']]){
+   const [u]=await c.execute(`INSERT INTO user_account(role_id,full_name,email,password_hash)
+     SELECT role_id,?,?,'disabled-test-password' FROM role WHERE role_name=?`,[name,`timing-mode-${randomUUID()}@coolcare.test`,role]);
+   users.push(u.insertId);
+  }
+  const [customer]=await c.execute('INSERT INTO customer(user_id) VALUES (?)',[users[0]]);
+  const [address]=await c.execute('INSERT INTO service_address(customer_id,address_line,postal_code) VALUES (?,?,?)',[customer.insertId,'Isolated service timing test address','560123']);
+  const [tech]=await c.execute('INSERT INTO technician(user_id) VALUES (?)',[users[1]]);
+  await c.execute('INSERT INTO technician(user_id) VALUES (?)',[users[2]]);
+  const bookings=[],jobs=[];
+  for(let i=0;i<2;i++){
+   const [b]=await c.execute("INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,preferred_time_slot,booking_status,total_amount) VALUES (?,?,?,?,'09:00 - 11:00','Assigned',100)",[customer.insertId,address.insertId,service.service_id,date.scheduledDate]);
+   bookings.push(b.insertId);
+   const [a]=await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Assigned')",[b.insertId,tech.insertId,admin.user_id]);
+   const [w]=await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status) VALUES (?,?,?,'09:00:00','Assigned')",[b.insertId,a.insertId,date.scheduledDate]);
+   jobs.push(w.insertId);
+  }
+  const start=()=>({requestId:randomUUID(),expectedStatus:'Assigned',status:'In Progress'});
+  const firstStart=start(),secondStart=start();
+  const [available]=await getTechnicianJobs(db,tech.insertId,jobs[0]);
+  assert.equal(available.serviceTimingTestMode,true);
+  assert.equal(available.canStart,true);
+  assert.equal(available.canComplete,true);
+  await assert.rejects(updateTechnicianJobStatus(db,users[2],jobs[0],start()),e=>e.status===404);
+  await assert.rejects(updateTechnicianJobStatus(db,users[1],jobs[0],{requestId:randomUUID(),expectedStatus:'In Progress',status:'Completed'}),e=>e.status===409&&/status step/.test(e.message));
+  await updateTechnicianJobStatus(db,users[1],jobs[0],firstStart);
+  assert.equal((await updateTechnicianJobStatus(db,users[1],jobs[0],firstStart)).replayed,true);
+  const [blocked]=await getTechnicianJobs(db,tech.insertId,jobs[1]);
+  assert.equal(blocked.canStart,false);
+  assert.match(blocked.startBlockedReason,/before starting another service/);
+  await assert.rejects(updateTechnicianJobStatus(db,users[1],jobs[1],secondStart),e=>e.status===409&&/before starting another service/.test(e.message));
+  await assert.rejects(getReport(db,users[2],jobs[0]),e=>e.status===404);
+  assert.equal((await getReport(db,users[1],jobs[0])).canEdit,true);
+  const end={requestId:randomUUID(),expectedStatus:'In Progress',status:'Completed'};
+  await updateTechnicianJobStatus(db,users[1],jobs[0],end);
+  assert.equal((await updateTechnicianJobStatus(db,users[1],jobs[0],end)).replayed,true);
+  const report={workPerformed:'Synthetic future visit completed in local test mode',problemFound:'',solutionApplied:'Filters cleaned',checklist:'Cooling checked',customerSignatureUrl:'',technicianSignatureUrl:''};
+  const ended=await getReport(db,users[1],jobs[0]);
+  const firstSubmission={requestId:randomUUID(),expectedVersion:ended.version,report};
+  await saveReport(db,users[1],jobs[0],firstSubmission);
+  assert.equal((await saveReport(db,users[1],jobs[0],firstSubmission)).replayed,true);
+  await updateTechnicianJobStatus(db,users[1],jobs[1],secondStart);
+  const draft=await getReport(db,users[1],jobs[1]);
+  assert.equal(draft.canEdit,true);
+  const secondSubmission={requestId:randomUUID(),expectedVersion:draft.version,report};
+  await assert.rejects(saveReport(db,users[2],jobs[1],secondSubmission),e=>e.status===404);
+  await saveReport(db,users[1],jobs[1],secondSubmission);
+  assert.equal((await saveReport(db,users[1],jobs[1],secondSubmission)).replayed,true);
+  const [visits]=await c.execute(`SELECT w.current_status,b.booking_status,a.assignment_status,
+    DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS scheduledDate,w.appointment_time AS scheduledTime,
+    DATE_FORMAT(r.visit_service_date,'%Y-%m-%d') AS reportDate,r.visit_start_time AS reportTime,
+    r.visit_technician_id AS reportTechnician,
+    ABS(TIMESTAMPDIFF(SECOND,r.started_at,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))) AS startedSecondsAgo,
+    ABS(TIMESTAMPDIFF(SECOND,r.completed_at,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))) AS completedSecondsAgo,
+    (r.completed_at>=r.started_at) AS chronological,
+    (p.scheduled_start=TIMESTAMP(DATE(w.appointment_date),w.appointment_time)) AS performanceSchedulePreserved,
+    (p.actual_start=r.started_at AND ABS(TIMESTAMPDIFF(SECOND,p.actual_end,r.completed_at))<=2) AS actualPerformanceTimes
+    FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN assignment a ON a.assignment_id=w.assignment_id
+    JOIN service_report r ON r.job_id=w.job_id JOIN performance_visit p ON p.report_id=r.report_id
+    WHERE w.job_id IN (?,?)`,jobs);
+  assert.equal(visits.length,2);
+  for(const visit of visits){
+   assert.equal(visit.current_status,'Completed');
+   assert.equal(visit.booking_status,'Completed');
+   assert.equal(visit.assignment_status,'Completed');
+   assert.equal(visit.scheduledDate,date.scheduledDate);
+   assert.equal(visit.reportDate,date.scheduledDate);
+   assert.equal(visit.scheduledTime,'09:00:00');
+   assert.equal(visit.reportTime,'09:00:00');
+   assert.equal(visit.reportTechnician,tech.insertId);
+   assert.ok(Number.isFinite(visit.startedSecondsAgo)&&visit.startedSecondsAgo>=0&&visit.startedSecondsAgo<120);
+   assert.ok(Number.isFinite(visit.completedSecondsAgo)&&visit.completedSecondsAgo>=0&&visit.completedSecondsAgo<120);
+   assert.equal(visit.chronological,1);
+   assert.equal(visit.performanceSchedulePreserved,1);
+   assert.equal(visit.actualPerformanceTimes,1);
+  }
+  const [[counts]]=await c.execute(`SELECT
+    (SELECT COUNT(*) FROM service_report_revision WHERE job_id IN (?,?)) AS revisions,
+    (SELECT COUNT(*) FROM service_visit_record WHERE job_id IN (?,?)) AS visits,
+    (SELECT COUNT(*) FROM booking_status_history WHERE booking_id IN (?,?)) AS transitions,
+    (SELECT COUNT(*) FROM booking_completion_reward WHERE booking_id IN (?,?)) AS rewards,
+    (SELECT COUNT(*) FROM loyalty_transaction WHERE booking_id IN (?,?) AND transaction_type='Earned') AS earnings`,[...jobs,...jobs,...bookings,...bookings,...bookings]);
+  assert.equal(counts.revisions,2);
+  assert.equal(counts.visits,2);
+  assert.equal(counts.transitions,4);
+  assert.equal(counts.rewards,2);
+  const [[rule]]=await c.query('SELECT points_per_dollar FROM reward_rule WHERE rule_id=1');
+  assert.equal(counts.earnings,Number(rule.points_per_dollar)>0?2:0);
+ } finally {
+  if(oldMode===undefined)delete process.env.SERVICE_TIMING_TEST_MODE;else process.env.SERVICE_TIMING_TEST_MODE=oldMode;
+  if(oldEnvironment===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=oldEnvironment;
+  await c.rollback();
+  await c.end();
+ }
+});

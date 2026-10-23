@@ -59,6 +59,7 @@ const report = {
 };
 test('report submission completes the visit, edits persist with audit and preserve completion time, retries are idempotent', () =>
   fixture(async (db, c, a) => {
+    await arrangeVisitForNow(c,a.jobId);
     await c.execute(
       "UPDATE work_order SET current_status='In Progress' WHERE job_id=?",
       [a.jobId],

@@ -162,6 +162,7 @@ function ReportEditor({ row, onClose, onSaved }) {
               <span>Completed: {formatSingaporeDateTime(data.report?.completedAt)}</span>
             </div>
             {data.status==='Awaiting return arrangement' && <p role="status">Submit this visit's report before the administrator can dispatch a return visit. The report becomes read-only after return dispatch.</p>}
+            {data.serviceTimingTestMode && <p role="status">Test mode: appointment time restrictions are off. Service actions still update this order.</p>}
             <VisitReports reports={data.serviceProgress?.visitReports}/>
             {edit ? (
               <form onSubmit={submit} className="portal-form">
