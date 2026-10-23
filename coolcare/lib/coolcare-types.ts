@@ -186,6 +186,7 @@ export type CreatedBooking = {
   serviceName: string;
   totalAmount: number;
   annualBundle?: AnnualBundle | null;
+  rewardReservation?: { bookingId: number; points: number; discount: number; status: string } | null;
 };
 
 export type ServiceReport = {
@@ -217,6 +218,8 @@ export type ServiceReport = {
 };
 
 export type BookingInput = {
+  rewardPoints?: number;
+  rewardRuleVersion?: number;
   renewalOfSeriesId?: number;
   propertyType?: string;
   postalCode?: string;

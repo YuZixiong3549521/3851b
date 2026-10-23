@@ -12,6 +12,7 @@ import { BookingServiceSelection, bookingChangeNotice, bookingFrequencyNotice, g
 import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingAddressField } from '@/components/booking-address-field';
+import { BookingRewardSelection } from '@/components/booking-reward-selection';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { bookingConflictMessage } from '@/components/booking-availability-notice';
 import { useBookingAvailability } from '@/lib/use-booking-availability';
@@ -69,6 +70,8 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   const [phoneTouched, setPhoneTouched] = useState(false);
   const [uncertain, setUncertain] = useState(false);
   const [priceChanged, setPriceChanged] = useState(false);
+  const [rewardsValid, setRewardsValid] = useState(true);
+  const [rewardRefresh, setRewardRefresh] = useState(0);
   const inFlight = useRef(false);
   const confirming = useRef(false);
   const pendingConfirmation = useRef<Parameters<typeof assistantApi.confirm>[0] | null>(null);
@@ -100,6 +103,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   const receipt = record?.status === 'completed' ? record.booking : null;
   const quote = record?.quote;
   const estimate = quote && !store.dirty && (screen === 'review' || screen === 'success') ? quote.totalAmount : selected.estimate;
+  const rewardAmount = annual ? annualVisitAmounts(estimate)[0] : estimate;
   const phoneError = phoneTouched ? phoneNumberError(draft.phone) : '';
   const canReview = selected.valid && !phoneNumberError(draft.phone) && draft.serviceAddress.trim().length >= 5 && !bookingDateError(draft.preferredDate) && Boolean(draft.timeWindow) && !selectedSlotFull;
   const savedProblem = ['error', 'conflict', 'auth'].includes(store.saveStatus);
@@ -122,11 +126,13 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
     if (problem.status === 401 || problem.status === 403 || problem.code === 'ACCOUNT_CHANGED') setAuthExpired(true);
     if (problem.code === 'DRAFT_CONFLICT') setDraftConflict(true);
     if (problem.details?.conflicts) setConflicts(problem.details.conflicts);
+    if (problem.code === 'REWARD_SELECTION_INVALID') { setScreen('review'); setRewardRefresh(value => value + 1); }
     if (fields && problem.code === 'VALIDATION_ERROR') {
       const field = Object.keys(fields)[0];
       if (['phone', 'postalCode', 'serviceAddress', 'notes'].includes(field)) { setScreen('address'); setPhoneTouched(true); }
       else if (['serviceId', 'serviceIds', 'propertyType', 'packageId', 'numberOfUnits'].includes(field)) setScreen('service');
       else if (['preferredDate', 'timeWindow'].includes(field)) setScreen('schedule');
+      else if (['rewardPoints', 'rewardRuleVersion'].includes(field)) setScreen('review');
       setEditingReview(true);
     }
     return problem;
@@ -167,7 +173,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
       }
       setNotice(''); setConflicts([]); setEditingReview(false); setPriceChanged(false); setPhoneTouched(false);
       pendingConfirmation.current = null;
-      store.update({ step: 'service', preferredDate: earliestBookingDate(), serviceAddress: context.addresses.find(address => address.isDefault)?.addressLine || context.addresses[0]?.addressLine || '', phone: context.customer.phone || '', notes: '', serviceId: undefined, serviceIds: [], propertyType: undefined, packageId: undefined });
+      store.update({ step: 'service', preferredDate: earliestBookingDate(), serviceAddress: context.addresses.find(address => address.isDefault)?.addressLine || context.addresses[0]?.addressLine || '', phone: context.customer.phone || '', notes: '', serviceId: undefined, serviceIds: [], propertyType: undefined, packageId: undefined, rewardPoints: 0, rewardRuleVersion: undefined });
       await store.flush(true); setScreen('service');
     });
   }
@@ -200,12 +206,15 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   }
   async function review() {
     if (!context || !validCurrentStep()) return;
+    if (screen === 'review' && !rewardsValid) { setError('Check your selected loyalty points before reviewing this booking.'); return; }
     await run('Checking prices and all visit dates…', async () => {
       const previousAmount = store.recordRef.current?.quote?.totalAmount ?? selected.estimate;
       store.update({ step: 'review' });
       const saved = await store.flush();
       if (!saved) throw new Error('Save your answers before requesting a review.');
       if (saved.status === 'completed') { accept(saved); return; }
+      // Keep the points selector reachable if the saved selection is no longer usable.
+      setScreen('review');
       try {
         const checked = await assistantApi.review({ expectedUserId: context.customer.userId, draftId: saved.draftId, revision: saved.revision });
         accept(checked); setScreen('review'); setEditingReview(false); setConflicts([]);
@@ -225,7 +234,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   async function confirm() {
     if (!context || confirming.current) return;
     const current = store.recordRef.current;
-    if (!current?.quote || current.status !== 'reviewed' || store.dirty || savedProblem) { setError('Check the current price and dates again before confirming.'); return; }
+    if (!current?.quote || current.status !== 'reviewed' || store.dirty || savedProblem || !rewardsValid) { setError('Check the current price, loyalty points and dates again before confirming.'); return; }
     confirming.current = true;
     const input = { expectedUserId: context.customer.userId, draftId: current.draftId, revision: current.revision, quoteId: current.quote.quoteId };
     pendingConfirmation.current = input;
@@ -238,10 +247,13 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
         if (problem.code === 'REVIEW_REQUIRED' && problem.state) {
           pendingConfirmation.current = null;
           accept(problem.state); setScreen('review'); setPriceChanged(true); setUncertain(false);
-          setNotice('The price changed. Review the updated estimate below, then select Confirm updated price to accept it.'); return;
+          setRewardRefresh(value => value + 1);
+          setNotice('The price or reward conversion changed. Review the updated amounts below, then select Confirm updated price to accept them.'); return;
         }
         if (problem.code === 'SCHEDULE_CONFLICT') { pendingConfirmation.current = null; if (problem.state) accept(problem.state); setScreen('schedule'); setEditingReview(true); setUncertain(false); throw reason; }
         if (!problem.status || problem.status >= 500) { setUncertain(true); setError('We could not verify the confirmation response. Check the saved result before editing or starting another booking.'); return; }
+        pendingConfirmation.current = null;
+        setRewardRefresh(value => value + 1);
         throw reason;
       }
     });
@@ -337,7 +349,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
           {(screen === 'review' || screen === 'success') && <>
             {receipt && <div role="status" className="rounded-xl bg-emerald-50 p-4 text-emerald-900"><p className="flex items-center gap-2 font-bold"><CheckCircle2 className="size-5" />{receipt.annualBundle ? 'Four booking requests saved' : 'Booking ' + (receipt.bookingReference || 'Reference unavailable')}</p><p className="mt-1">Status: {bookingStatusLabel(receipt.status)}</p></div>}
             {receipt && bookingId && <div className="grid gap-2"><Button nativeButton={false} render={<Link href={'/customer/bookings/' + bookingId} />} onClick={() => void closeAssistant()} className="w-full">View this booking</Button><a href={bookingSupportLink(receipt.bookingReference || 'Reference unavailable')} className="inline-flex items-center justify-center gap-2 py-2 text-sm font-medium text-primary underline underline-offset-4"><Mail className="size-4" />Contact support about this booking</a></div>}
-            {priceChanged && !receipt && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">The current estimate differs from the earlier price. Review the updated amount before confirming.</div>}
+            {priceChanged && !receipt && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">The current price or reward conversion differs from the earlier review. Check the updated amounts before confirming.</div>}
             <div className="space-y-3 rounded-xl border p-4 text-sm">
               {[
                 { key: 'service' as AssistantStep, title: 'Service & quantity', value: (quote?.serviceName || selected.label || 'Service unavailable') + ' · ' + draft.numberOfUnits + ' aircon unit(s)' },
@@ -348,6 +360,9 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
               <div className="flex items-baseline justify-between gap-3 border-t pt-3"><span>{annual ? 'Annual estimate' : 'Visit estimate'} · SGD</span><strong className="text-xl text-primary">{formatMoney(receipt?.annualBundle?.totalAmount ?? receipt?.totalAmount ?? estimate)}</strong></div>
             </div>
             {annual && <AnnualBookingSummary durationMinutes={selected.durationMinutes} firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={estimate} saved={receipt?.annualBundle} compact />}
+            {!receipt && <BookingRewardSelection key={`${context.customer.userId}:${record?.draftId}:${rewardRefresh}`} amount={rewardAmount} annual={annual} value={draft.rewardPoints ?? 0} onChange={rewardPoints => { store.update({ rewardPoints }); setError(''); setPriceChanged(false); }} onValidityChange={setRewardsValid} disabled={locked || savedProblem} />}
+            {!receipt && quote?.rewardReservation && !store.dirty && record?.status === 'reviewed' && <p className="rounded-xl bg-primary/5 p-3 text-sm">Reviewed reward discount: {formatMoney(quote.rewardReservation.discount)} for {quote.rewardReservation.points} points. {annual ? 'First visit' : 'Visit'} estimate after rewards: {formatMoney(Math.max(0, rewardAmount - quote.rewardReservation.discount))}.</p>}
+            {receipt?.rewardReservation && <div className="space-y-1 rounded-xl bg-primary/5 p-3 text-sm"><p className="font-semibold">{receipt.rewardReservation.points} loyalty points {receipt.rewardReservation.status === 'Redeemed' ? 'used' : receipt.rewardReservation.status === 'Released' ? 'released' : 'reserved'} · {formatMoney(receipt.rewardReservation.discount)} {receipt.rewardReservation.status === 'Released' ? 'discount released' : 'discount'}</p><p>{receipt.rewardReservation.status === 'Released' ? 'The points reservation was released and this discount no longer applies.' : <>{receipt.annualBundle ? 'First visit' : 'Service amount'} after rewards: {formatMoney(Math.max(0, receipt.totalAmount - receipt.rewardReservation.discount))}.{receipt.rewardReservation.status === 'Reserved' && ' Points are deducted when this order is completed.'}</>}</p>{receipt.annualBundle && receipt.rewardReservation.status !== 'Released' && <p>The discount applies to the first visit only.</p>}</div>}
             <p className="text-xs leading-5 text-muted-foreground">{bookingChangeNotice} Unconfirmed requests expire after 48 hours.</p>
             {selected.pricingNote && <p className="text-xs leading-5 text-muted-foreground">{selected.pricingNote}</p>}
             {!receipt && <p className="text-xs leading-5 text-muted-foreground">Your request will be saved as Awaiting confirmation. Preferred dates and times still need the service team's confirmation.</p>}
@@ -368,7 +383,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
         <div className="flex flex-wrap items-center justify-between gap-2">
           {screen !== 'menu' && screen !== 'success' && <Button variant="outline" disabled={locked || savedProblem || addressEditorOpen} onClick={() => screen === 'service' ? setScreen('menu') : void move(steps[Math.max(0, steps.indexOf(screen as AssistantStep) - 1)])}>Back</Button>}
           {(['service', 'address', 'schedule'] as Screen[]).includes(screen) && <Button disabled={locked || savedProblem || addressEditorOpen || (screen === 'service' && !selected.valid) || (screen === 'schedule' && availability.selectedDateBlocked)} onClick={continueStep}>{editingReview ? 'Return to review' : screen === 'schedule' ? 'Review booking' : 'Continue'}</Button>}
-          {screen === 'review' && !receipt && (record?.status !== 'reviewed' || !quote || store.dirty ? <Button disabled={locked || savedProblem || !canReview} onClick={review}>Check price &amp; dates again</Button> : <Button disabled={locked || savedProblem} onClick={confirm}>{priceChanged ? 'Confirm updated price' : 'Confirm booking'}</Button>)}
+          {screen === 'review' && !receipt && (record?.status !== 'reviewed' || !quote || store.dirty ? <Button disabled={locked || savedProblem || !canReview || !rewardsValid} onClick={review}>Check price, points &amp; dates</Button> : <Button disabled={locked || savedProblem || !rewardsValid} onClick={confirm}>{priceChanged ? 'Confirm updated price' : 'Confirm booking'}</Button>)}
           {screen === 'success' && <Button variant="outline" className="w-full" disabled={locked} onClick={() => void startBooking(true)}><CalendarPlus className="size-4" />Book another service</Button>}
         </div>
       </div>}

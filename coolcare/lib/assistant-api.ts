@@ -16,6 +16,8 @@ export type AssistantDraft = {
   preferredDate: string;
   timeWindow: string;
   notes: string;
+  rewardPoints?: number;
+  rewardRuleVersion?: number;
 };
 export type AssistantQuote = {
   quoteId: string;
@@ -25,6 +27,7 @@ export type AssistantQuote = {
   totalAmount: number;
   visits: Array<{ visitNumber: number; preferredDate: string; totalAmount: number }>;
   reviewedAt: string;
+  rewardReservation?: { points: number; discount: number; ruleVersion: number; redemptionPoints: number; redemptionValue: number } | null;
 };
 export type AssistantReceipt = {
   id: number;
@@ -33,6 +36,7 @@ export type AssistantReceipt = {
   status: string;
   totalAmount: number;
   annualBundle?: AnnualBundle | null;
+  rewardReservation?: { bookingId: number; points: number; discount: number; status: string } | null;
 };
 export type AssistantState = {
   draftId: string;
@@ -52,17 +56,17 @@ export type AssistantError = Error & {
   state?: AssistantState;
   details?: { conflicts?: AssistantConflict[]; fieldErrors?: Record<string, string | string[]> };
 };
-export const emptyAssistantDraft: AssistantDraft = { step: 'service', numberOfUnits: 2, serviceAddress: '', phone: '', preferredDate: '', timeWindow: '09:00 AM - 11:00 AM', notes: '' };
+export const emptyAssistantDraft: AssistantDraft = { step: 'service', numberOfUnits: 2, serviceAddress: '', phone: '', preferredDate: '', timeWindow: '09:00 AM - 11:00 AM', notes: '', rewardPoints: 0 };
 
 export function sameAssistantDraft(a: AssistantDraft, b: AssistantDraft) {
-  return ['step', 'serviceId', 'packageId', 'propertyType', 'postalCode', 'numberOfUnits', 'serviceAddress', 'phone', 'preferredDate', 'timeWindow', 'notes'].every(key => (a[key as keyof AssistantDraft] ?? '') === (b[key as keyof AssistantDraft] ?? '')) && JSON.stringify(a.serviceIds ?? []) === JSON.stringify(b.serviceIds ?? []);
+  return ['step', 'serviceId', 'packageId', 'propertyType', 'postalCode', 'numberOfUnits', 'serviceAddress', 'phone', 'preferredDate', 'timeWindow', 'notes', 'rewardRuleVersion'].every(key => (a[key as keyof AssistantDraft] ?? '') === (b[key as keyof AssistantDraft] ?? '')) && (a.rewardPoints ?? 0) === (b.rewardPoints ?? 0) && JSON.stringify(a.serviceIds ?? []) === JSON.stringify(b.serviceIds ?? []);
 }
 
 export function verifyAssistantState(state: AssistantState | null, expectedUserId: number) {
   if (!state) return;
   if (state.userId !== expectedUserId) throw Object.assign(new Error('The signed-in account changed. Sign in again to reload your own saved draft.'), { status: 401 });
   if (!state.draftId || !Number.isInteger(state.revision) || !state.draft) throw new Error('The saved draft response could not be verified. Reload your saved draft before continuing.');
-  if (state.status === 'completed') assertBookingConfirmation(state.booking, Boolean(state.draft.packageId));
+  if (state.status === 'completed') assertBookingConfirmation(state.booking, Boolean(state.draft.packageId), state.draft.rewardPoints ?? 0);
 }
 
 async function request<T>(path: string, body?: unknown): Promise<T> {

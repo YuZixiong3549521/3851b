@@ -9,6 +9,7 @@ import { assertTeamCapacity,bookingServiceSlot } from '../scheduling.mjs';
 import { describeCreatedBooking,writeSelectedBookings } from './booking-writer.mjs';
 import { bookingReference } from '../booking-reference.mjs';
 import { normalizePhoneNumber,phoneNumberError } from '../../lib/phone-number.mjs';
+import { bookingRewardPointsSchema, bookingRewardRuleVersionSchema, quoteBookingReward } from '../commerce.mjs';
 
 const timeWindows=['09:00 AM - 11:00 AM','11:00 AM - 01:00 PM','02:00 PM - 04:00 PM','04:00 PM - 06:00 PM','11:30 AM - 01:30 PM','04:30 PM - 06:30 PM'];
 const positiveId=z.number().int().positive();
@@ -16,6 +17,7 @@ const draftSchema=z.object({
   step:z.enum(['service','units','address','schedule','review']),
   serviceId:positiveId.optional(),packageId:positiveId.optional(),
   serviceIds:z.array(positiveId).max(2).optional(),propertyType:z.string().max(40).optional(),
+  rewardPoints:bookingRewardPointsSchema.optional(),rewardRuleVersion:bookingRewardRuleVersionSchema.optional(),
   postalCode:z.string().refine(value=>value===''||/^\d{6}$/.test(value),'Enter a six-digit Singapore postal code.').optional(),
   numberOfUnits:z.number().int().min(1).max(10),
   serviceAddress:z.string().max(255),phone:z.string().max(30),
@@ -183,11 +185,13 @@ async function lockedSelection(connection,customerId,input,requestId) {
   catch(error){if(error.status&&error.status<500)throw fail(error.status,error.message,'VALIDATION_ERROR',{fieldErrors:{[input.packageId?'packageId':'serviceId']:[error.message]}});throw error;}
 }
 
-function describeQuote(selection,input) {
+async function describeQuote(connection,customerId,selection,input) {
   const visits=selection.annual?annualVisitSchedule(input.preferredDate,selection.totalAmount):[
     {visitNumber:1,preferredDate:input.preferredDate,totalAmount:selection.totalAmount},
   ];
+  const rewardReservation=await quoteBookingReward(connection,customerId,visits[0].totalAmount,input.rewardPoints??0);
   const terms={currency:'SGD',serviceName:selection.package?.name||selection.serviceName,annual:selection.annual,
+    rewardReservation,
     totalAmount:selection.totalAmount,numberOfUnits:input.numberOfUnits,estimatedDurationMinutes:selection.estimatedDurationMinutes,includesCleaning:selection.includesCleaning,
     services:selection.services.map(service=>({serviceId:service.serviceId,name:service.name,basePrice:service.basePrice,
       additionalUnitPrice:service.additionalUnitPrice,quantity:service.quantity,lineTotal:service.lineTotal})),
@@ -197,6 +201,7 @@ function describeQuote(selection,input) {
     serviceAddress:input.serviceAddress,postalCode:input.postalCode||'',timeWindow:input.timeWindow};
   const fingerprint=createHash('sha256').update(JSON.stringify(terms)).digest('hex');
   return {fingerprint,quote:{quoteId:randomUUID(),currency:terms.currency,serviceName:terms.serviceName,annual:terms.annual,
+    rewardReservation,
     totalAmount:terms.totalAmount,numberOfUnits:input.numberOfUnits,estimatedDurationMinutes:selection.estimatedDurationMinutes,includesCleaning:selection.includesCleaning,propertyType:selection.package?.propertyType,propertyLabel:selection.package?.propertyLabel,visits:terms.visits,reviewedAt:new Date().toISOString()}};
 }
 
@@ -237,7 +242,7 @@ export async function reviewAssistantDraft(pool,user,untrustedInput) {
     requireEditable(row,user);
     const draft=validateReadyDraft(readJson(row.draft_data));
     const selection=await lockedSelection(connection,customer.customerId,draft,row.request_id);
-    const {quote,fingerprint}=describeQuote(selection,draft);
+    const {quote,fingerprint}=await describeQuote(connection,customer.customerId,selection,draft);
     await validateSchedule(connection,customer.customerId,draft,quote,stateView(row,user.id));
     return {state:await persistQuote(connection,customer,row,user,quote,fingerprint)};
   });
@@ -271,7 +276,7 @@ export async function confirmAssistantDraft(pool,user,untrustedInput) {
     else {
       const draft=validateReadyDraft(readJson(row.draft_data));
       const selection=await lockedSelection(connection,customer.customerId,draft,row.request_id);
-      const {quote,fingerprint}=describeQuote(selection,draft);
+      const {quote,fingerprint}=await describeQuote(connection,customer.customerId,selection,draft);
       await validateSchedule(connection,customer.customerId,draft,quote,stateView(row,user.id));
       if(row.quote_fingerprint!==fingerprint) {
         const state=await persistQuote(connection,customer,row,user,quote,fingerprint);
@@ -282,7 +287,8 @@ export async function confirmAssistantDraft(pool,user,untrustedInput) {
       const unitIds=await addressUnitIds(connection,customer.customerId,address.addressId,draft.numberOfUnits);
       const created=await writeSelectedBookings(connection,selection,{customerId:customer.customerId,userId:user.id,addressId:address.addressId,
         addressLine:address.addressLine,unitIds,preferredDate:draft.preferredDate,timeSlot:draft.timeWindow,problemDescription:draft.notes,
-        phone:draft.phone,specialNotes:draft.notes,requestId:row.request_id,source:'Created using the CoolCare customer assistant. Appointment awaits confirmation.'});
+        phone:draft.phone,specialNotes:draft.notes,requestId:row.request_id,rewardPoints:draft.rewardPoints??0,
+        rewardRuleVersion:quote.rewardReservation?.ruleVersion,source:'Created using the CoolCare customer assistant. Appointment awaits confirmation.'});
       booking={...created,id:created.bookingId,bookingReference:bookingReference(created.bookingId,created.createdAt)};
     }
     await connection.execute(`UPDATE assistant_booking_draft SET revision=revision+1,draft_status='completed',booking_receipt=?,

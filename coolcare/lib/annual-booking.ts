@@ -33,12 +33,17 @@ export function dayBeforeDate(value: string): string {
 }
 
 /** Do not present a partial receipt as a completed four-visit booking. */
-export function assertBookingConfirmation(value: unknown, annualRequested: boolean): void {
+export function assertBookingConfirmation(value: unknown, annualRequested: boolean, rewardPoints = 0): void {
   const error = () => { throw new Error('The saved booking details could not be fully verified. Retry confirmation to retrieve the same request.'); };
   const amount = (value: unknown) => (typeof value === 'number' || (typeof value === 'string' && value.trim().length > 0)) && Number.isFinite(Number(value)) && Number(value) >= 0;
   if (!value || typeof value !== 'object') return error();
   const booking = value as Record<string, unknown>;
   if (!Number.isInteger(Number(booking.bookingId ?? booking.id)) || Number(booking.bookingId ?? booking.id) < 1 || !amount(booking.totalAmount)) return error();
+  if (rewardPoints > 0) {
+    const reward = booking.rewardReservation as Record<string, unknown> | undefined;
+    if (!reward || Number(reward.bookingId) !== Number(booking.bookingId ?? booking.id) || !amount(reward.discount) || !['Reserved', 'Redeemed', 'Released'].includes(String(reward.status))) return error();
+    if (reward.status === 'Reserved' && (Number(reward.points) !== rewardPoints || Number(reward.discount) <= 0)) return error();
+  }
   if (!booking.annualBundle) { if (annualRequested) return error(); return; }
   const bundle = booking.annualBundle as Record<string, unknown>;
   const visits = bundle.visits;

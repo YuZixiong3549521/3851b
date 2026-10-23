@@ -8,6 +8,7 @@ import { BookingServiceSelection, bookingChangeNotice, bookingFrequencyNotice, e
 import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingAddressField } from '@/components/booking-address-field';
+import { BookingRewardSelection } from '@/components/booking-reward-selection';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { BookingAvailabilityNotice, bookingConflictMessage } from '@/components/booking-availability-notice';
 import { useBookingAvailability } from '@/lib/use-booking-availability';
@@ -23,7 +24,7 @@ import { coolcareApi } from '@/lib/coolcare-api';
 import { customerPlansApi, type AnnualPlanRenewal } from '@/lib/customer-plans-api';
 import { bookingServiceChanged, createDefaultCustomerBookingForm, type CustomerBookingForm } from '@/lib/customer-booking-form';
 import { formatDate, formatMoney, formatServiceWindow } from '@/lib/format';
-import { annualVisitDates,assertBookingConfirmation } from '@/lib/annual-booking';
+import { annualVisitAmounts,annualVisitDates,assertBookingConfirmation } from '@/lib/annual-booking';
 import { bookingDateError, bookingScheduleNotice, earliestBookingDate } from '@/lib/booking-schedule';
 import { useSlotAvailability } from '@/lib/use-slot-availability';
 import type { Address, BookingInput, BookingOptions, CreatedBooking, CustomerContext } from '@/lib/coolcare-types';
@@ -48,6 +49,9 @@ export default function BookServicePage() {
   const [addressEditorOpen, setAddressEditorOpen] = useState(false);
   const [renewal, setRenewal] = useState<AnnualPlanRenewal | null>(null);
   const [initializing, setInitializing] = useState(true);
+  const [rewardPoints, setRewardPoints] = useState(0);
+  const [rewardRuleVersion, setRewardRuleVersion] = useState<number | undefined>();
+  const [rewardsValid, setRewardsValid] = useState(true);
 
   useEffect(() => {
     let active = true;
@@ -113,7 +117,7 @@ export default function BookServicePage() {
       }
       if (!pendingRequest.current) pendingRequest.current = { ...input, expectedUserId: context.customer.userId, requestId: input.requestId || requestId.current };
       const result = await coolcareApi.createBooking(pendingRequest.current);
-      assertBookingConfirmation(result, Boolean(pendingRequest.current.packageId));
+      assertBookingConfirmation(result, Boolean(pendingRequest.current.packageId), pendingRequest.current.rewardPoints);
       setCreated(result);
       pendingRequest.current = null;
       setRetryLocked(false);
@@ -163,6 +167,8 @@ export default function BookServicePage() {
           preferredDate: { type: 'string', format: 'date' },
           timeSlot: { type: 'string', enum: timeSlots },
           problemDescription: { type: 'string', maxLength: 1000 },
+          rewardPoints: { type: 'integer', minimum: 0 },
+          rewardRuleVersion: { type: 'integer', minimum: 1 },
         },
         required: ['preferredDate', 'timeSlot'],
         oneOf: [
@@ -199,6 +205,7 @@ export default function BookServicePage() {
 
   async function handleConfirm() {
     if (!selectedServices.valid || !form.timeSlot || submittingRequest.current || addressEditorOpen) return;
+    if (!pendingRequest.current && !rewardsValid) { setFieldError('Check your points selection before confirming.'); return; }
     if (!pendingRequest.current && (availability.selectedDateBlocked||selectedSlotFull)) { setFieldError(availability.selectedDateBlocked?bookingConflictMessage:'This service time is fully booked. Choose another available time.'); return; }
     try {
       await submitBooking({
@@ -211,6 +218,8 @@ export default function BookServicePage() {
         problemDescription: form.problemDescription,
         specialNotes: form.specialNotes,
         postalCode: form.postalCode || undefined,
+        rewardPoints,
+        rewardRuleVersion: rewardPoints > 0 ? rewardRuleVersion : undefined,
       });
     } catch {
       // The shared submit path displays errors for both the form and WebMCP.
@@ -227,6 +236,7 @@ export default function BookServicePage() {
     const changed = bookingServiceChanged(selection, nextSelection);
     setSelection(nextSelection);
     if (!changed) return;
+    setRewardPoints(0); setRewardRuleVersion(undefined); setRewardsValid(true);
     if (renewal && nextSelection.mode === 'bundle') {
       setFieldError('');
       return;
@@ -238,6 +248,7 @@ export default function BookServicePage() {
   }
 
   function startAnotherBooking() {
+    setRewardPoints(0); setRewardRuleVersion(undefined); setRewardsValid(true);
     pendingRequest.current = null;
     requestId.current = crypto.randomUUID();
     setSelection(emptyBookingSelection);
@@ -311,6 +322,7 @@ export default function BookServicePage() {
                   </dl>
                   {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary durationMinutes={selectedServices.durationMinutes} firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} /></div>}
                   {selectedServices.pricingNote && <p className="mt-4 text-sm text-muted-foreground">{selectedServices.pricingNote}</p>}
+                  <BookingRewardSelection amount={selectedServices.isAnnual ? annualVisitAmounts(total)[0] : total} annual={selectedServices.isAnnual} value={rewardPoints} onChange={setRewardPoints} onValidityChange={setRewardsValid} onRuleVersionChange={setRewardRuleVersion} disabled={submitting || retryLocked} />
                   <p className="mt-4 text-sm text-muted-foreground">{bookingChangeNotice} Unconfirmed requests expire after 48 hours.</p>
                   {form.specialNotes && <p className="mt-4 whitespace-pre-wrap text-sm"><strong>Other remarks: </strong>{form.specialNotes}</p>}
                   {form.problemDescription && <div className="mt-5 rounded-2xl border border-border p-4"><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Problem description</p><p className="mt-2 text-sm leading-6">{form.problemDescription}</p></div>}
@@ -318,7 +330,7 @@ export default function BookServicePage() {
               )}
 
               {fieldError && <FieldError className="mt-5">{fieldError}</FieldError>}
-              <div className="fixed inset-x-0 bottom-[calc(64px+max(8px,env(safe-area-inset-bottom)))] z-30 flex items-center justify-between gap-3 border-t bg-background/95 px-5 py-3 backdrop-blur lg:static lg:mt-8 lg:border-0 lg:bg-transparent lg:p-0"><Button variant="ghost" disabled={step === 1 || submitting || retryLocked || addressEditorOpen} onClick={() => { setFieldError(''); setStep((current) => Math.max(1, current - 1)); }}><ArrowLeft className="size-4" aria-hidden="true" />Back</Button>{step < 4 ? <Button disabled={addressEditorOpen || (step === 3 && (availability.selectedDateBlocked||selectedSlotFull||slotAvailability.loading))} onClick={nextStep}>Continue<ArrowRight className="size-4" aria-hidden="true" /></Button> : <Button onClick={handleConfirm} disabled={submitting || (!retryLocked && (availability.selectedDateBlocked||selectedSlotFull))}>{submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm booking'}<Check className="size-4" aria-hidden="true" /></Button>}</div>
+              <div className="fixed inset-x-0 bottom-[calc(64px+max(8px,env(safe-area-inset-bottom)))] z-30 flex items-center justify-between gap-3 border-t bg-background/95 px-5 py-3 backdrop-blur lg:static lg:mt-8 lg:border-0 lg:bg-transparent lg:p-0"><Button variant="ghost" disabled={step === 1 || submitting || retryLocked || addressEditorOpen} onClick={() => { setFieldError(''); setStep((current) => Math.max(1, current - 1)); }}><ArrowLeft className="size-4" aria-hidden="true" />Back</Button>{step < 4 ? <Button disabled={addressEditorOpen || (step === 3 && (availability.selectedDateBlocked||selectedSlotFull||slotAvailability.loading))} onClick={nextStep}>Continue<ArrowRight className="size-4" aria-hidden="true" /></Button> : <Button onClick={handleConfirm} disabled={submitting || (!retryLocked && (!rewardsValid||availability.selectedDateBlocked||selectedSlotFull))}>{submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm booking'}<Check className="size-4" aria-hidden="true" /></Button>}</div>
             </CardContent></Card>
           </>
         )}
@@ -327,9 +339,10 @@ export default function BookServicePage() {
           <>
           <Alert className="rounded-3xl border-secondary/25 bg-[linear-gradient(145deg,#eff5ff,#ecfffb)] p-7 sm:p-10"><div className="grid size-14 place-items-center rounded-full bg-secondary text-white"><Check className="size-7" aria-hidden="true" /></div><div className="ml-0 sm:ml-2"><AlertTitle className="text-2xl font-bold">{created.annualBundle ? 'Four booking requests saved' : 'Booking submitted'}</AlertTitle><AlertDescription className="mt-3 max-w-xl text-base leading-7">{created.annualBundle ? 'Your four quarterly cleaning visits have been saved as requests. The service team will confirm each date and time.' : 'Your ' + created.serviceName + ' request has been saved. The service team will confirm availability.'}</AlertDescription><div className="mt-5 flex flex-wrap gap-6"><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Reference</p><p className="mt-1 font-mono font-bold text-foreground">{created.bookingReference}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</p><p className="mt-1 font-semibold text-amber-700">{bookingStatusLabel(created.status)}</p></div><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{created.annualBundle ? 'Annual estimate' : 'Visit estimate'}</p><p className="mt-1 font-semibold text-foreground">{formatMoney(created.annualBundle?.totalAmount ?? created.totalAmount)}</p></div></div><div className="mt-7 flex flex-wrap gap-3"><Button nativeButton={false} render={<Link href="/customer/bookings" />}>View my bookings</Button><Button variant="outline" onClick={startAnotherBooking}>Book another service</Button></div></div></Alert>
           <div className="mt-4 flex flex-wrap gap-3">
-            <Button variant="outline" nativeButton={false} render={<Link href={`/customer/rewards?booking=${created.bookingId}`} />}>Use my reward points</Button>
+            <Button variant="outline" nativeButton={false} render={<Link href="/customer/rewards" />}>View my rewards</Button>
             {created.annualBundle && <Button variant="outline" nativeButton={false} render={<Link href="/customer/plans" />}>View my annual plans</Button>}
           </div>
+          {created.rewardReservation && <p role="status" className="mt-4 rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm">{created.rewardReservation.status === 'Released' ? 'The points reserved for this booking have been released. View My Rewards for your current balance.' : <>{created.rewardReservation.points} points {created.rewardReservation.status === 'Redeemed' ? 'used' : 'reserved'} · {formatMoney(created.rewardReservation.discount)} off {created.annualBundle ? 'your first quarterly visit' : 'this visit'}. {created.rewardReservation.status === 'Reserved' && <>{created.annualBundle ? 'First visit' : 'Visit'} estimate after points: {formatMoney(created.totalAmount - created.rewardReservation.discount)}.</>}</>}</p>}
           {created.annualBundle && <div className="mt-5"><AnnualBookingSummary saved={created.annualBundle} totalAmount={created.annualBundle.totalAmount} /></div>}
           </>
         )}

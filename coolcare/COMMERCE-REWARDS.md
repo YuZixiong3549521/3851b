@@ -55,14 +55,29 @@ adjustment when the missing amount is resolved.
 
 ## Reservations and administrative adjustments
 
-Customers can reserve whole redemption blocks against their own eligible,
-priced, unfinished bookings. The wallet balance is the points ledger total;
+Customers choose points **before confirming a new booking**, alongside the
+available balance, points discount and estimated service amount after points.
+The Customer booking Review step, homepage booking dialog and CoolCare Assistant
+reuse the same selector. My Rewards shows the wallet, activity and existing
+reservations, with a link to create a new booking instead of an after-booking
+redemption form. An annual booking or renewal applies the selected points to
+**visit 1 only**; visits 2–4 keep their quoted prices.
+
+Booking creation and the points reservation share one MySQL transaction. Invalid
+blocks, insufficient spendable points or changed redemption rules roll back the
+new booking, its generated address/equipment and all four annual visits. Repeated
+submission of the same request returns the existing booking and cannot reserve
+twice. Assistant drafts retain the chosen points; review includes the current
+redemption rules and requires confirmation again if those rules change.
+
+Customers reserve whole redemption blocks. The wallet balance is the points ledger total;
 available points are `max(0, balance - active reservations)`. Booking and wallet
 locks serialize simultaneous spending across different bookings. The
 reservation stores its rule version, points and discount.
 
-A customer can change or release an unused reservation before the order is
-completed. At completion, the accepted reservation is consumed once and the net
+A customer can release an unused reservation from My Rewards before the order is
+completed. The existing reservation API remains compatible for older clients and
+saved orders. At completion, the accepted reservation is consumed once and the net
 service amount determines the new earning. Cancellation, rejection and expiry
 release unused reservations in the existing booking transaction. A completed
 order cannot acquire a new discount after its reward has been calculated.
@@ -136,6 +151,17 @@ ownership is enforced on every reservation.
 | PATCH | `/admin/reward-rules` | `requestId`, `expectedVersion`, `pointsPerDollar`, `redemptionPoints`, `redemptionValue`, `reason` |
 | GET | `/customer/rewards` | Signed-in customer's wallet, eligible bookings and points history |
 | POST | `/customer/rewards/:bookingId` | `requestId`, `points`; zero releases an unused reservation |
+
+The existing Customer and public booking creation APIs additionally accept
+`rewardPoints` (non-negative integer, default 0) and `rewardRuleVersion` (the
+version shown during selection). A positive selection with a stale supplied
+version returns 409. `reward_points` is accepted as an alias by those two APIs;
+conflicting aliases are rejected. The Assistant draft uses the camelCase fields.
+The creation receipt adds `rewardReservation: {bookingId, points, discount,
+status} | null`; existing gross `totalAmount` and annual totals stay compatible.
+The Assistant quote includes the selected discount and its rule version. The
+server validates the current wallet and conversion inside the creation
+transaction; a browser-provided amount never determines the discount.
 
 There are no active receipt/refund endpoints. The previous admin payments GET
 and POST endpoints return HTTP 410 (retired), rather than acting as alternative

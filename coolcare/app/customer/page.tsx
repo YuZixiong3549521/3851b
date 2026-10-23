@@ -58,7 +58,7 @@ export default function Home() {
       <nav aria-label="Your care and rewards" className="mt-6 grid gap-3 sm:grid-cols-3">
         {[
           { href: '/customer/plans', label: 'My Plans', detail: 'Manage quarterly visits and renewal reminders' },
-          { href: '/customer/rewards', label: 'My Rewards', detail: 'View points and apply them to a booking' },
+          { href: '/customer/rewards', label: 'My Rewards', detail: 'View points to use on your next booking' },
           { href: '/customer/feedback', label: 'Service Feedback', detail: 'Rate your completed service visits' },
         ].map(item => <Link key={item.href} href={item.href} className="rounded-2xl border bg-card p-4 shadow-sm hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-primary"><span className="flex items-center justify-between font-semibold">{item.label}<ArrowRight className="size-4 text-primary" /></span><p className="mt-2 text-sm text-muted-foreground">{item.detail}</p></Link>)}
       </nav>

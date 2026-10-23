@@ -11,6 +11,7 @@ import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './a
 import { resolveReportPhoto } from './report-photos.mjs';
 import {getServiceProgress} from '../service-progress.mjs';
 import {readBookingAmounts} from '../booking-amounts.mjs';
+import { bookingRewardPointsSchema, bookingRewardRuleVersionSchema } from '../commerce.mjs';
 
 const timeSlots = ['09:00 - 11:00', '11:00 - 13:00', '14:00 - 16:00', '16:00 - 18:00'];
 
@@ -25,6 +26,9 @@ export const createBookingSchema = z.object({
   postalCode:z.string().trim().regex(/^\d{6}$/,'Enter a six-digit Singapore postal code.').optional(),
   subscriptionId: z.coerce.number().int().positive().optional(),
   requestId: z.uuid().optional(),
+  rewardPoints: bookingRewardPointsSchema.optional(),
+  reward_points: bookingRewardPointsSchema.optional(),
+  rewardRuleVersion: bookingRewardRuleVersionSchema.optional(),
   addressId: z.coerce.number().int().positive().optional(),
   unitIds: z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),
   serviceAddress: addressLineSchema.optional(),
@@ -34,6 +38,7 @@ export const createBookingSchema = z.object({
   problemDescription: z.string().trim().max(1000).optional().default(''),
   specialNotes:z.string().trim().max(1000).optional(),
 }).superRefine((input,context)=>{
+  if(input.rewardPoints!==undefined && input.reward_points!==undefined && input.rewardPoints!==input.reward_points)context.addIssue({code:'custom',path:['rewardPoints'],message:'Choose one points amount.'});
   const countMode=input.serviceAddress!==undefined||input.numberOfUnits!==undefined;
   if(countMode) {
     if(input.serviceAddress===undefined)context.addIssue({code:'custom',path:['serviceAddress'],message:'Enter a service address.'});
@@ -93,7 +98,8 @@ export async function createBooking(pool, untrustedInput, userId) {
     const selection=await resolveBookingSelection(connection,customer.customerId,input,uniqueUnitIds.length);
     const booking=await writeSelectedBookings(connection,selection,{customerId:customer.customerId,userId:customer.userId,
       addressId:address.addressId,addressLine:address.addressLine,unitIds:uniqueUnitIds,preferredDate:input.preferredDate,
-      timeSlot:input.timeSlot,problemDescription:input.problemDescription,specialNotes:input.specialNotes,phone:customer.phone,requestId:input.requestId,renewalOfSeriesId:input.renewalOfSeriesId,source:'Created from customer portal.'});
+      timeSlot:input.timeSlot,problemDescription:input.problemDescription,specialNotes:input.specialNotes,phone:customer.phone,requestId:input.requestId,renewalOfSeriesId:input.renewalOfSeriesId,
+      rewardPoints:input.rewardPoints??input.reward_points??0,rewardRuleVersion:input.rewardRuleVersion,source:'Created from customer portal.'});
     await connection.commit();
     return {
       ...booking,

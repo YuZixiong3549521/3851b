@@ -10,6 +10,8 @@ const money = z.coerce.number().finite().positive().max(9999999.99).refine(v => 
 const date = z.string().refine(isCalendarDate, 'Enter a valid calendar date.');
 const request = { requestId: z.uuid() };
 const redemptionSchema = z.object({ ...request, points: z.number().int().min(0).max(10000000) }).strict();
+export const bookingRewardPointsSchema = z.number().int().min(0).max(10000000);
+export const bookingRewardRuleVersionSchema = z.number().int().positive();
 const adjustSchema = z.object({ ...request, points: z.number().int().min(-1000000).max(1000000).refine(v => v !== 0), reason: z.string().trim().min(5).max(500) }).strict();
 const ruleSchema = z.object({ ...request, expectedVersion: z.number().int().positive(), pointsPerDollar: z.number().int().min(0).max(100), redemptionPoints: z.number().int().min(1).max(1000000), redemptionValue: money, reason: z.string().trim().min(5).max(500) }).strict();
 const dollars = v => Math.round(Number(v || 0) * 100);
@@ -147,16 +149,49 @@ export async function reserveReward(pool, actorId, customerId, rawBookingId, raw
     const [[processed]] = await c.execute('SELECT booking_id FROM booking_completion_reward WHERE booking_id=? FOR SHARE', [bookingId]);
     if (processed) throw new AppError('This booking has already been processed for rewards. A return visit does not earn or redeem again.', 409);
     if (state.quote === null) throw new AppError('This booking does not have a recorded price.', 409);
-    const config = await rule(c);
-    if (data.points % config.redemptionPoints) throw new AppError(`Redeem in multiples of ${config.redemptionPoints} points.`);
-    const discount = data.points / config.redemptionPoints * dollars(config.redemptionValue);
-    if (discount > state.quote) throw new AppError('The reward cannot exceed the service total.');
-    const [reserved] = await c.execute(`SELECT points FROM reward_reservation WHERE loyalty_account_id=? AND status='Reserved' AND booking_id<>? FOR SHARE`, [account.loyalty_account_id, bookingId]);
-    if (data.points > Math.max(0, account.current_points - reserved.reduce((sum, r) => sum + r.points, 0))) throw new AppError('Not enough available points. Other bookings may already reserve some points.', 409);
-    await c.execute(`INSERT INTO reward_reservation(booking_id,loyalty_account_id,points,discount_amount,rule_version,status,reason,redemption_points,redemption_value)
-      VALUES (?,?,?,?,?,'Reserved','Reserved by customer.',?,?) ON DUPLICATE KEY UPDATE points=VALUES(points),discount_amount=VALUES(discount_amount),rule_version=VALUES(rule_version),status='Reserved',reason=VALUES(reason),redemption_points=VALUES(redemption_points),redemption_value=VALUES(redemption_value)`, [bookingId, account.loyalty_account_id, data.points, discount / 100, config.version, config.redemptionPoints, config.redemptionValue]);
-    return remember(c, actorId, input, { bookingId, points: data.points, discount: discount / 100 });
+    const selected = await validateRewardSelection(c, account, state.quote, data.points, bookingId);
+    await saveRewardReservation(c, bookingId, account, selected, 'Reserved by customer.');
+    return remember(c, actorId, input, { bookingId, points: data.points, discount: selected.discount });
   });
+}
+
+async function validateRewardSelection(c, account, quoteCents, points, bookingId = 0, expectedRuleVersion) {
+  const config = await rule(c, 'share');
+  const invalid = (message, status = 400) => Object.assign(new AppError(message, status), { code: 'REWARD_SELECTION_INVALID', details: { fieldErrors: { rewardPoints: [message] } } });
+  if (expectedRuleVersion !== undefined && expectedRuleVersion !== config.version) throw invalid('Reward rules changed. Refresh the points estimate before submitting your booking.', 409);
+  if (points % config.redemptionPoints) throw invalid(`Redeem in multiples of ${config.redemptionPoints} points.`);
+  const discountCents = points / config.redemptionPoints * dollars(config.redemptionValue);
+  if (quoteCents === null) throw invalid('This booking does not have a recorded price.', 409);
+  if (discountCents > quoteCents) throw invalid('The reward cannot exceed the service total.');
+  const [reserved] = await c.execute(`SELECT points FROM reward_reservation WHERE loyalty_account_id=? AND status='Reserved' AND booking_id<>? FOR SHARE`, [account.loyalty_account_id, bookingId]);
+  if (points > Math.max(0, account.current_points - reserved.reduce((sum, r) => sum + r.points, 0))) throw invalid('Not enough available points. Other bookings may already reserve some points.', 409);
+  return { points, discount: discountCents / 100, ruleVersion: config.version, redemptionPoints: config.redemptionPoints, redemptionValue: config.redemptionValue };
+}
+
+async function saveRewardReservation(c, bookingId, account, selected, reason) {
+  await c.execute(`INSERT INTO reward_reservation(booking_id,loyalty_account_id,points,discount_amount,rule_version,status,reason,redemption_points,redemption_value)
+    VALUES (?,?,?,?,?,'Reserved',?,?,?) ON DUPLICATE KEY UPDATE points=VALUES(points),discount_amount=VALUES(discount_amount),rule_version=VALUES(rule_version),status='Reserved',reason=VALUES(reason),redemption_points=VALUES(redemption_points),redemption_value=VALUES(redemption_value)`,
+  [bookingId, account.loyalty_account_id, selected.points, selected.discount, selected.ruleVersion, reason, selected.redemptionPoints, selected.redemptionValue]);
+}
+
+// These helpers use the caller's transaction, never a second connection. The
+// wallet lock serializes creation with other reservations and completion rewards.
+export async function quoteBookingReward(c, customerId, amount, points = 0, expectedRuleVersion) {
+  bookingRewardPointsSchema.parse(points);
+  if (!points) return null;
+  const account = await lockAccount(c, customerId);
+  return validateRewardSelection(c, account, amount === null ? null : dollars(amount), points, 0, expectedRuleVersion);
+}
+
+export async function reserveCreatedBookingReward(c, customerId, bookingId, points = 0, expectedRuleVersion) {
+  bookingRewardPointsSchema.parse(points);
+  if (!points) return null;
+  const b = await lockBooking(c, bookingId, customerId);
+  if (b.booking_status !== 'Submitted') throw new AppError('Rewards for a new booking must be selected when it is submitted.', 409);
+  const account = await lockAccount(c, customerId);
+  const selected = await validateRewardSelection(c, account, b.total_amount === null ? null : dollars(b.total_amount), points, bookingId, expectedRuleVersion);
+  await saveRewardReservation(c, bookingId, account, selected, 'Selected when the booking was created.');
+  return { bookingId, points, discount: selected.discount, status: 'Reserved' };
 }
 // Call in the existing cancellation/rejection/expiry transaction AFTER locking
 // booking. Wallet is always acquired after booking to match payment/redemption.

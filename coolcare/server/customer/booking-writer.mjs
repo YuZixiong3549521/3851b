@@ -6,13 +6,16 @@ import { assertTeamCapacity,bookingServiceSlot } from '../scheduling.mjs';
 import {bookingExpiryDate} from '../order-expiry.mjs';
 import { assertAnnualPlanRenewal, linkAnnualPlanRenewal } from './plans.mjs';
 import { HttpError } from './errors.mjs';
+import { reserveCreatedBookingReward } from '../commerce.mjs';
 
 export async function describeCreatedBooking(connection,bookingId) {
   const [[row]]=await connection.execute(`SELECT booking_id AS bookingId,created_at AS createdAt,
     booking_status AS status,total_amount AS totalAmount,estimated_duration_minutes AS estimatedDurationMinutes,
     slot_start AS slotStart,slot_end AS slotEnd FROM booking WHERE booking_id=?`,[bookingId]);
   const [booking]=await attachBookingSelections(connection,[row]);
-  return {...withBookingReference(booking),totalAmount:booking.totalAmount==null?null:Number(booking.totalAmount)};
+  const [[reward]]=await connection.execute('SELECT booking_id AS bookingId,points,discount_amount AS discount,status FROM reward_reservation WHERE booking_id=?',[bookingId]);
+  return {...withBookingReference(booking),totalAmount:booking.totalAmount==null?null:Number(booking.totalAmount),
+    rewardReservation:reward?{...reward,discount:Number(reward.discount)}:null};
 }
 
 // The caller holds the customer lock and owns the transaction for all four visits.
@@ -59,5 +62,8 @@ export async function writeSelectedBookings(connection,selection,context) {
     await connection.execute("INSERT INTO booking_status_history(booking_id,new_status,changed_by_user_id,change_note) VALUES (?,'Submitted',?,?)",
       [booking.insertId,context.userId,selection.annual?`Annual cleaning visit ${visit.visitNumber} of 4 requested; ${visit.visitNumber>1?'quarterly reservation retained without automatic confirmation expiry; appointment awaits individual confirmation.':'first appointment awaits confirmation before its deadline.'}`:context.source]);
   }
+  // A bundle creates four orders, but the selection belongs only to the first
+  // visit. Failure rolls back all visits, addresses, units and related records.
+  await reserveCreatedBookingReward(connection,context.customerId,firstBookingId,context.rewardPoints??0,context.rewardRuleVersion);
   return describeCreatedBooking(connection,firstBookingId);
 }

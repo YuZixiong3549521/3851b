@@ -12,6 +12,7 @@ import {
   type BookingSelection,
 } from '@/components/booking-service-selection';
 import { BookingAddressField } from '@/components/booking-address-field';
+import { BookingRewardSelection } from '@/components/booking-reward-selection';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import {
   BookingAvailabilityNotice,
@@ -24,6 +25,7 @@ import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate, formatMoney, formatServiceWindow } from '@/lib/format';
 import {
   annualVisitDates,
+  annualVisitAmounts,
   assertBookingConfirmation,
 } from '@/lib/annual-booking';
 import { useSlotAvailability } from '@/lib/use-slot-availability';
@@ -77,6 +79,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const [notes, setNotes] = useState('');
   const [otherRemarks, setOtherRemarks] = useState('');
   const [postalCode, setPostalCode] = useState('');
+  const [rewardPoints, setRewardPoints] = useState(0);
+  const [rewardRuleVersion, setRewardRuleVersion] = useState<number>();
+  const [rewardsValid, setRewardsValid] = useState(true);
+  const [rewardRefresh, setRewardRefresh] = useState(0);
   const [step, setStep] = useState<'form' | 'success'>('form');
   const [pricesReady, setPricesReady] = useState(false);
   const [error, setError] = useState('');
@@ -87,6 +93,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     status: string;
     totalAmount: number;
     annualBundle?: AnnualBundle | null;
+    rewardReservation?: { bookingId: number; points: number; discount: number; status: string } | null;
   } | null>(null);
   const ownerId = useRef<string | number | null>(null);
   const lastPrefill = useRef<string | undefined>(undefined);
@@ -118,6 +125,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       setPostalCode('');
       setNotes('');
       setOtherRemarks('');
+      setRewardPoints(0);
+      setRewardRuleVersion(undefined);
+      setRewardsValid(true);
       setPhone(currentUser.phone || '');
       setUnitsCount(2);
       setDate(earliestBookingDate());
@@ -276,6 +286,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       setError(bookingConflictMessage);
       return;
     }
+    if (!pendingRequest.current && (!rewardsValid || (rewardPoints > 0 && rewardRuleVersion === undefined))) {
+      setError('Check your selected loyalty points before confirming this booking.');
+      return;
+    }
     if (!pendingRequest.current && selectedSlotFull) {
       setError(
         'This service time is fully booked. Choose another available time.',
@@ -322,6 +336,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           addresses.find((item) => item.addressLine === address)?.postalCode,
         symptoms: notes,
         specialNotes: otherRemarks,
+        rewardPoints,
+        ...(rewardPoints > 0 ? { rewardRuleVersion } : {}),
       };
     try {
       const response = await fetch('/api/public/bookings', {
@@ -344,8 +360,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       assertBookingConfirmation(
         data.booking,
         Boolean(pendingRequest.current.packageId),
+        Number(pendingRequest.current.rewardPoints ?? 0),
       );
       setCreated(data.booking);
+      setRewardPoints(0);
+      setRewardRuleVersion(undefined);
       setRetryLocked(false);
       pendingRequest.current = null;
       setStep('success');
@@ -360,7 +379,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         reason instanceof Error &&
         'status' in reason &&
         Number(reason.status) < 500;
-      if (rejected) pendingRequest.current = null;
+      if (rejected) {
+        pendingRequest.current = null;
+        setRewardRefresh(value => value + 1);
+      }
       if (
         reason instanceof Error &&
         reason.message.includes('signed-in account changed')
@@ -371,6 +393,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         setAddress('');
         setPhone('');
         setNotes('');
+        setRewardPoints(0);
+        setRewardRuleVersion(undefined);
         setPricesReady(false);
       }
       setRetryLocked(!rejected);
@@ -394,6 +418,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     setCreated(null);
     setNotes('');
     setOtherRemarks('');
+    setRewardPoints(0);
+    setRewardRuleVersion(undefined);
+    setRewardsValid(true);
     lastAutomaticSymptom.current = '';
     onClose();
   };
@@ -746,6 +773,18 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   {selectedServices.pricingNote}
                 </p>
               )}
+              {currentUser && pricesReady && selectedServices.valid && (
+                <BookingRewardSelection
+                  key={`${currentUser.id}:${rewardRefresh}`}
+                  amount={selectedServices.isAnnual ? annualVisitAmounts(estimatedTotal)[0] : estimatedTotal}
+                  annual={selectedServices.isAnnual}
+                  value={rewardPoints}
+                  onChange={setRewardPoints}
+                  onValidityChange={setRewardsValid}
+                  onRuleVersionChange={setRewardRuleVersion}
+                  disabled={submitting || retryLocked}
+                />
+              )}
               {error && (
                 <p
                   role="alert"
@@ -794,6 +833,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                       (!pendingRequest.current &&
                         (!pricesReady ||
                           !selectedServices.valid ||
+                          !rewardsValid ||
                           availability.selectedDateBlocked ||
                           selectedSlotFull ||
                           slotAvailability.loading))
@@ -884,6 +924,11 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                   {bookingStatusLabel(created?.status ?? 'Submitted')}
                 </span>
               </div>
+              {created?.rewardReservation && <div className="space-y-1 border-t border-ac-outline-variant/20 pt-2">
+                <p className="font-semibold">{created.rewardReservation.points} loyalty points {created.rewardReservation.status === 'Redeemed' ? 'used' : created.rewardReservation.status === 'Released' ? 'released' : 'reserved'} · {formatMoney(created.rewardReservation.discount)} {created.rewardReservation.status === 'Released' ? 'discount released' : 'discount'}</p>
+                <p className="text-ac-on-surface-variant">{created.rewardReservation.status === 'Released' ? 'The points reservation was released and this discount no longer applies.' : <>{created.annualBundle ? 'First visit' : 'Service amount'} after rewards: {formatMoney(Math.max(0, created.totalAmount - created.rewardReservation.discount))}.{created.rewardReservation.status === 'Reserved' && ' Points are deducted when this order is completed.'}</>}</p>
+                {created.annualBundle && created.rewardReservation.status !== 'Released' && <p className="text-ac-on-surface-variant">The discount applies to the first visit only.</p>}
+              </div>}
             </div>
             {created?.annualBundle && (
               <AnnualBookingSummary
