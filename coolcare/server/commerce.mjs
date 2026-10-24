@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { AppError, idSchema } from './inventory.mjs';
 import { isCalendarDate } from './customer/booking-schedule.mjs';
 import { readBookingAmounts } from './booking-amounts.mjs';
-import { groupServicePeriods } from './report-periods.mjs';
+import { buildReportAnalytics, classifyReportService, groupServicePeriods } from './report-periods.mjs';
 import { listAdminAnnualPlans } from './customer/plans.mjs';
 
 const terminal = new Set(['Cancelled', 'Rejected', 'Expired']);
@@ -298,6 +298,10 @@ function bookingFilter(filters, alias = 'b') {
 export async function commerceReport(pool, raw) {
   const filters = reportFilterSchema.parse(raw), f = bookingFilter(filters);
   const [orderRows] = await pool.execute(`SELECT b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,b.booking_status AS status,b.preferred_service_date AS serviceDate,
+    EXISTS(SELECT 1 FROM annual_booking_visit av WHERE av.booking_id=b.booking_id) AS isAnnual,
+    COALESCE((SELECT GROUP_CONCAT(DISTINCT COALESCE(sc.code,'other') ORDER BY COALESCE(sc.code,'other') SEPARATOR ',')
+      FROM booking_service bs LEFT JOIN simple_service_catalog sc ON sc.service_id=bs.service_id WHERE bs.booking_id=b.booking_id),
+      (SELECT sc.code FROM simple_service_catalog sc WHERE sc.service_id=b.service_id),'other') AS analyticsServiceCodes,
     b.total_amount AS baseAmount,done.gross_amount AS completionGrossAmount,done.net_amount AS completionNetAmount,
     COALESCE(IF(done.outcome IN ('Awarded','Unknown price'),done.discount_amount,NULL),IF(r.status='Redeemed',r.discount_amount,0),0) AS rewardDiscount,
     COALESCE((SELECT bp.package_name FROM booking_package bp WHERE bp.booking_id=b.booking_id),
@@ -328,8 +332,8 @@ export async function commerceReport(pool, raw) {
   const amounts = await readBookingAmounts(pool, orders.map(o => o.bookingId));
   const mapped = orders.map(o => {
     const value = amounts.get(o.bookingId);
-    const { completionGrossAmount, completionNetAmount, ...order } = o;
-    return { ...order, baseAmount: value.baseAmount, additionalFee: value.additionalFee,
+    const { completionGrossAmount, completionNetAmount, analyticsServiceCodes, ...order } = o;
+    return { ...order, isAnnual: Boolean(o.isAnnual), serviceGroup: classifyReportService(Boolean(o.isAnnual), analyticsServiceCodes), baseAmount: value.baseAmount, additionalFee: value.additionalFee,
       serviceAmount: value.grossAmount, rewardDiscount: value.discountAmount,
       netServiceAmount: value.netServiceAmount, awardedPoints: value.awardedPoints };
   });
@@ -348,7 +352,7 @@ export async function commerceReport(pool, raw) {
     completedServiceAmount: completedRows.reduce((sum, o) => sum + dollars(o.serviceAmount), 0) / 100,
     rewardDiscounts: completedRows.reduce((sum, o) => sum + dollars(o.rewardDiscount), 0) / 100,
     completedNetServiceAmount: completedRows.reduce((sum, o) => sum + dollars(o.netServiceAmount), 0) / 100,
-    unknownCompletedPrices: completedRows.filter(o => o.serviceAmount === null).length }, orders: mapped, dailyService, periodService: groupServicePeriods(dailyService, filters.groupBy), parts, bundles, services, technicians };
+    unknownCompletedPrices: completedRows.filter(o => o.serviceAmount === null).length }, orders: mapped, dailyService, periodService: groupServicePeriods(dailyService, filters.groupBy), analytics: buildReportAnalytics(mapped, filters), parts, bundles, services, technicians };
 }
 function reportCsv(data) {
   return safeCsv([
@@ -360,6 +364,12 @@ function reportCsv(data) {
     [], ['Scheduled service period', 'Completed bookings', 'Service amount SGD', 'Reward discounts SGD', 'Net service amount SGD'], ...data.periodService.map(r => [r.period, r.completed, r.serviceAmount, r.rewardDiscounts, r.netServiceAmount]),
     [], ['Booking', 'Service date', 'Service', 'Status', 'Started visits', 'Return requests', 'Service amount SGD', 'Reward discount SGD', 'Net service amount SGD'], ...data.orders.map(r => [r.bookingReference, r.serviceDate, r.serviceName, r.status, r.visits, r.returns, r.serviceAmount, r.rewardDiscount, r.netServiceAmount]),
     [], ['Part', 'Unit', 'Issued', 'Returned'], ...data.parts.map(r => [r.name, r.unit, r.issued, r.returned]),
+    [], ['Order activity period', 'From', 'To', 'Partial period', 'Orders', 'Completed', 'Active', 'Closed without completion', 'Other status', 'Unknown completed prices', 'Service amount SGD', 'Reward discounts SGD', 'Net service amount SGD'],
+    ...data.analytics.periods.map(r => [r.period, r.from, r.to, r.partial ? 'Yes' : 'No', r.orders, r.completed, r.active, r.closed, r.other, r.unknownCompletedPrices, r.serviceAmount, r.rewardDiscounts, r.netServiceAmount]),
+    [], ['Service mix period', 'Cleaning', 'Repair', 'Cleaning and Repair', 'Annual bundle visits', 'Other services'],
+    ...data.analytics.periods.map(r => [r.period, r.services.cleaning, r.services.repair, r.services.combined, r.services.annual, r.services.other]),
+    [], ['Annual bundle period', 'Quarterly visits', 'Completed', 'Active', 'Closed without completion', 'Other status'],
+    ...data.analytics.periods.map(r => [r.period, r.annual.visits, r.annual.completed, r.annual.active, r.annual.closed, r.annual.other]),
   ]);
 }
 export function registerCommerceRoutes(app, pool) {

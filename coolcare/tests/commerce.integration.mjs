@@ -207,6 +207,8 @@ test('reports show completed service values and reward discounts with service an
   const row = report.orders.find(b => b.bookingId === f.bookings[0]);
   assert.ok(row);
   for (const s of services) assert.ok(row.serviceName.includes(s.service_name));
+  assert.equal(row.serviceGroup, 'combined');
+  assert.equal(row.isAnnual, false);
   const rewardBooking = (await listRewardBookings(db, f.customerId)).find(b => b.bookingId === f.bookings[0]);
   for (const s of services) assert.ok(rewardBooking.serviceName.includes(s.service_name));
   const combined = await commerceReport(db, { from: today(), to: today(), serviceId: services[1].service_id });
@@ -229,6 +231,8 @@ test('reports show completed service values and reward discounts with service an
     [f.bookings[0], series.insertId, today(), today(), addCalendarDays(today(), 30)]);
   const annual = await commerceReport(db, { from: today(), to: today(), serviceGroup: 'annual' });
   assert.ok(annual.orders.some(b => b.bookingId === f.bookings[0]));
+  assert.equal(annual.orders.find(b => b.bookingId === f.bookings[0]).serviceGroup, 'annual');
+  assert.equal(annual.orders.find(b => b.bookingId === f.bookings[0]).isAnnual, true);
   assert.ok(!annual.orders.some(b => b.bookingId === f.bookings[1]), 'standalone cleaning is excluded from the annual filter');
   assert.ok(Number(annual.bundles.plans) >= 1);
   assert.ok(report.summary.completedServiceAmount >= 300);
@@ -239,11 +243,17 @@ test('reports show completed service values and reward discounts with service an
     assert.equal(grouped.periodService[0].serviceAmount, grouped.summary.completedServiceAmount);
     assert.equal(grouped.periodService[0].rewardDiscounts, grouped.summary.rewardDiscounts);
     assert.equal(grouped.periodService[0].netServiceAmount, grouped.summary.completedNetServiceAmount);
+    assert.equal(grouped.analytics.periods[0].orders, grouped.summary.orders);
+    assert.equal(grouped.analytics.periods[0].completed, grouped.summary.completed);
+    assert.equal(grouped.analytics.periods[0].netServiceAmount, grouped.summary.completedNetServiceAmount);
+    assert.equal(grouped.analytics.periods[0].services.annual, grouped.bundles.scheduledVisits);
     assert.deepEqual(grouped.dailyService, stable.dailyService, 'legacy daily API stays compatible');
   }
   const all = await commerceReport(db, { from: today(), to: today(), technicianId: 4294967295 });
   assert.equal(all.orders.length, 0);
   assert.equal(all.summary.completedNetServiceAmount, 0);
+  assert.equal(all.analytics.periods.length, 1);
+  assert.equal(all.analytics.periods[0].orders, 0);
   const [[tech]] = await c.query('SELECT technician_id FROM technician LIMIT 1');
   const [assignment] = await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Completed')", [f.bookings[0], tech.technician_id, f.adminId]);
   const [job] = await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,current_status) VALUES (?,?,?,'Completed')", [f.bookings[0], assignment.insertId, today() + ' 09:00:00']);
@@ -253,6 +263,50 @@ test('reports show completed service values and reward discounts with service an
   await c.execute('INSERT INTO performance_visit(report_id,job_id,technician_id,actual_start) VALUES (?,?,?,?)', [reportRow.insertId, job.insertId, tech.technician_id, today() + ' 09:00:00']);
   const known = await commerceReport(db, { from: today(), to: today(), technicianId: tech.technician_id });
   assert.equal(known.orders.find(b => b.bookingId === f.bookings[0]).visits, 1);
+}));
+
+test('period analytics preserves filtered identities, missing prices, empty quarters and annual return states', () => fixture(async (db, c, f) => {
+  const dates = ['2024-03-31', '2024-10-01', '2025-01-01'];
+  for (let i = 0; i < f.bookings.length; i++) {
+    await makeJob(c, f, f.bookings[i]);
+    await c.execute('UPDATE booking SET preferred_service_date=? WHERE booking_id=?', [dates[i], f.bookings[i]]);
+  }
+  const [services] = await c.query('SELECT s.service_id,s.service_name FROM simple_service_catalog x JOIN service_catalog s ON s.service_id=x.service_id');
+  for (const service of services) await c.execute('INSERT INTO booking_service(booking_id,service_id,service_name,base_price,additional_unit_price,quantity,line_total) VALUES (?,?,?,50,0,1,50)', [f.bookings[0], service.service_id, service.service_name]);
+  await complete(db, f.bookings[0]);
+  const [[historical]] = await c.query('SELECT service_id FROM service_catalog WHERE service_id NOT IN (SELECT service_id FROM simple_service_catalog) LIMIT 1');
+  assert.ok(historical, 'fixture has a retained historical service');
+  await c.execute('UPDATE booking SET total_amount=NULL,service_id=? WHERE booking_id=?', [historical.service_id, f.bookings[1]]);
+  await complete(db, f.bookings[1]);
+  await c.execute("UPDATE booking SET booking_status='Return visit' WHERE booking_id=?", [f.bookings[2]]);
+  const [[pkg]] = await c.query("SELECT package_id FROM simple_package_catalog WHERE code='annual-cleaning'");
+  const [series] = await c.execute(`INSERT INTO annual_booking_series(customer_id,address_id,package_id,package_name,first_service_date,unit_count,total_amount)
+    VALUES (?,?,?,'Annual Cleaning Bundle',?,1,400)`, [f.customerId, f.addressId, pkg.package_id, dates[2]]);
+  await c.execute('INSERT INTO annual_booking_visit(booking_id,series_id,visit_number,scheduled_date,window_start,window_end) VALUES (?,?,1,?,?,?)',
+    [f.bookings[2], series.insertId, dates[2], dates[2], '2025-03-31']);
+  const filter = { from: '2024-03-01', to: '2025-01-31', technicianId: f.technician.technician_id };
+  const report = await commerceReport(db, { ...filter, groupBy: 'quarter' });
+  const periods = report.analytics.periods;
+  assert.equal(report.orders.length, 3);
+  assert.deepEqual(periods.map(p => p.period), ['2024-Q1', '2024-Q2', '2024-Q3', '2024-Q4', '2025-Q1']);
+  assert.deepEqual(periods.map(p => p.orders), [1, 0, 0, 1, 1]);
+  assert.deepEqual(periods.map(p => p.partial), [true, false, false, false, true]);
+  assert.equal(periods[0].services.combined, 1);
+  assert.equal(periods[0].serviceAmount, 100);
+  assert.equal(periods[3].completed, 1);
+  assert.equal(periods[3].unknownCompletedPrices, 1);
+  assert.equal(periods[3].services.other, 1);
+  assert.equal(periods[3].serviceAmount, 0, 'unrecorded service value is excluded, while the order is still counted');
+  assert.equal(periods[4].services.annual, 1);
+  assert.deepEqual(periods[4].annual, { visits: 1, completed: 0, active: 1, closed: 0, other: 0 });
+  const annual = await commerceReport(db, { ...filter, groupBy: 'year', serviceGroup: 'annual' });
+  assert.equal(annual.orders.length, 1);
+  assert.deepEqual(annual.analytics.periods.map(p => p.orders), [0, 1]);
+  const repairId = (await c.query("SELECT service_id FROM simple_service_catalog WHERE code='repair'"))[0][0].service_id;
+  const repair = await commerceReport(db, { ...filter, groupBy: 'year', serviceId: repairId });
+  assert.equal(repair.orders.length, 1, 'secondary service filter keeps the single combined order');
+  assert.equal(repair.analytics.periods[0].services.combined, 1);
+  assert.equal(repair.analytics.periods[0].orders, 1);
 }));
 
 test('commerce HTTP enforces role, CSRF and customer booking ownership', () => fixture(async (db, c, f) => {
@@ -292,6 +346,10 @@ test('commerce HTTP enforces role, CSRF and customer booking ownership', () => f
     assert.match(text, /Net service amount SGD/);
     assert.match(text, /"Group values by","quarter"/);
     assert.match(text, /Scheduled service period/);
+    assert.match(text, /Order activity period/);
+    assert.match(text, /Service mix period/);
+    assert.match(text, /Annual bundle period/);
+    assert.match(text, /Partial period/);
     assert.doesNotMatch(text, /receipts|refunds|netReceived/);
   } finally { await new Promise(resolve => server.close(resolve)); }
 }));

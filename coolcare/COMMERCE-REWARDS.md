@@ -103,19 +103,55 @@ amount. Corrections use the points ledger rather than a receipt or refund form.
 ## Reports
 
 Filters accept a date range of up to five years, a service and/or a technician.
-`groupBy=day|quarter|year` selects the completed-service grouping (API default:
-day). `dailyService` remains compatible; `periodService` supplies the selected
-grouping and CSV uses that same grouping. The page provides This quarter, This
-year and Last 3 years shortcuts. Partial periods contain only the selected dates;
-they are not extrapolated into full-quarter/year totals. Aggregation uses cents
-and preserves the completed amount snapshots and existing service-date basis.
+`groupBy=day|quarter|year` selects the grouping (API default: day). The page
+defaults to **Quarterly view**, from 1 January of the current year through today
+in Singapore. **Yearly view** shows 1 January two years ago through today.
+**Last year by quarter**, **This quarter by day**, and custom date/grouping
+controls remain available. The four charts share the applied filters:
+
+- Completed service value: stacked after-reward value and reward discounts,
+  whose total is the recorded completed service amount in SGD.
+- Order status: Completed, Active and Closed without completion. Active includes
+  both return-arrangement states; closed includes Cancelled, Rejected and Expired.
+  Unrecognised statuses remain visible as Other.
+- Service mix: Cleaning, Repair, Cleaning & Repair, Annual bundle and
+  Other / historical. Classification uses catalogue links, not service names.
+- Annual bundle visits: completed, active and closed quarterly entitlements,
+  rather than plans sold. A return does not add another entitlement.
+
+Each booking appears once in its status and service categories. Combined
+services count once, and an actual annual-visit link takes precedence over its
+underlying Cleaning service. Empty calendar periods are zero-filled. An asterisk
+marks a period clipped by the selected dates; the tooltip and data table show
+the exact included dates. Partial periods are never extrapolated. Aggregation
+uses cents and preserves completed amount snapshots. Completed orders with
+unknown prices remain in order counts and are explicitly excluded from monetary
+totals; a known zero remains a valid amount.
+
+The report response adds `analytics: { periods: AnalyticsPeriod[] }` without
+changing `dailyService` or `periodService`. Each chronological period contains:
+
+```text
+period, from, to, partial
+orders, completed, active, closed, other, unknownCompletedPrices
+serviceAmount, rewardDiscounts, netServiceAmount
+services: { cleaning, repair, combined, annual, other }
+annual: { visits, completed, active, closed, other }
+```
+
+`period` is `YYYY-MM-DD`, `YYYY-Qn` or `YYYY`; `from` and `to` are inclusive
+selected calendar dates. CSV retains its existing sections and appends order
+activity, service mix and annual bundle period sections from the same analytics
+rows. No schema migration is needed for these read-only reports.
+
 The selector groups current and historical services without removing old
 records. **Annual Cleaning Bundle** filters actual annual-visit links via
 `serviceGroup=annual`; standalone Cleaning is excluded. Choose either this group
 or a `serviceId`, not both. CSV export uses the same applied filters and includes
 their human-readable labels.
-Order metrics use scheduled service dates and count each booking once,
-including combined Cleaning + Repair orders. A technician filter selects orders
+Order metrics use the current scheduled service date and current status, not
+actual completion dates or historical quarter-end snapshots. Rescheduling,
+including confirmed returns, can move an order into another period. A technician filter selects orders
 assigned to them or with a recorded visit by them. Service-value and parts
 figures remain whole-order totals, not earnings attributed to that technician.
 
@@ -131,7 +167,8 @@ dates, the same cohort as the order totals.
 They do not describe receipts, refunds, money received, outstanding payments or
 revenue collected. No historical payment is inferred from a completed booking.
 Work-order parts figures use Singapore stock-movement dates and distinguish
-issues from returned parts. Charts have equivalent accessible tables. CSV
+issues from returned parts. Charts use the shared Recharts wrapper and have
+equivalent expandable data tables with bounded horizontal scrolling on phones. CSV
 exports escape quotes and neutralise spreadsheet formula prefixes, including
 text with leading whitespace.
 

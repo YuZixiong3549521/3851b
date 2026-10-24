@@ -198,6 +198,23 @@ Customer pages `/customer/plans`, `/customer/rewards` and `/customer/feedback` u
 
 Admin routes `/admin/reports`, `/admin/rewards` and `/admin/performance` use `InventoryApp` and its shared navigation. The former `/admin/payments` page redirects to rewards management. Reporting uses the existing Recharts dependency and includes accessible tables and CSV output for completed service value and reward discounts. These amounts do not represent money received. Payment forms, receipt/refund APIs and collection totals are no longer part of the active application.
 
+`ReportAnalyticsCharts` reuses the shared `ChartContainer` and chart colour tokens
+for four stacked bar charts: completed service value, order status, service mix
+and annual bundle entitlements. Quarterly view defaults to this year through
+today; Yearly view covers the last three calendar years through today. Last-year
+quarters, current-quarter days and custom filters are also available. Desktop
+cards form two columns; phone layouts stack them and retain expandable, scrollable
+data tables with the exact figures and dates.
+
+The additive `analytics.periods` response zero-fills the selected range, flags
+partial calendar periods and counts combined/annual services once. Existing
+`dailyService` and `periodService` responses stay compatible; CSV adds matching
+status, service-mix and annual-entitlement sections. The charts use current
+scheduled dates and current order states, so reschedules can move records between
+periods; they are not historical quarter-end snapshots. Unknown completed prices
+are flagged and excluded from monetary totals. No payment records or schema
+migrations are introduced. The full analytics contract is in COMMERCE-REWARDS.md.
+
 My Rewards and Customer Rewards use the persisted points ledger. Future order completion awards points once per booking from the recorded service amount plus technician extras, less applied rewards. End service and an in-progress report submission share the same completion transaction; resaving a report or repeating a return visit cannot award a second set of points. Annual plans earn separately for each completed quarterly booking. Historical Completed orders are not backfilled, and retained payment/audit tables are inactive historical records. Reward reservation, release, administrative adjustments and versioned rule changes retain the existing authentication, CSRF, ownership and idempotency checks.
 
 `BookingRewardSelection` is shared by the customer Review step, authenticated homepage booking dialog and Assistant review. It reads the current wallet/rules, caps whole redemption blocks against the first visit amount and shows the discount and net estimate before submission. Selection and rule version travel with the immutable pending booking request; Assistant drafts persist the selection and require a fresh review after editing it. The shared booking writer reserves the chosen points atomically with creation; annual plans and renewals discount visit 1 only. My Rewards retains balance, activity and release controls for existing reservations, and links to Book a service instead of adding points to an existing order. No schema migration is required.
