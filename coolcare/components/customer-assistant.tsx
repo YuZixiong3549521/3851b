@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
-import { BookingServiceSelection, bookingChangeNotice, bookingFrequencyNotice, getBookingSelection } from '@/components/booking-service-selection';
+import { BookingServiceSelection, bookingChangeNotice, bookingConfirmationNotice, bookingFrequencyNotice, getBookingSelection } from '@/components/booking-service-selection';
 import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingAddressField } from '@/components/booking-address-field';
@@ -363,7 +363,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
             {!receipt && <BookingRewardSelection key={`${context.customer.userId}:${record?.draftId}:${rewardRefresh}`} amount={rewardAmount} annual={annual} value={draft.rewardPoints ?? 0} onChange={rewardPoints => { store.update({ rewardPoints }); setError(''); setPriceChanged(false); }} onValidityChange={setRewardsValid} disabled={locked || savedProblem} />}
             {!receipt && quote?.rewardReservation && !store.dirty && record?.status === 'reviewed' && <p className="rounded-xl bg-primary/5 p-3 text-sm">Reviewed reward discount: {formatMoney(quote.rewardReservation.discount)} for {quote.rewardReservation.points} points. {annual ? 'First visit' : 'Visit'} estimate after rewards: {formatMoney(Math.max(0, rewardAmount - quote.rewardReservation.discount))}.</p>}
             {receipt?.rewardReservation && <div className="space-y-1 rounded-xl bg-primary/5 p-3 text-sm"><p className="font-semibold">{receipt.rewardReservation.points} loyalty points {receipt.rewardReservation.status === 'Redeemed' ? 'used' : receipt.rewardReservation.status === 'Released' ? 'released' : 'reserved'} · {formatMoney(receipt.rewardReservation.discount)} {receipt.rewardReservation.status === 'Released' ? 'discount released' : 'discount'}</p><p>{receipt.rewardReservation.status === 'Released' ? 'The points reservation was released and this discount no longer applies.' : <>{receipt.annualBundle ? 'First visit' : 'Service amount'} after rewards: {formatMoney(Math.max(0, receipt.totalAmount - receipt.rewardReservation.discount))}.{receipt.rewardReservation.status === 'Reserved' && ' Points are deducted when this order is completed.'}</>}</p>{receipt.annualBundle && receipt.rewardReservation.status !== 'Released' && <p>The discount applies to the first visit only.</p>}</div>}
-            <p className="text-xs leading-5 text-muted-foreground">{bookingChangeNotice} Unconfirmed requests expire after 48 hours.</p>
+            <p className="text-xs leading-5 text-muted-foreground">{bookingChangeNotice} {bookingConfirmationNotice(annual)}</p>
             {selected.pricingNote && <p className="text-xs leading-5 text-muted-foreground">{selected.pricingNote}</p>}
             {!receipt && <p className="text-xs leading-5 text-muted-foreground">Your request will be saved as Awaiting confirmation. Preferred dates and times still need the service team's confirmation.</p>}
           </>}

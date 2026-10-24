@@ -718,7 +718,7 @@ export function AdminOverviewPage() {
     [
       'dueSoon',
       'Confirmation due within 12 hours',
-      '/admin/orders?sort=deadline',
+      '/admin/orders?queue=expiring&sort=deadline',
     ],
     ['visitsToday', 'Bookings scheduled today', '/admin/dispatch'],
     ['inProgress', 'Active service / return visits', '/admin/dispatch'],
@@ -727,7 +727,7 @@ export function AdminOverviewPage() {
       'Completed bookings scheduled this week',
       '/admin/dispatch',
     ],
-    ['returnVisits', 'Return visits needing Admin', '/admin/orders'],
+    ['returnVisits', 'Return visits needing Admin', '/admin/orders?queue=returns'],
     ['failedMail', 'Failed customer email attempts', ''],
     ['queuedMail', 'Customer emails pending / sending', ''],
   ];

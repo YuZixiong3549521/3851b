@@ -26,7 +26,7 @@ export default function Home() {
   const bookings = data?.bookings ?? [];
   const futureBookings = upcomingBookings(bookings, now);
   const upcoming = futureBookings[0];
-  const history = bookings.filter(booking => booking.status === 'Completed').sort((a, b) => b.preferredDate.localeCompare(a.preferredDate));
+  const history = bookings.filter(booking => booking.status === 'Completed');
   const annualBundles = [...new Map(bookings.flatMap(booking => booking.annualBundle ? [[booking.annualBundle.seriesId, booking.annualBundle] as const] : [])).values()].filter(bundle => bundle.visits.some(isActiveBooking));
   return <CoolCareShell><div className="mx-auto max-w-[1320px] px-5 py-6 sm:px-8 lg:px-10 lg:py-8">
     {!data && !error && <PageLoading />}
@@ -54,7 +54,7 @@ export default function Home() {
       <div className="mt-6 grid gap-3 sm:grid-cols-3">
         <MetricCard icon={MapPin} label="Saved addresses" value={data.context.addresses.length} detail="Manage your service locations" href="/customer/addresses" />
         <MetricCard icon={CalendarDays} label="Upcoming visits" value={futureBookings.length} detail="See dates and manage requests" href="/customer/bookings" />
-        <MetricCard icon={History} label="Completed services" value={history.length} detail={history[0] ? `Last visit ${formatDate(history[0].preferredDate)}` : 'Your reports will appear here'} href="/customer/history" />
+        <MetricCard icon={History} label="Completed services" value={history.length} detail="View completed services" href="/customer/history" />
       </div>
 
       {annualBundles.length > 0 && <section className="mt-7" aria-labelledby="annual-bookings-heading"><h2 id="annual-bookings-heading" className="mb-4 text-xl font-bold">Your annual cleaning plan</h2><div className="grid gap-4 lg:grid-cols-2">{annualBundles.map(bundle => <AnnualBookingSummary key={bundle.seriesId} saved={bundle} totalAmount={bundle.totalAmount} compact collapsible />)}</div></section>}

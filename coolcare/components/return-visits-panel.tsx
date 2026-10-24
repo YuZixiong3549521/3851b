@@ -6,6 +6,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { earliestBookingDate, bookingDateError } from '@/lib/booking-schedule';
+import { formatDate, formatTimeSlot } from '@/lib/format';
 type Row = {
   adminReadOnly?: boolean;
   earliestReturnDate: string;
@@ -259,7 +260,10 @@ function ReturnCard({
       )}
       {row.date && (
         <p>
-          Requested appointment: {row.date} · {row.start} – {row.end}
+          {['Scheduled', 'In Progress'].includes(row.status)
+            ? 'Confirmed return appointment'
+            : 'Requested return appointment'}: {formatDate(row.date)} ·{' '}
+          {formatTimeSlot(row.start && row.end ? `${row.start.slice(0, 5)} - ${row.end.slice(0, 5)}` : null)} SGT
         </p>
       )}
       {error && (

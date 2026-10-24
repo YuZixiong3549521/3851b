@@ -15,7 +15,6 @@ import {
   LayoutDashboard,
   Package,
   ArrowLeftRight,
-  Database,
   ShieldCheck,
   ClipboardCheck,
   Send,
@@ -356,9 +355,9 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
           </SidebarMenu>
         </SidebarContent>
         <SidebarFooter className="side-footer">
-          <Database size={18} />
+          <ShieldCheck size={18} />
           <span>
-            Local MySQL<small>On this computer only</small>
+            CoolCare<small>Operations and inventory</small>
           </span>
         </SidebarFooter>
       </Sidebar>
@@ -392,7 +391,7 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
             </div>
           )}
           {!ready ? (
-            <p className="notice">Connecting to your local inventory…</p>
+            <p className="notice">Loading your admin workspace…</p>
           ) : !user ? (
             <div role="alert" className="space-y-4">
               <p>
@@ -482,7 +481,7 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
         <AlertDialogContent>
           <AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
           <AlertDialogDescription>
-            Your changes have not been saved to MySQL.
+            Your changes have not been saved.
           </AlertDialogDescription>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep editing</AlertDialogCancel>

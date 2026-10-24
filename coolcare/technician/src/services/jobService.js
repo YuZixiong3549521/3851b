@@ -1,11 +1,9 @@
 import { mockJobs, DEMO_DATE } from '../data/mockJobs.js';
 import { redirectToSessionPortal } from '@/lib/portal-session.mjs';
+import { singaporeToday } from '@/lib/booking-schedule';
 export const mockMode = import.meta.env.VITE_USE_MOCK === 'true';
-export function getPortalDate() {
-  const d = new Date();
-  return mockMode
-    ? DEMO_DATE
-    : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export function getPortalDate(now = new Date()) {
+  return mockMode ? DEMO_DATE : singaporeToday(now);
 }
 // Backend contract: GET /api/technician/jobs -> { jobs: Job[] }.
 // Database credentials belong only in the Node/Express server.

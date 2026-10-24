@@ -7,7 +7,7 @@ import ts from 'typescript';
 const source = await readFile(new URL('../lib/format.ts', import.meta.url), 'utf8');
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(outputText).toString('base64');
-const { formatDate, formatDateTime, formatTimeSlot } = await import(moduleUrl);
+const { formatDate, formatDateTime, formatTimeSlot, formatRecordedMoney } = await import(moduleUrl);
 
 test('customer dates stay English and calendar dates do not move in a Chinese locale or overseas time zone', () => {
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
@@ -45,4 +45,14 @@ test('missing and invalid historical date values render an honest fallback', () 
 
 test('explicit UTC report timestamps convert to Singapore time in English', () => {
   assert.match(formatDateTime('2026-09-12T09:00:00Z'), /12 Sep(?:t)? 2026.*05:00.*pm/i);
+});
+
+test('recorded amounts distinguish missing historical prices from genuine zero values', () => {
+  for (const missing of [null, undefined, '', '  ', Number.NaN, Infinity, 'unknown', false]) {
+    assert.equal(formatRecordedMoney(missing), 'Not recorded');
+  }
+  assert.equal(formatRecordedMoney(0), '$0.00');
+  assert.equal(formatRecordedMoney('0.00'), '$0.00');
+  assert.equal(formatRecordedMoney('1234.50'), '$1,234.50');
+  assert.equal(formatRecordedMoney(-5), '-$5.00');
 });

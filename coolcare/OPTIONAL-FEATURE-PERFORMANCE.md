@@ -9,13 +9,20 @@ converted into customer feedback.
 
 - Customer: `/customer/feedback` shows only that customer's closed visits and
   accepts one editable 1–5 star rating and optional comment per completed visit.
-- Admin: `/admin/performance` shows date-filtered summaries, per-technician
-  measures, visit details, quality assessments, settings and audit history.
+- Admin: `/admin/performance` shows date-filtered customer ratings, review
+  counts, completed visits, return visits and service start records.
 - Technician: `/technician/index.html#performance` shows only visits attributed
-  to the signed-in technician, customer feedback and quality assessment reasons.
+  to the signed-in technician, including customer stars and comments.
+
+The website no longer exposes Scoring settings, composite scores, administrator
+quality scores or quality-assessment editing. The related historical database
+records and API contracts remain intact for compatibility; no migration or data
+deletion is required. Customer feedback remains editable only by its owner.
 
 All website copy, dates and times use English and Singapore time. Date filters
-default to the last 90 calendar days and accept ranges up to 367 days.
+default to the last 90 calendar days and accept ranges up to 367 days. The period
+is based on when a visit ended, and the page shows the currently applied range
+separately from pending date-input changes.
 The Reviews filter separates customer-rated visits from completed visits awaiting
 feedback. Technicians can read the stars and comments for their captured visits,
 including archived visits after reassignment, but cannot edit customer reviews.
@@ -36,7 +43,7 @@ The real Start service transaction captures the assigned technician, the
 scheduled service date/time and server-recorded actual start. Completing a visit
 or requesting a return captures its end and outcome in the same transaction.
 These fields are not rewritten when the work order is rescheduled or assigned to
-a different technician. Return visits have independent reports and scores.
+a different technician. Return visits have independent reports and feedback.
 
 Migration 29 imports only legacy visit snapshots with one unambiguous record per
 report. It preserves the historical technician/start/end, and leaves unknown
@@ -44,27 +51,26 @@ scheduled time NULL. Legacy combined reports, or reports without a reliable visi
 snapshot, are excluded rather than attributed to the current assignment.
 
 Report submission and checklist presence are displayed as counts. Their contents,
-return reason and unavailable parts provide context for an administrator's
-assessment. Missing parts, customer rescheduling, extensions and returns do not
-automatically subtract points.
+return reason and unavailable parts provide context for the service team.
+An unrated visit shows "Not yet rated", and does not count as a zero-star review.
+The summary table includes the number of reviews beside the customer average.
 
-## Scoring
+## Customer ratings and service starts
 
-Defaults: customer feedback 40%, administrator quality 40%, service start
-punctuality 20%. A rating is converted from stars to 100 points (`stars × 20`).
-Administrator quality is 0–100 and requires a reason.
+Customer ratings are shown on their original 1–5 star scale. Their average uses
+only submitted ratings, with the sample size displayed alongside it. Completed
+visits and visits requiring a return are separate operational counts.
 
-Service start punctuality is 100 when service starts no later than 15 minutes
-after the captured scheduled start, otherwise 0. It measures the recorded service
-start, **not GPS arrival**. The grace period is configurable from 0 to 60 minutes.
-No start/schedule evidence means unavailable, not zero.
+Service start punctuality is the percentage of captured visits starting no later
+than the stored grace period after their scheduled start (default 15 minutes).
+It measures the recorded service start, **not GPS arrival**. The page explains
+the applied grace period and shows how many visits have both timestamps. Missing
+timestamps remain unavailable, not zero.
 
-The headline composite is the average of visits with all three measures, shown
-only after at least five fully scored visits. Coverage and each component's
-sample size are displayed. Missing components are never silently reweighted.
-An administrator can change positive integer weights totaling 100 and the grace
-period, with a reason. Current views recalculate under the current settings;
-source ratings, assessments and configuration change history stay intact.
+Legacy composite calculations, administrator quality assessments and weight
+settings are retained on the server for existing API clients. The current pages
+do not show or edit them, and their settings do not alter the customer star
+average. Historical assessment and configuration audit entries are preserved.
 
 ## API
 
@@ -76,8 +82,8 @@ session and CSRF middleware.
 | GET | `/customer/visits?from=YYYY-MM-DD&to=YYYY-MM-DD` | Own customer visits |
 | PUT | `/customer/visits/:reportId/feedback` | Owning customer |
 | GET | `/admin?from=YYYY-MM-DD&to=YYYY-MM-DD&technicianId=123` | Admin/Owner |
-| PUT | `/admin/visits/:reportId/quality` | Admin/Owner |
-| PUT | `/admin/settings` | Admin/Owner |
+| PUT | `/admin/visits/:reportId/quality` | Admin/Owner, legacy compatibility only; no website control |
+| PUT | `/admin/settings` | Admin/Owner, legacy compatibility only; no website control |
 | GET | `/technician?from=YYYY-MM-DD&to=YYYY-MM-DD` | Own technician visits |
 
 Every PUT requires `requestId` (UUID) and `expectedVersion`.

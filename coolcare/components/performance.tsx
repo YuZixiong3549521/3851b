@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Star, RefreshCw, ClipboardCheck, Clock3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { NativeSelect } from '@/components/ui/native-select';
 import { EnglishDatePicker } from '@/components/english-date-picker';
@@ -26,10 +25,6 @@ type Visit = {
   stars: number | null;
   comment: string;
   feedbackVersion: number;
-  qualityScore: number | null;
-  qualityReason: string;
-  qualityVersion: number;
-  punctualityScore: number | null;
   reportSubmittedAt: string | null;
   checklistRecorded: boolean;
   workPerformed: string;
@@ -40,11 +35,7 @@ type Visit = {
   returnParts: string | null;
 };
 type Settings = {
-  customerWeight: number;
-  qualityWeight: number;
-  punctualityWeight: number;
   graceMinutes: number;
-  version: number;
 };
 type Summary = {
   closedVisits: number;
@@ -54,13 +45,8 @@ type Summary = {
   checklistsRecorded: number;
   customerAverage: number | null;
   customerCount: number;
-  qualityAverage: number | null;
-  qualityCount: number;
   punctualityPercent: number | null;
   punctualityCount: number;
-  fullyScoredVisits: number;
-  minimumScoredVisits: number;
-  compositeScore: number | null;
   technicianId?: number;
   name?: string;
 };
@@ -70,15 +56,6 @@ type Result = {
   settings?: Settings;
   summary?: Summary;
   technicians?: Summary[];
-  audit?: {
-    requestId: string;
-    reportId: number | null;
-    kind: string;
-    actor: string;
-    createdAt: string;
-    beforeValue: unknown;
-    afterValue: unknown;
-  }[];
 };
 type Mutation = (path: string, body: Record<string, unknown>) => Promise<void>;
 
@@ -123,34 +100,38 @@ function time(value: string | null) {
   }).format(new Date(normalized));
 }
 function metric(value: number | null | undefined, suffix = '') {
-  return value == null ? 'Not enough data' : `${value}${suffix}`;
+  return value == null ? 'Not recorded' : `${value}${suffix}`;
 }
 function SummaryCards({ summary }: { summary: Summary }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Stat
-        label="Composite score"
-        value={
-          summary.compositeScore === null
-            ? 'Awaiting 5 scored visits'
-            : `${summary.compositeScore} / 100`
-        }
-        note={`${summary.fullyScoredVisits} of ${summary.closedVisits} closed visits have all three measures.`}
+        label="Completed visits"
+        value={String(summary.completedVisits)}
+        note="Service visits completed during the selected period."
       />
       <Stat
         label="Customer feedback"
-        value={metric(summary.customerAverage, ' / 5')}
-        note={`${summary.customerCount} rated visits. Missing feedback is not scored as zero.`}
+        value={
+          summary.customerAverage == null
+            ? 'Not yet rated'
+            : metric(summary.customerAverage, ' / 5')
+        }
+        note={`${summary.customerCount} customer ${summary.customerCount === 1 ? 'review' : 'reviews'}. Unrated visits are excluded from the average.`}
       />
       <Stat
-        label="Quality assessment"
-        value={metric(summary.qualityAverage, ' / 100')}
-        note={`${summary.qualityCount} admin-reviewed visits.`}
+        label="Visits requiring a return"
+        value={String(summary.returnRequiredVisits)}
+        note="Finished visits that needed a further appointment."
       />
       <Stat
         label="Service start punctuality"
-        value={metric(summary.punctualityPercent, '%')}
-        note={`${summary.punctualityCount} visits with both scheduled and actual start times.`}
+        value={
+          summary.punctualityPercent == null
+            ? 'No recorded starts'
+            : metric(summary.punctualityPercent, '%')
+        }
+        note={`${summary.punctualityCount} ${summary.punctualityCount === 1 ? 'visit' : 'visits'} with both scheduled and actual start times.`}
       />
     </div>
   );
@@ -256,9 +237,7 @@ function PerformanceWorkspace({
       if (role === 'customer')
         window.dispatchEvent(new Event('coolcare:bookings-updated'));
       setNotice(
-        role === 'customer'
-          ? 'Thank you for your review. Your technician and our service team can now see your feedback.'
-          : 'Saved successfully. The change is recorded in the audit history.',
+        'Thank you for your review. Your technician and our service team can now see your feedback.',
       );
       await load(query());
     } catch (e) {
@@ -281,21 +260,21 @@ function PerformanceWorkspace({
     <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
       <header>
         <p className="text-sm font-semibold text-primary">
-          {role === 'customer' ? 'YOUR VOICE' : 'SERVICE QUALITY'}
+          {role === 'customer' ? 'YOUR VOICE' : 'SERVICE FEEDBACK'}
         </p>
-        <h1 className="mt-1 text-3xl font-bold">
-          {role === 'customer'
-            ? 'Visit feedback'
-            : role === 'technician'
-              ? 'My performance'
-              : 'Technician performance'}
-        </h1>
+        {role === 'technician' ? (
+          <h2 className="mt-1 text-3xl font-bold">Reviews and service records</h2>
+        ) : (
+          <h1 className="mt-1 text-3xl font-bold">
+            {role === 'customer' ? 'Visit feedback' : 'Technician performance'}
+          </h1>
+        )}
         <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
           {role === 'customer'
             ? 'Rate a completed visit and tell us what went well or could improve. Your rating and comment are shared with the technician who performed that visit and our service team.'
             : role === 'technician'
-              ? 'Read customer reviews for visits you performed, along with your service quality and punctuality scores. You can view reviews but cannot change them.'
-              : 'Scores use individual service visits and the technician recorded when that visit started. Missing feedback and old missing times remain unavailable.'}
+              ? 'Read customer ratings and comments for visits you performed, alongside your completed services and service start records. Reviews are read-only.'
+              : 'Compare customer ratings, completed visits and service start records. Each visit stays attributed to the technician who performed it; unrated visits do not lower the average.'}
         </p>
       </header>
       {selectedReportId ? (
@@ -376,32 +355,31 @@ function PerformanceWorkspace({
       {!data && !error && <p role="status">Loading service visits…</p>}
       {data && (
         <>
+          {!selectedReportId && (
+            <p className="text-sm text-muted-foreground">
+              Showing visits that ended from{' '}
+              {englishCalendarDate(data.filters.from)} to{' '}
+              {englishCalendarDate(data.filters.to)}.
+            </p>
+          )}
           {data.summary && (
             <>
               <SummaryCards summary={data.summary} />
               <div className="rounded-xl border bg-muted/30 p-4 text-sm leading-relaxed">
                 <p>
-                  <strong>{data.summary.completedVisits}</strong> completed
-                  visits · <strong>{data.summary.returnRequiredVisits}</strong>{' '}
-                  visits requiring a return ·{' '}
-                  <strong>{data.summary.reportsSubmitted}</strong> reports
-                  submitted · <strong>{data.summary.checklistsRecorded}</strong>{' '}
-                  checklists recorded
+                  Reports submitted: <strong>{data.summary.reportsSubmitted}</strong>
+                  {' · '}Checklists recorded: <strong>{data.summary.checklistsRecorded}</strong>
                 </p>
                 <p className="mt-2 text-muted-foreground">
-                  Weights: customer feedback {data.settings?.customerWeight}%,
-                  quality {data.settings?.qualityWeight}%, service start
-                  punctuality {data.settings?.punctualityWeight}%. On time means
-                  service started no later than {data.settings?.graceMinutes}{' '}
-                  minutes after the captured schedule. This measures service
-                  start, not physical arrival. A return for unavailable parts, a
-                  customer reschedule or an extension does not automatically
-                  deduct points.
+                  On time means service started no later than{' '}
+                  {data.settings?.graceMinutes ?? 15} minutes after the recorded
+                  appointment time. This measures service start, not physical
+                  arrival. Visits without both times are excluded.
                 </p>
                 <p className="mt-2 text-muted-foreground">
                   Legacy visits without an unambiguous technician snapshot are
-                  excluded. Changing weights recalculates this view; raw
-                  feedback and assessments stay unchanged.
+                  excluded. Customer reviews remain attached to their original
+                  service visit.
                 </p>
               </div>
             </>
@@ -418,12 +396,10 @@ function PerformanceWorkspace({
                     <tr>
                       {[
                         'Technician',
-                        'Closed visits',
-                        'Customer / 5',
-                        'Quality / 100',
-                        'On time',
-                        'Fully scored',
-                        'Composite / 100',
+                        'Completed visits',
+                        'Customer rating / 5',
+                        'Reviews',
+                        'On-time starts',
                       ].map((h) => (
                         <th key={h} className="whitespace-nowrap px-4 py-3">
                           {h}
@@ -438,21 +414,18 @@ function PerformanceWorkspace({
                         className="border-b last:border-0"
                       >
                         <td className="px-4 py-3">{t.name}</td>
-                        <td className="px-4 py-3">{t.closedVisits}</td>
+                        <td className="px-4 py-3">{t.completedVisits}</td>
                         <td className="px-4 py-3">
-                          {metric(t.customerAverage)}
+                          {t.customerAverage == null
+                            ? 'Not yet rated'
+                            : metric(t.customerAverage)}
                         </td>
-                        <td className="px-4 py-3">
-                          {metric(t.qualityAverage)}
-                        </td>
+                        <td className="px-4 py-3">{t.customerCount}</td>
                         <td className="px-4 py-3">
                           {metric(t.punctualityPercent, '%')}
-                        </td>
-                        <td className="px-4 py-3">
-                          {t.fullyScoredVisits} / {t.closedVisits}
-                        </td>
-                        <td className="px-4 py-3">
-                          {metric(t.compositeScore)}
+                          <span className="mt-1 block text-xs text-muted-foreground">
+                            {t.punctualityCount} timed {t.punctualityCount === 1 ? 'visit' : 'visits'}
+                          </span>
                         </td>
                       </tr>
                     ))}
@@ -460,14 +433,6 @@ function PerformanceWorkspace({
                 </table>
               </section>
             )}
-          {role === 'admin' && data.settings && (
-            <SettingsForm
-              key={data.settings.version}
-              settings={data.settings}
-              mutate={mutate}
-              busy={busy}
-            />
-          )}
           <section className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <h2 className="text-xl font-semibold">
@@ -504,7 +469,7 @@ function PerformanceWorkspace({
             </div>
             {!visibleVisits.length ? (
               <p className="rounded-2xl border bg-card p-6 text-muted-foreground">
-                {selectedReportId
+                {selectedReportId && data.visits.length === 0
                   ? 'This service visit is unavailable for your account or has not ended yet.'
                   : reviewFilter !== 'all'
                     ? 'No visits match this review filter in the selected period.'
@@ -513,7 +478,7 @@ function PerformanceWorkspace({
             ) : (
               visibleVisits.map((v) => (
                 <VisitCard
-                  key={`${v.reportId}-${v.feedbackVersion}-${v.qualityVersion}`}
+                  key={`${v.reportId}-${v.feedbackVersion}`}
                   visit={v}
                   role={role}
                   mutate={mutate}
@@ -522,46 +487,6 @@ function PerformanceWorkspace({
               ))
             )}
           </section>
-          {role === 'admin' && (
-            <details className="rounded-2xl border bg-card p-5">
-              <summary className="cursor-pointer font-semibold">
-                Assessment and settings audit (latest 100 changes in this
-                period)
-              </summary>
-              <div className="mt-4 space-y-3">
-                {!data.audit?.length ? (
-                  <p className="text-sm text-muted-foreground">
-                    No changes recorded in this period.
-                  </p>
-                ) : (
-                  data.audit.map((a) => (
-                    <div key={a.requestId} className="border-t pt-3 text-sm">
-                      <p className="font-medium">
-                        {a.kind}
-                        {a.reportId ? ` · Report ${a.reportId}` : ''} ·{' '}
-                        {a.actor}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {time(a.createdAt)}
-                      </p>
-                      <details className="mt-2">
-                        <summary className="cursor-pointer">
-                          View recorded values
-                        </summary>
-                        <pre className="mt-2 whitespace-pre-wrap break-all rounded-lg bg-muted p-3 text-xs">
-                          {JSON.stringify(
-                            { before: a.beforeValue, after: a.afterValue },
-                            null,
-                            2,
-                          )}
-                        </pre>
-                      </details>
-                    </div>
-                  ))
-                )}
-              </div>
-            </details>
-          )}
         </>
       )}
     </div>
@@ -581,10 +506,6 @@ function VisitCard({
   const id = useId(),
     [stars, setStars] = useState(v.stars == null ? '' : String(v.stars)),
     [comment, setComment] = useState(v.comment);
-  const [score, setScore] = useState(
-      v.qualityScore == null ? '' : String(v.qualityScore),
-    ),
-    [reason, setReason] = useState(v.qualityReason);
   return (
     <article
       id={`visit-${v.reportId}`}
@@ -628,8 +549,8 @@ function VisitCard({
       {v.outcome === 'Return required' && (
         <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-950">
           Return context: {v.returnReason ?? 'A further visit was recorded.'}
-          {v.returnParts && ` · ${v.returnParts}`}. This does not automatically
-          reduce the score.
+          {v.returnParts && ` · ${v.returnParts}`}. The reason is recorded with
+          this visit for follow-up.
         </p>
       )}
       {role !== 'customer' && (
@@ -712,180 +633,21 @@ function VisitCard({
           You can leave feedback after a completed visit.
         </p>
       ) : (
-        <div className="mt-4 grid gap-4 border-t pt-4 sm:grid-cols-2">
+        <div className="mt-4 border-t pt-4">
           <div>
             <p className="text-sm font-medium">
-              Customer feedback: {metric(v.stars, ' / 5')}
+              Customer rating:{' '}
+              {v.stars == null ? 'Not yet rated' : metric(v.stars, ' / 5')}
             </p>
             <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
-              {v.comment || 'No comment provided.'}
-            </p>
-          </div>
-          <div>
-            <p className="text-sm font-medium">
-              Quality: {metric(v.qualityScore, ' / 100')}
-            </p>
-            <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
-              {v.qualityReason || 'Not assessed yet.'}
+              {v.comment ||
+                (v.stars == null
+                  ? 'No customer review has been submitted for this visit.'
+                  : 'No comment provided.')}
             </p>
           </div>
         </div>
-      )}
-      {role === 'admin' && (
-        <details className="mt-4">
-          <summary className="cursor-pointer text-sm font-medium">
-            {v.qualityVersion
-              ? 'Update quality assessment'
-              : 'Add quality assessment'}
-          </summary>
-          <form
-            className="mt-3 space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void mutate(`/admin/visits/${v.reportId}/quality`, {
-                expectedVersion: v.qualityVersion,
-                score: Number(score),
-                reason,
-              }).catch(() => {});
-            }}
-          >
-            <label className="block text-sm" htmlFor={`${id}-quality`}>
-              Quality score (0–100)
-            </label>
-            <Input
-              id={`${id}-quality`}
-              className="max-w-40"
-              type="number"
-              required
-              min={0}
-              max={100}
-              step={1}
-              value={score}
-              onChange={(e) => setScore(e.target.value)}
-              disabled={busy}
-            />
-            <label className="block text-sm" htmlFor={`${id}-reason`}>
-              Assessment reason
-            </label>
-            <Textarea
-              id={`${id}-reason`}
-              required
-              minLength={5}
-              maxLength={1500}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              disabled={busy}
-              placeholder="Describe the evidence behind this assessment."
-            />
-            <Button disabled={busy} type="submit">
-              Save quality assessment
-            </Button>
-          </form>
-        </details>
       )}
     </article>
-  );
-}
-function SettingsForm({
-  settings: s,
-  mutate,
-  busy,
-}: {
-  settings: Settings;
-  mutate: Mutation;
-  busy: boolean;
-}) {
-  const id = useId(),
-    [customerWeight, setCustomer] = useState(String(s.customerWeight)),
-    [qualityWeight, setQuality] = useState(String(s.qualityWeight)),
-    [punctualityWeight, setPunctuality] = useState(String(s.punctualityWeight)),
-    [graceMinutes, setGrace] = useState(String(s.graceMinutes)),
-    [reason, setReason] = useState('');
-  const fields = [
-    {
-      name: 'Customer weight (%)',
-      value: customerWeight,
-      set: setCustomer,
-      max: 98,
-    },
-    {
-      name: 'Quality weight (%)',
-      value: qualityWeight,
-      set: setQuality,
-      max: 98,
-    },
-    {
-      name: 'Punctuality weight (%)',
-      value: punctualityWeight,
-      set: setPunctuality,
-      max: 98,
-    },
-    {
-      name: 'Start grace period (minutes)',
-      value: graceMinutes,
-      set: setGrace,
-      max: 60,
-    },
-  ];
-  return (
-    <details className="rounded-2xl border bg-card p-5">
-      <summary className="cursor-pointer font-semibold">
-        Scoring settings
-      </summary>
-      <form
-        className="mt-4 space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void mutate('/admin/settings', {
-            expectedVersion: s.version,
-            customerWeight: Number(customerWeight),
-            qualityWeight: Number(qualityWeight),
-            punctualityWeight: Number(punctualityWeight),
-            graceMinutes: Number(graceMinutes),
-            reason,
-          }).catch(() => {});
-        }}
-      >
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {fields.map((f, i) => (
-            <div key={f.name}>
-              <label htmlFor={`${id}-${i}`} className="mb-1 block text-sm">
-                {f.name}
-              </label>
-              <Input
-                id={`${id}-${i}`}
-                type="number"
-                min={i === 3 ? 0 : 1}
-                max={f.max}
-                step={1}
-                required
-                value={f.value}
-                onChange={(e) => f.set(e.target.value)}
-                disabled={busy}
-              />
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Weights must total 100%. At least five visits with all three measures
-          are required for a composite score.
-        </p>
-        <label htmlFor={`${id}-reason`} className="block text-sm">
-          Reason for changing the scoring settings
-        </label>
-        <Textarea
-          id={`${id}-reason`}
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          minLength={5}
-          maxLength={1500}
-          required
-          disabled={busy}
-        />
-        <Button disabled={busy} type="submit">
-          Save scoring settings
-        </Button>
-      </form>
-    </details>
   );
 }

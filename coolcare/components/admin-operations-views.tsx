@@ -275,7 +275,7 @@ export function OrdersPage({
           </div>
         </section>
       )}
-      <ReturnVisitsPanel viewerRole="admin" />
+      {specialQueue === 'returns' && !search && <ReturnVisitsPanel viewerRole="admin" />}
       {mode === 'review' && !search && (
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <label

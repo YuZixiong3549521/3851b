@@ -171,7 +171,7 @@ For local walkthroughs, `SERVICE_TIMING_TEST_MODE=true` relaxes start and comple
 
 The technician jobs API includes `canStart`, `startBlockedReason`, `canComplete`, `completionBlockedReason`, `reportPending` and `reportId`; report detail includes `canEdit` and `reportPending`. The server rejects future-dated completion even for an older In Progress row. Service progress exposes `repairQuoteLocked` once completion has fixed the charge. Existing requests and status fields remain compatible; these flags explain the same checks enforced by mutation endpoints.
 
-Annual visit 1 keeps the normal 48-hour confirmation deadline. Visits 2–4 remain reserved without that automatic deadline and are confirmed/dispatched separately. Closing one visit does not silently cancel the remaining quarterly visits; My Plans explains which visits need attention. Migration 31 only clears premature deadlines on future, still-Submitted later visits and never reopens closed orders.
+Annual visit 1 keeps the configured confirmation deadline (48 hours by default). Visits 2–4 remain reserved without that automatic deadline and are confirmed/dispatched separately. Closing one visit does not silently cancel the remaining quarterly visits; My Plans explains which visits need attention. Migration 31 only clears premature deadlines on future, still-Submitted later visits and never reopens closed orders.
 ## Plans, rewards, reporting and performance
 
 The meeting update adds Admin **Annual Packages** at `/admin/plans`, including
@@ -205,5 +205,25 @@ My Rewards and Customer Rewards use the persisted points ledger. Future order co
 Creation-time rewards were verified through all three browser entry points using one isolated customer: a regular customer booking, an Assistant four-visit bundle and a homepage repair booking. MySQL confirmed one reservation on each selected order and none on annual visits 2–4. Mobile Assistant review, invalid numeric input recovery, revised quote confirmation and My Rewards balances were checked; the synthetic account, six bookings, points and draft were removed afterward. Integration tests cover atomic failure, price caps, rule-version changes, cancellation, completion, idempotent retries and concurrent spending. Admin's existing Technician Performance page was verified read-only, without adding ratings.
 
 `components/performance.tsx` is shared by Admin, Customer and the technician Vite entry at `#performance`, with role-specific controls and server-side ownership checks. Each visit retains the technician and schedule captured at service start; legitimate returns and missing historical timing are explained without fabricated deductions. Date controls and rendered dates remain English and use Singapore business time.
+
+The performance UI shows customer ratings/comments, review sample counts, completed
+visits, return visits and service-start punctuality. Composite and administrator
+quality scores, scoring settings, quality editing and their audit controls have
+been removed from the page. Their stored history and existing API contracts remain
+available for compatibility. The applied service-end date range is explicit,
+unrated visits display **Not yet rated**, and the technician content uses a
+section heading beneath the portal's single page title.
+
+The interface review also aligns Overview action links with their exact order
+queues, limits the global return panel to the return queue, and opens report order
+links in a labelled new tab so report filters remain intact. Missing administrator
+amounts display **Not recorded**, while a real zero remains `$0.00`. Confirmed
+return appointments use English dates/times with SGT. Booking and expiry notices
+describe the applicable deadline without hard-coding 48 hours for every order;
+ordinary service points are labelled separately from early-renewal bonuses.
+The customer dashboard's completed-services card links to history without
+presenting a requested appointment date as an actual last-service date.
+Technician branding uses CoolCare, and its Today/Upcoming filters use the shared
+Singapore calendar date even on computers in another time zone.
 
 Feature contracts and configurable rules are documented in [COMMERCE-REWARDS.md](COMMERCE-REWARDS.md), [OPTIONAL-FEATURE-PLANS.md](OPTIONAL-FEATURE-PLANS.md) and [OPTIONAL-FEATURE-PERFORMANCE.md](OPTIONAL-FEATURE-PERFORMANCE.md). Backend routes are mounted behind the existing session and CSRF middleware; the normal migration flow preserves existing business data. Demo login and local Mailpit remain available for local development.

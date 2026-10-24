@@ -137,7 +137,7 @@ export function BookingCard({
                 {amounts.isFinal && amounts.baseAmount === null && amounts.grossAmount !== null && <div><dt className="inline">Recorded total before rewards: </dt><dd className="inline">{formatMoney(amounts.grossAmount)} (breakdown unavailable)</dd></div>}
                 <div className="flex flex-wrap gap-x-2"><dt>{amounts.rewardStatus === 'Reserved' ? 'Reserved reward discount:' : 'Reward discount:'}</dt><dd>−{formatMoney(amounts.discountAmount)}</dd></div>
                 {amounts.rewardStatus === 'Reserved' && <div className="max-w-md text-xs">Reserved rewards are checked against the final service total and available points at completion.</div>}
-                {amounts.isFinal && <div className="font-medium text-foreground"><dt className="inline">Points earned: </dt><dd className="inline">{amounts.awardedPoints}</dd></div>}
+                {amounts.isFinal && <div className="font-medium text-foreground"><dt className="inline">Service points earned: </dt><dd className="inline">{amounts.awardedPoints}</dd></div>}
                 {amounts.completionOutcome === 'Historical' && <div>Historical completion · no retrospective points awarded.</div>}
                 {amounts.completionOutcome === 'Legacy reward' && <div>Earlier reward history retained · no repeat award.</div>}
               </dl>
@@ -148,6 +148,7 @@ export function BookingCard({
                 visits before rewards or any repair extras
               </p>
             )}
+            {amounts?.isFinal && booking.annualBundle && <p className="mt-2 max-w-md text-xs text-muted-foreground">Early renewal bonuses are shown separately in <Link className="text-primary underline" href="/customer/plans">My Plans</Link> and the Points activity section of <Link className="text-primary underline" href="/customer/rewards">My Rewards</Link>.</p>}
           </div>
           {showActions && (
             <div className="flex flex-wrap gap-2">

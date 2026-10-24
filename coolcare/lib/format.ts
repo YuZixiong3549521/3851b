@@ -41,6 +41,15 @@ export function formatMoney(value: number | null) {
   return new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(value ?? 0);
 }
 
+// Historical records may have no saved price. Keep that distinct from a real
+// zero amount, including decimal strings returned by the database.
+export function formatRecordedMoney(value: unknown) {
+  if ((typeof value !== 'number' && typeof value !== 'string') ||
+    (typeof value === 'string' && !value.trim())) return 'Not recorded';
+  const amount = Number(value);
+  return Number.isFinite(amount) ? formatMoney(amount) : 'Not recorded';
+}
+
 export function formatServiceWindow(slot: string, durationMinutes?: number): string {
   const match=/^(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(slot.trim());
   if(!match || !durationMinutes) return formatTimeSlot(slot);

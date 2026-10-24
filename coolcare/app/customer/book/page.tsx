@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CalendarCheck, Check, Clock3, MapPin, Snowflake, Wind } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
-import { BookingServiceSelection, bookingChangeNotice, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
+import { BookingServiceSelection, bookingChangeNotice, bookingConfirmationNotice, bookingFrequencyNotice, emptyBookingSelection, getBookingSelection, type BookingSelection } from '@/components/booking-service-selection';
 import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingAddressField } from '@/components/booking-address-field';
@@ -348,7 +348,7 @@ export default function BookServicePage() {
                   {selectedServices.isAnnual && <div className="mt-5"><AnnualBookingSummary durationMinutes={selectedServices.durationMinutes} firstDate={form.preferredDate} timeSlot={form.timeSlot} totalAmount={total} /></div>}
                   {selectedServices.pricingNote && <p className="mt-4 text-sm text-muted-foreground">{selectedServices.pricingNote}</p>}
                   <BookingRewardSelection amount={selectedServices.isAnnual ? annualVisitAmounts(total)[0] : total} annual={selectedServices.isAnnual} value={rewardPoints} onChange={setRewardPoints} onValidityChange={setRewardsValid} onRuleVersionChange={setRewardRuleVersion} disabled={submitting || retryLocked} />
-                  <p className="mt-4 text-sm text-muted-foreground">{bookingChangeNotice} Unconfirmed requests expire after 48 hours.</p>
+                  <p className="mt-4 text-sm text-muted-foreground">{bookingChangeNotice} {bookingConfirmationNotice(selectedServices.isAnnual)}</p>
                   {form.specialNotes && <p className="mt-4 whitespace-pre-wrap text-sm"><strong>Other remarks: </strong>{form.specialNotes}</p>}
                   {form.problemDescription && <div className="mt-5 rounded-2xl border border-border p-4"><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Problem description</p><p className="mt-2 text-sm leading-6">{form.problemDescription}</p></div>}
                 </div>

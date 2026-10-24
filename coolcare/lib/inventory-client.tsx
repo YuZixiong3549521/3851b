@@ -1,6 +1,7 @@
 'use client';
 import { createContext, useContext, useEffect, useState } from 'react';
 import type { BookingAmounts } from './coolcare-types';
+import { formatRecordedMoney } from './format';
 export const ROOT = '/admin/inventory';
 export const ADMIN_ROOT = '/admin';
 export type Part = {
@@ -298,13 +299,7 @@ export function useResource<T>(endpoint: string | null, version = 0) {
   return { data, loading, error, reload: () => setRetry((n) => n + 1) };
 }
 export function money(n: unknown) {
-  return (
-    '$' +
-    Number(n || 0).toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })
-  );
+  return formatRecordedMoney(n);
 }
 export function code(prefix: string, id: number) {
   return prefix + '-' + String(id).padStart(4, '0');

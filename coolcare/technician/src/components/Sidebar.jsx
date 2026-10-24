@@ -15,7 +15,7 @@ export default function Sidebar({ page, technician }) {
           <AirVent size={24} />
         </span>
         <span>
-          AirCon<small>Maintenance</small>
+          CoolCare<small>Technician portal</small>
         </span>
       </a>
       <div className="menu-label">MAIN MENU</div>

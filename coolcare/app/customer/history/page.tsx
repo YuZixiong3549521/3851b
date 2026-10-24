@@ -34,7 +34,7 @@ export default function MaintenanceHistoryPage() {
           <TabsContent value="completed">{completed.length === 0 ? <EmptyState title="No completed services yet" description="Completed appointments and their reports will be kept here." /> : <HistoryList bookings={completed} />}</TabsContent>
           <TabsContent value="rejected">{rejected.length === 0 ? <EmptyState title="No rejected requests" description="Requests the service team cannot approve will be kept here with the reason." /> : <HistoryList bookings={rejected} />}</TabsContent>
           <TabsContent value="cancelled">{cancelled.length === 0 ? <EmptyState title="No cancelled bookings" description="Cancelled requests will be kept here for your records." /> : <HistoryList bookings={cancelled} />}</TabsContent>
-          <TabsContent value="expired">{expired.length ? <HistoryList bookings={expired} /> : <EmptyState title="No expired requests" description="Unconfirmed requests expire after 48 hours." />}</TabsContent>
+          <TabsContent value="expired">{expired.length ? <HistoryList bookings={expired} /> : <EmptyState title="No expired requests" description="Requests that were not confirmed by their confirmation deadline appear here." />}</TabsContent>
         </Tabs>}
       </div>
     </CoolCareShell>

@@ -18,6 +18,9 @@ export const emptyBookingSelection: BookingSelection = { mode: 'custom', service
 export const bookingFrequencyNotice = 'One cleaning appointment per address each Monday–Sunday week, including bundle and combined-service visits. Cancelled, rejected and expired requests do not count. Repair-only visits are not restricted by this cleaning limit.';
 export const cleaningMethodNotice = 'For residential wall-mounted air conditioners. Your technician decides the cleaning method after inspection. Repair starts with a minimum diagnostic fee; additional labour and parts are quoted by your technician and shown in your booking. No payment is collected online.';
 export const bookingChangeNotice = 'Any appointment change must be made at least 72 hours before the original visit. New dates must also be at least 72 hours ahead and fall on a weekday.';
+export const bookingConfirmationNotice = (annual: boolean) => annual
+  ? 'The first visit expires if it is not confirmed by the deadline shown in My Bookings. Visits 2–4 stay reserved and require separate confirmation, without automatic expiry.'
+  : 'Unconfirmed requests expire at the confirmation deadline shown in My Bookings.';
 
 export function getBookingSelection(options: BookingOptions | null, selection: BookingSelection, unitCount: number) {
   const bundle = options?.bundles.find(item => item.packageId === selection.packageId && item.code === 'annual-cleaning');
