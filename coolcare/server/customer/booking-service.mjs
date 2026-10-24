@@ -22,6 +22,7 @@ export const createBookingSchema = z.object({
   serviceIds: z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),
   packageId: z.coerce.number().int().positive().optional(),
   renewalOfSeriesId: z.coerce.number().int().positive().optional(),
+  expectedRenewalOffer: z.object({ points: z.number().int().positive(), deadline: z.string().datetime({ offset: true }) }).strict().optional(),
   propertyType:z.string().trim().max(40).optional(),
   postalCode:z.string().trim().regex(/^\d{6}$/,'Enter a six-digit Singapore postal code.').optional(),
   subscriptionId: z.coerce.number().int().positive().optional(),
@@ -38,6 +39,7 @@ export const createBookingSchema = z.object({
   problemDescription: z.string().trim().max(1000).optional().default(''),
   specialNotes:z.string().trim().max(1000).optional(),
 }).superRefine((input,context)=>{
+  if(input.expectedRenewalOffer&&!input.renewalOfSeriesId)context.addIssue({code:'custom',path:['expectedRenewalOffer'],message:'A renewal offer must belong to an annual plan renewal.'});
   if(input.rewardPoints!==undefined && input.reward_points!==undefined && input.rewardPoints!==input.reward_points)context.addIssue({code:'custom',path:['rewardPoints'],message:'Choose one points amount.'});
   const countMode=input.serviceAddress!==undefined||input.numberOfUnits!==undefined;
   if(countMode) {
@@ -98,7 +100,7 @@ export async function createBooking(pool, untrustedInput, userId) {
     const selection=await resolveBookingSelection(connection,customer.customerId,input,uniqueUnitIds.length);
     const booking=await writeSelectedBookings(connection,selection,{customerId:customer.customerId,userId:customer.userId,
       addressId:address.addressId,addressLine:address.addressLine,unitIds:uniqueUnitIds,preferredDate:input.preferredDate,
-      timeSlot:input.timeSlot,problemDescription:input.problemDescription,specialNotes:input.specialNotes,phone:customer.phone,requestId:input.requestId,renewalOfSeriesId:input.renewalOfSeriesId,
+      timeSlot:input.timeSlot,problemDescription:input.problemDescription,specialNotes:input.specialNotes,phone:customer.phone,requestId:input.requestId,renewalOfSeriesId:input.renewalOfSeriesId,expectedRenewalOffer:input.expectedRenewalOffer,
       rewardPoints:input.rewardPoints??input.reward_points??0,rewardRuleVersion:input.rewardRuleVersion,source:'Created from customer portal.'});
     await connection.commit();
     return {

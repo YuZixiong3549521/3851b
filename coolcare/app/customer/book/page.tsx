@@ -48,6 +48,7 @@ export default function BookServicePage() {
   const [retryLocked, setRetryLocked] = useState(false);
   const [addressEditorOpen, setAddressEditorOpen] = useState(false);
   const [renewal, setRenewal] = useState<AnnualPlanRenewal | null>(null);
+  const [renewalNeedsReview, setRenewalNeedsReview] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [rewardPoints, setRewardPoints] = useState(0);
   const [rewardRuleVersion, setRewardRuleVersion] = useState<number | undefined>();
@@ -125,6 +126,7 @@ export default function BookServicePage() {
     } catch (reason) {
       const rejected = reason instanceof Error && 'status' in reason && Number(reason.status) >= 400 && Number(reason.status) < 500;
       if (rejected) pendingRequest.current = null;
+      if (rejected && reason instanceof Error && reason.message.includes('early renewal offer changed')) setRenewalNeedsReview(true);
       if (reason instanceof Error && reason.message.includes('signed-in account changed')) {
         setContext(null); setOptions(null); setSelection(emptyBookingSelection); setForm(createDefaultCustomerBookingForm([], earliestBookingDate())); setError(reason.message);
       }
@@ -204,13 +206,15 @@ export default function BookServicePage() {
   }
 
   async function handleConfirm() {
-    if (!selectedServices.valid || !form.timeSlot || submittingRequest.current || addressEditorOpen) return;
+    if (!selectedServices.valid || !form.timeSlot || submittingRequest.current || addressEditorOpen || renewalNeedsReview) return;
     if (!pendingRequest.current && !rewardsValid) { setFieldError('Check your points selection before confirming.'); return; }
     if (!pendingRequest.current && (availability.selectedDateBlocked||selectedSlotFull)) { setFieldError(availability.selectedDateBlocked?bookingConflictMessage:'This service time is fully booked. Choose another available time.'); return; }
     try {
       await submitBooking({
         ...selectedServices.payload,
         renewalOfSeriesId: renewal?.renewalOfSeriesId,
+        expectedRenewalOffer: renewal?.earlyRenewalEligible && renewal.earlyRenewalDeadline
+          ? { points: renewal.earlyRenewalPoints, deadline: renewal.earlyRenewalDeadline } : undefined,
         serviceAddress: form.serviceAddress.trim(),
         numberOfUnits: form.numberOfUnits,
         preferredDate: form.preferredDate,
@@ -224,6 +228,24 @@ export default function BookServicePage() {
     } catch {
       // The shared submit path displays errors for both the form and WebMCP.
     }
+  }
+
+  async function refreshRenewalOffer() {
+    if (!renewal || submittingRequest.current) return;
+    setSubmitting(true);
+    try {
+      const current = await customerPlansApi.getRenewal(renewal.renewalOfSeriesId);
+      if ('existingRenewalSeriesId' in current) {
+        window.location.replace(`/customer/plans#plan-${current.existingRenewalSeriesId}`);
+        return;
+      }
+      setRenewal(current);
+      setRenewalNeedsReview(false);
+      setFieldError(current.earlyRenewalEligible
+        ? 'The renewal deadline has been updated above. Review the offer and confirm again when ready.'
+        : 'The early renewal bonus is no longer available. You can still renew at the reviewed service price; confirm again only if you wish to proceed without the bonus.');
+    } catch (reason) { setFieldError(reason instanceof Error ? reason.message : 'Unable to refresh the renewal offer.'); }
+    finally { setSubmitting(false); }
   }
 
   function handleAddressSaved(address: Address) {
@@ -242,6 +264,7 @@ export default function BookServicePage() {
       return;
     }
     setRenewal(null);
+    setRenewalNeedsReview(false);
     if (renewal) window.history.replaceState(null, '', '/customer/book');
     setForm(createDefaultCustomerBookingForm(context?.addresses, earliestBookingDate()));
     setFieldError('');
@@ -273,6 +296,8 @@ export default function BookServicePage() {
           <>
             {renewal && <Alert className="mb-5"><AlertTitle>Renew your annual cleaning plan</AlertTitle><AlertDescription>
               Review the current price and all four proposed visits before submitting. Your new plan starts on or after {formatDate(renewal.minimumFirstDate)}. No payment is taken automatically.
+              {renewal.earlyRenewalEligible && renewal.earlyRenewalDeadline && <span className="mt-2 block font-medium">Renew before {new Intl.DateTimeFormat('en-SG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Singapore' }).format(new Date(renewal.earlyRenewalDeadline))} SGT to earn {renewal.earlyRenewalPoints} bonus points after your new plan&apos;s first service is completed. Eligibility is checked again when you submit.</span>}
+              {!renewal.earlyRenewalEligible && <span className="mt-2 block">No early renewal bonus applies to this renewal. Normal service-completion points still apply.</span>}
             </AlertDescription></Alert>}
             <ol aria-label="Booking progress" className="mb-6 grid grid-cols-4 gap-2">
               {steps.map((label, index) => {
@@ -330,7 +355,8 @@ export default function BookServicePage() {
               )}
 
               {fieldError && <FieldError className="mt-5">{fieldError}</FieldError>}
-              <div className="fixed inset-x-0 bottom-[calc(64px+max(8px,env(safe-area-inset-bottom)))] z-30 flex items-center justify-between gap-3 border-t bg-background/95 px-5 py-3 backdrop-blur lg:static lg:mt-8 lg:border-0 lg:bg-transparent lg:p-0"><Button variant="ghost" disabled={step === 1 || submitting || retryLocked || addressEditorOpen} onClick={() => { setFieldError(''); setStep((current) => Math.max(1, current - 1)); }}><ArrowLeft className="size-4" aria-hidden="true" />Back</Button>{step < 4 ? <Button disabled={addressEditorOpen || (step === 3 && (availability.selectedDateBlocked||selectedSlotFull||slotAvailability.loading))} onClick={nextStep}>Continue<ArrowRight className="size-4" aria-hidden="true" /></Button> : <Button onClick={handleConfirm} disabled={submitting || (!retryLocked && (!rewardsValid||availability.selectedDateBlocked||selectedSlotFull))}>{submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm booking'}<Check className="size-4" aria-hidden="true" /></Button>}</div>
+              {renewalNeedsReview && <Button className="mt-3" variant="outline" disabled={submitting} onClick={() => void refreshRenewalOffer()}>Refresh renewal offer</Button>}
+              <div className="fixed inset-x-0 bottom-[calc(64px+max(8px,env(safe-area-inset-bottom)))] z-30 flex items-center justify-between gap-3 border-t bg-background/95 px-5 py-3 backdrop-blur lg:static lg:mt-8 lg:border-0 lg:bg-transparent lg:p-0"><Button variant="ghost" disabled={step === 1 || submitting || retryLocked || addressEditorOpen} onClick={() => { setFieldError(''); setStep((current) => Math.max(1, current - 1)); }}><ArrowLeft className="size-4" aria-hidden="true" />Back</Button>{step < 4 ? <Button disabled={addressEditorOpen || (step === 3 && (availability.selectedDateBlocked||selectedSlotFull||slotAvailability.loading))} onClick={nextStep}>Continue<ArrowRight className="size-4" aria-hidden="true" /></Button> : <Button onClick={handleConfirm} disabled={submitting || renewalNeedsReview || (!retryLocked && (!rewardsValid||availability.selectedDateBlocked||selectedSlotFull))}>{submitting ? 'Saving…' : retryLocked ? 'Retry confirmation' : 'Confirm booking'}<Check className="size-4" aria-hidden="true" /></Button>}</div>
             </CardContent></Card>
           </>
         )}

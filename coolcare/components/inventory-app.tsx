@@ -2,6 +2,7 @@
 import { PortalAccountMenu } from '@/components/portal-account-menu';
 import { CommerceReportsPage, CommerceRewardsPage } from '@/components/commerce-admin';
 import { PerformanceAdminView } from '@/components/performance-admin';
+import { AdminPlans } from '@/components/admin-plans';
 import {
   AdminOverviewPage,
   AdminAuditPage,
@@ -252,6 +253,7 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
     },
     { Icon: Users, label: 'Technicians', path: '/admin/technicians', count: 0 },
     { Icon: ChartNoAxesCombined, label: 'Reports & Analytics', path: '/admin/reports', count: 0 },
+    { Icon: Package, label: 'Annual Packages', path: '/admin/plans', count: 0 },
     { Icon: Gift, label: 'Customer Rewards', path: '/admin/rewards', count: 0 },
     { Icon: Star, label: 'Technician Performance', path: '/admin/performance', count: 0 },
     {
@@ -275,6 +277,7 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
   ];
   const active =
     pathname === '/admin/reports' ? 'Reports & Analytics'
+      : pathname === '/admin/plans' ? 'Annual Packages'
       : pathname === '/admin/rewards' ? 'Customer Rewards'
       : pathname === '/admin/performance' ? 'Technician Performance'
       : pathname === '/admin/overview'
@@ -416,6 +419,8 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
             >
               {pathname === '/admin/overview' ? (
                 <AdminOverviewPage />
+              ) : pathname === '/admin/plans' ? (
+                <AdminPlans />
               ) : pathname === '/admin/reports' ? (
                 <CommerceReportsPage />
               ) : pathname === '/admin/rewards' ? (

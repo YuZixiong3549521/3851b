@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ArrowRight, CalendarDays, Clock3, History, MapPin, RefreshCw } from 'lucide-react';
 import { CoolCareShell } from '@/components/coolcare-shell';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
+import { CustomerFeedbackPrompt } from '@/components/customer-feedback-prompt';
 import { BookingStatus, bookingStatusDescription } from '@/components/booking-status';
 import { PageError, PageLoading } from '@/components/page-state';
 import { Button } from '@/components/ui/button';
@@ -36,6 +37,8 @@ export default function Home() {
         <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Your service at a glance</h1>
         <div className="mt-4 flex flex-wrap items-center gap-3"><Button nativeButton={false} render={<Link href="/customer/book" />} className="bg-white text-primary hover:bg-blue-50">Book a service<ArrowRight className="size-4" /></Button></div>
       </section>
+
+      <div className="mt-6"><CustomerFeedbackPrompt /></div>
 
       <section aria-label="Next appointment" className="mt-6">
         <Card className="border-primary/20 shadow-sm">

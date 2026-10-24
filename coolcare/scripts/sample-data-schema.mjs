@@ -1,6 +1,6 @@
 export const sampleDataTables = [
   'performance_operation', 'performance_feedback', 'performance_quality', 'performance_visit',
-  'annual_plan_notice', 'annual_plan_renewal', 'commerce_payment', 'commerce_operation',
+  'annual_renewal_bonus', 'annual_plan_notice', 'annual_plan_renewal', 'commerce_payment', 'commerce_operation',
   'reward_adjustment_audit', 'reward_reservation', 'reward_booking_earning', 'booking_completion_reward',
   'booking_admin_operation', 'technician_work_operation', 'service_report_revision', 'report_signature',
   'service_photo_upload', 'return_visit_operation', 'service_visit_record',

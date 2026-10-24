@@ -42,7 +42,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return result as T;
 }
 
-export type BookingNotice = {bookingId:number;reference:string;status:string;reason:string;noticeKey:string};
+export type BookingNotice = {bookingId:number;reference:string;status:string;reason:string;noticeKey:string;rewardStatus:string|null;rewardPoints:number};
 export const coolcareApi = {
   getBookingNotices: async () => (await apiRequest<{notices:BookingNotice[]}>('/booking-notifications')).notices,
   readBookingNotice: async (id:number,noticeKey:string) => apiRequest('/booking-notifications/'+id+'/read',{method:'POST',body:JSON.stringify({noticeKey})}),

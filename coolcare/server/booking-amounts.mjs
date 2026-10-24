@@ -15,6 +15,7 @@ export function mapBookingAmounts(row) {
     baseAmount: base, additionalFee: extras, grossAmount: gross, discountAmount: discount,
     netServiceAmount: frozen ? amount(row.completedNetAmount) : gross === null ? null : Math.max(0, cents(gross) - cents(discount)) / 100,
     rewardStatus: row.rewardStatus ?? null,
+    rewardPoints: Number(row.rewardPoints || 0),
     awardedPoints: Number(row.awardedPoints || 0),
     redeemedPoints: Number(row.redeemedPoints || 0),
     completionOutcome: row.completionOutcome ?? null,
@@ -32,7 +33,7 @@ export async function readBookingAmounts(pool, bookingIds) {
       COALESCE((SELECT SUM(p.additional_repair_fee) FROM work_order w
         JOIN assignment a ON a.assignment_id=w.assignment_id JOIN service_progress p ON p.job_id=w.job_id
         WHERE w.booking_id=b.booking_id AND a.assignment_status NOT IN ('Cancelled','Reassigned','Declined')),0) AS additionalFee,
-      r.status AS rewardStatus,r.discount_amount AS discount,
+      r.status AS rewardStatus,r.points AS rewardPoints,r.discount_amount AS discount,
       d.outcome AS completionOutcome,d.base_amount AS completedBaseAmount,d.additional_fee AS completedAdditionalFee,
       d.gross_amount AS completedGrossAmount,d.discount_amount AS completedDiscount,d.net_amount AS completedNetAmount,
       d.awarded_points AS awardedPoints,d.redeemed_points AS redeemedPoints

@@ -16,6 +16,18 @@ converted into customer feedback.
 
 All website copy, dates and times use English and Singapore time. Date filters
 default to the last 90 calendar days and accept ranges up to 367 days.
+The Reviews filter separates customer-rated visits from completed visits awaiting
+feedback. Technicians can read the stars and comments for their captured visits,
+including archived visits after reassignment, but cannot edit customer reviews.
+
+The Customer dashboard and booking detail reminder asks for a rating after a
+visit ends as Completed, even if the service report is still being prepared.
+`GET /api/performance/customer/pending-feedback?bookingId=123` returns up to five
+owned, unrated completed visits and the total pending count; `bookingId` is optional.
+The reminder disappears once feedback is saved. Direct links use
+`/customer/feedback?reportId=123`, and the visits API accepts the same `reportId`
+to select the owned visit regardless of the default date window. Return-required
+and unfinished visits are excluded from rating reminders. No migration is needed.
 
 ## Capturing evidence
 

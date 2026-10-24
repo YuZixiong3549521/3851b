@@ -43,7 +43,7 @@ export async function writeSelectedBookings(connection,selection,context) {
     [context.customerId,context.addressId,selection.package.packageId,selection.package.name,context.preferredDate,context.unitIds.length,selection.totalAmount,context.requestId,
       selection.package.propertyType??null,selection.package.propertyLabel??null,selection.package.includedUnits,selection.package.price,selection.package.additionalUnitPrice]);
     seriesId=series.insertId;
-    if (context.renewalOfSeriesId) await linkAnnualPlanRenewal(connection, context.renewalOfSeriesId, seriesId);
+    if (context.renewalOfSeriesId) await linkAnnualPlanRenewal(connection, context.renewalOfSeriesId, seriesId, new Date(), context.expectedRenewalOffer);
   }
   let firstBookingId;
   for(const visit of schedule) {

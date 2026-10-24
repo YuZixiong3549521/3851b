@@ -50,6 +50,7 @@ const filterSchema = z
     from: calendarDate.optional(),
     to: calendarDate.optional(),
     technicianId: z.coerce.number().int().positive().optional(),
+    reportId: z.coerce.number().int().positive().optional(),
   })
   .strict();
 
@@ -202,8 +203,12 @@ export async function listPerformance(pool, user, raw = {}) {
     throw new AppError('This portal is unavailable.', 403);
   const f = filters(raw),
     settings = await getPerformanceSettings(pool);
-  const where = ['p.actual_end>=?', 'p.actual_end<DATE_ADD(?,INTERVAL 1 DAY)'],
-    values = [f.from, f.to];
+  // A direct visit link remains usable after the default 90-day window.
+  // Role ownership below is still mandatory for every lookup.
+  const where = f.reportId
+      ? ['p.report_id=?', 'p.actual_end IS NOT NULL']
+      : ['p.actual_end>=?', 'p.actual_end<DATE_ADD(?,INTERVAL 1 DAY)'],
+    values = f.reportId ? [f.reportId] : [f.from, f.to];
   if (user.role === 'Technician') {
     where.push('t.user_id=?');
     values.push(user.id);
@@ -283,6 +288,38 @@ export async function listPerformance(pool, user, raw = {}) {
       ),
     })),
     audit,
+  };
+}
+
+export async function listPendingCustomerFeedback(pool, user, raw = {}) {
+  if (user.role !== 'Customer')
+    throw new AppError('This portal is unavailable.', 403);
+  const { bookingId } = z
+    .object({ bookingId: z.coerce.number().int().positive().optional() })
+    .strict()
+    .parse(raw);
+  const [rows] = await pool.execute(
+    `SELECT p.report_id AS reportId,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,
+      tech.full_name AS technician,sc.service_name AS service,
+      DATE_FORMAT(p.actual_end,'%Y-%m-%d %H:%i:%s') AS actualEnd,
+      (r.submitted_time IS NOT NULL) AS reportSubmitted,COUNT(*) OVER() AS pendingCount
+    FROM performance_visit p JOIN service_report r ON r.report_id=p.report_id
+    JOIN work_order w ON w.job_id=p.job_id JOIN booking b ON b.booking_id=w.booking_id
+    JOIN customer cu ON cu.customer_id=b.customer_id
+    JOIN technician t ON t.technician_id=p.technician_id JOIN user_account tech ON tech.user_id=t.user_id
+    JOIN service_catalog sc ON sc.service_id=b.service_id
+    LEFT JOIN performance_feedback f ON f.report_id=p.report_id
+    WHERE cu.user_id=? AND p.outcome='Completed' AND p.actual_end IS NOT NULL AND f.report_id IS NULL
+      ${bookingId ? 'AND b.booking_id=?' : ''}
+    ORDER BY p.actual_end DESC,p.report_id DESC LIMIT 5`,
+    bookingId ? [user.id, bookingId] : [user.id],
+  );
+  return {
+    count: Number(rows[0]?.pendingCount ?? 0),
+    visits: rows.map(({ pendingCount, reportSubmitted, ...v }) => ({
+      ...withBookingReference(v),
+      reportSubmitted: Boolean(reportSubmitted),
+    })),
   };
 }
 
@@ -435,6 +472,11 @@ export function createPerformanceRouter(pool) {
   };
   router.get('/customer/visits', role('Customer'), async (req, res) =>
     res.json(await listPerformance(pool, req.performanceUser, req.query)),
+  );
+  router.get('/customer/pending-feedback', role('Customer'), async (req, res) =>
+    res.json(
+      await listPendingCustomerFeedback(pool, req.performanceUser, req.query),
+    ),
   );
   router.put(
     '/customer/visits/:reportId/feedback',

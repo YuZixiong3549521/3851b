@@ -33,6 +33,7 @@ npm start
 | Admin Console（订单、派单、员工、库存） | `/admin/orders`（`/admin/inventory` 继续兼容） |
 | 客户年度套餐 / 积分 / 服务评价 | `/customer/plans` / `/customer/rewards` / `/customer/feedback` |
 | 经营报表 / 积分管理 / 技师表现 | `/admin/reports` / `/admin/rewards` / `/admin/performance` |
+| 管理员年度套餐管理 | `/admin/plans` |
 | 技师自己的表现记录 | `/technician/index.html#performance` |
 
 已有测试账号共用密码 `CoolCareDemo2026!`：
@@ -54,6 +55,8 @@ npm start
 已完成订单的维护报告显示实际记录的工作时长、配件用量及可用照片，支持照片放大和 **Print / Save as PDF**。未记录的时长或缺失照片会明确提示，不生成虚构报告数据。迁移 `11-customer-address-management.sql` 随 `npm run db:up` 执行，保留已有数据。
 
 ## 数据整合
+
+会议更新：Admin 的 Action centre 可以直达具体订单，拒绝原因支持下拉选项及 Other 说明，进行中的订单只读；Customer 的拒绝通知按真实预留记录显示已返还积分，已完成且未评价的服务会显示评分提醒。技师在 My performance 的 Reviews 筛选查看自己服务的客户评价。Reports & Analytics 支持按季度／年度汇总服务金额，Annual Packages 可查看客户年度套餐及四次订单。运行 `npm run db:up` 应用迁移 `34-early-renewal-rewards.sql`：最后一次预约前 60 天开放续订，客户在该次预约开始前续订可获 100 额外积分，待新套餐第一次服务完成后发放一次，普通服务积分另计；客户页面显示实际截止时间。
 
 四项扩展功能使用真实业务记录，运行 `npm run db:up` 会应用所需迁移，包括订单完成自动发分的 `30-completion-rewards.sql`、年度套餐确认期限的 `31-annual-confirmation.sql`、每次服务报告归属的 `32-service-visit-identity.sql` 和完成金额明细的 `33-booking-amount-snapshots.sql`，保留已有订单：
 

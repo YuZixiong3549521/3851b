@@ -196,6 +196,8 @@ function PerformanceWorkspace({
   const [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false);
+  const [selectedReportId, setSelectedReportId] = useState('');
+  const [reviewFilter, setReviewFilter] = useState('all');
   const pending = useRef<{ key: string; requestId: string } | null>(null),
     sequence = useRef(0);
   const endpoint = role === 'customer' ? '/customer/visits' : '/' + role;
@@ -221,13 +223,23 @@ function PerformanceWorkspace({
     [endpoint],
   );
   useEffect(() => {
-    void load();
+    const reportId =
+      role === 'customer'
+        ? new URLSearchParams(window.location.search).get('reportId')
+        : null;
+    const selected = reportId && /^[1-9]\d*$/.test(reportId) ? reportId : '';
+    setSelectedReportId(selected);
+    void load(selected ? '?reportId=' + selected : '');
     return () => {
       sequence.current++;
     };
-  }, [load]);
+  }, [load, role]);
   const query = () =>
-    from && to ? '?' + new URLSearchParams({ from, to }).toString() : '';
+    selectedReportId
+      ? '?reportId=' + selectedReportId
+      : from && to
+        ? '?' + new URLSearchParams({ from, to }).toString()
+        : '';
   const mutate: Mutation = async (path, body) => {
     setBusy(true);
     setError('');
@@ -241,8 +253,12 @@ function PerformanceWorkspace({
         body: JSON.stringify({ ...body, requestId: pending.current.requestId }),
       });
       pending.current = null;
+      if (role === 'customer')
+        window.dispatchEvent(new Event('coolcare:bookings-updated'));
       setNotice(
-        'Saved successfully. The change is recorded in the audit history.',
+        role === 'customer'
+          ? 'Thank you for your review. Your technician and our service team can now see your feedback.'
+          : 'Saved successfully. The change is recorded in the audit history.',
       );
       await load(query());
     } catch (e) {
@@ -253,6 +269,14 @@ function PerformanceWorkspace({
       throw e;
     }
   };
+  const visibleVisits =
+    data?.visits.filter(
+      (visit) =>
+        reviewFilter === 'all' ||
+        (reviewFilter === 'reviewed'
+          ? visit.stars !== null
+          : visit.outcome === 'Completed' && visit.stars === null),
+    ) ?? [];
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
       <header>
@@ -268,43 +292,64 @@ function PerformanceWorkspace({
         </h1>
         <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
           {role === 'customer'
-            ? 'Rate a completed visit and tell us what went well or could improve. Each visit has its own feedback.'
-            : 'Scores use individual service visits and the technician recorded when that visit started. Missing feedback and old missing times remain unavailable.'}
+            ? 'Rate a completed visit and tell us what went well or could improve. Your rating and comment are shared with the technician who performed that visit and our service team.'
+            : role === 'technician'
+              ? 'Read customer reviews for visits you performed, along with your service quality and punctuality scores. You can view reviews but cannot change them.'
+              : 'Scores use individual service visits and the technician recorded when that visit started. Missing feedback and old missing times remain unavailable.'}
         </p>
       </header>
-      <form
-        className="flex flex-wrap items-end gap-3 rounded-2xl border bg-card p-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void load(query());
-        }}
-      >
-        <div className="min-w-44">
-          <label className="mb-1 block text-sm">From</label>
-          <EnglishDatePicker
-            label="Performance start date"
-            value={from}
-            onChange={setFrom}
-            disableWeekends={false}
-          />
+      {selectedReportId ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-4">
+          <p className="text-sm">
+            Showing the service visit selected from your reminder.
+          </p>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setSelectedReportId('');
+              setReviewFilter('all');
+              window.history.replaceState(null, '', '/customer/feedback');
+              void load();
+            }}
+          >
+            View all service visits
+          </Button>
         </div>
-        <div className="min-w-44">
-          <label className="mb-1 block text-sm">To</label>
-          <EnglishDatePicker
-            label="Performance end date"
-            value={to}
-            onChange={setTo}
-            disableWeekends={false}
-          />
-        </div>
-        <Button disabled={busy} type="submit">
-          <RefreshCw className="size-4" />
-          {busy ? 'Loading…' : 'Apply dates'}
-        </Button>
-        <p className="text-xs text-muted-foreground">
-          Up to 367 days. All dates and times use Singapore time.
-        </p>
-      </form>
+      ) : (
+        <form
+          className="flex flex-wrap items-end gap-3 rounded-2xl border bg-card p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void load(query());
+          }}
+        >
+          <div className="min-w-44">
+            <label className="mb-1 block text-sm">From</label>
+            <EnglishDatePicker
+              label="Performance start date"
+              value={from}
+              onChange={setFrom}
+              disableWeekends={false}
+            />
+          </div>
+          <div className="min-w-44">
+            <label className="mb-1 block text-sm">To</label>
+            <EnglishDatePicker
+              label="Performance end date"
+              value={to}
+              onChange={setTo}
+              disableWeekends={false}
+            />
+          </div>
+          <Button disabled={busy} type="submit">
+            <RefreshCw className="size-4" />
+            {busy ? 'Loading…' : 'Apply dates'}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Up to 367 days. All dates and times use Singapore time.
+          </p>
+        </form>
+      )}
       {error && (
         <div
           role="alert"
@@ -424,16 +469,49 @@ function PerformanceWorkspace({
             />
           )}
           <section className="space-y-4">
-            <h2 className="text-xl font-semibold">
-              Service visits ({data.visits.length})
-            </h2>
-            {!data.visits.length ? (
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <h2 className="text-xl font-semibold">
+                Service visits ({visibleVisits.length})
+              </h2>
+              <div>
+                <label
+                  htmlFor="performance-review-filter"
+                  className="mb-1 block text-sm font-medium"
+                >
+                  Reviews
+                </label>
+                <NativeSelect
+                  id="performance-review-filter"
+                  value={reviewFilter}
+                  onChange={(e) => setReviewFilter(e.target.value)}
+                >
+                  <option value="all">All visits</option>
+                  <option value="reviewed">
+                    Customer reviews (
+                    {data.visits.filter((v) => v.stars !== null).length})
+                  </option>
+                  <option value="pending">
+                    Awaiting customer rating (
+                    {
+                      data.visits.filter(
+                        (v) => v.outcome === 'Completed' && v.stars === null,
+                      ).length
+                    }
+                    )
+                  </option>
+                </NativeSelect>
+              </div>
+            </div>
+            {!visibleVisits.length ? (
               <p className="rounded-2xl border bg-card p-6 text-muted-foreground">
-                No recorded visits in this period. Try a different date range.
-                New visits appear after the technician ends the service.
+                {selectedReportId
+                  ? 'This service visit is unavailable for your account or has not ended yet.'
+                  : reviewFilter !== 'all'
+                    ? 'No visits match this review filter in the selected period.'
+                    : 'No recorded visits in this period. Try a different date range. New visits appear after the technician ends the service.'}
               </p>
             ) : (
-              data.visits.map((v) => (
+              visibleVisits.map((v) => (
                 <VisitCard
                   key={`${v.reportId}-${v.feedbackVersion}-${v.qualityVersion}`}
                   visit={v}
@@ -503,10 +581,15 @@ function VisitCard({
   const id = useId(),
     [stars, setStars] = useState(v.stars == null ? '' : String(v.stars)),
     [comment, setComment] = useState(v.comment);
-  const [score, setScore] = useState(v.qualityScore == null ? '' : String(v.qualityScore)),
+  const [score, setScore] = useState(
+      v.qualityScore == null ? '' : String(v.qualityScore),
+    ),
     [reason, setReason] = useState(v.qualityReason);
   return (
-    <article className="rounded-2xl border bg-card p-5 sm:p-6">
+    <article
+      id={`visit-${v.reportId}`}
+      className="rounded-2xl border bg-card p-5 sm:p-6"
+    >
       <header className="flex flex-wrap justify-between gap-3">
         <div>
           <p className="text-xs font-medium text-primary">
@@ -592,7 +675,9 @@ function VisitCard({
             onChange={(e) => setStars(e.target.value)}
             disabled={busy}
           >
-            <option value="" disabled>Choose a rating</option>
+            <option value="" disabled>
+              Choose a rating
+            </option>
             <option value="5">5 — Excellent</option>
             <option value="4">4 — Good</option>
             <option value="3">3 — Satisfactory</option>
@@ -618,8 +703,8 @@ function VisitCard({
             {v.feedbackVersion ? 'Update feedback' : 'Submit feedback'}
           </Button>
           <p className="text-xs text-muted-foreground">
-            Feedback is shared with the service team. Updates preserve the
-            previous version.
+            Feedback is shared with your technician and the service team.
+            Updates preserve the previous version.
           </p>
         </form>
       ) : role === 'customer' ? (

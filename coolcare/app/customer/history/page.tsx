@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { CalendarPlus, RefreshCw } from 'lucide-react';
 import { BookingCard } from '@/components/booking-card';
+import { CustomerFeedbackPrompt } from '@/components/customer-feedback-prompt';
 import { CoolCareShell } from '@/components/coolcare-shell';
 import { EmptyState, PageError, PageLoading } from '@/components/page-state';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@ export default function MaintenanceHistoryPage() {
         <div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><p className="text-sm font-semibold text-primary">HISTORY</p><h1 className="mt-1 text-3xl font-bold tracking-tight">Booking history</h1><p className="mt-2 text-sm text-muted-foreground">Review completed visits, rejected requests, cancellations and expired requests.</p></div><Button nativeButton={false} render={<Link href="/customer/book" />} variant="outline"><CalendarPlus className="size-4" aria-hidden="true" />Book another visit</Button></div>
         {!bookings && !error && <PageLoading />}
         {error && <PageError message={error} />}
+        {bookings && <div className="mb-5"><CustomerFeedbackPrompt /></div>}
         <div className="mb-4 flex justify-end"><Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={refreshing}><RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? 'Refreshing' : 'Refresh'}</Button></div>
         {bookings && <Tabs defaultValue="completed">
           <TabsList className="mb-6 h-11 w-full justify-start overflow-x-auto rounded-xl p-1 sm:w-fit"><TabsTrigger value="completed" className="px-4">Completed ({completed.length})</TabsTrigger><TabsTrigger value="rejected" className="px-4">Rejected ({rejected.length})</TabsTrigger><TabsTrigger value="cancelled" className="px-4">Cancelled ({cancelled.length})</TabsTrigger><TabsTrigger value="expired" className="px-4">Expired ({expired.length})</TabsTrigger></TabsList>

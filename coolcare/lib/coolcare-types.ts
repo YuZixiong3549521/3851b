@@ -108,6 +108,7 @@ export type BookingAmounts = {
   discountAmount: number;
   netServiceAmount: number | null;
   rewardStatus: string | null;
+  rewardPoints: number;
   awardedPoints: number;
   redeemedPoints: number;
   completionOutcome: string | null;
@@ -221,6 +222,7 @@ export type BookingInput = {
   rewardPoints?: number;
   rewardRuleVersion?: number;
   renewalOfSeriesId?: number;
+  expectedRenewalOffer?: { points: number; deadline: string };
   propertyType?: string;
   postalCode?: string;
   specialNotes?: string;

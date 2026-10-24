@@ -82,6 +82,11 @@ service amount determines the new earning. Cancellation, rejection and expiry
 release unused reservations in the existing booking transaction. A completed
 order cannot acquire a new discount after its reward has been calculated.
 
+Rejected/expired booking notifications and closed booking cards read the actual
+reservation state and points. A Released reservation displays the returned point
+count and links to My Rewards; bookings without a reservation do not claim a
+refund or invent returned points. This is a points release, not a payment refund.
+
 Rewards can cover the full service amount. A fully discounted order earns zero
 new points because its net service value is zero. If an administrative adjustment
 or a changed service price makes the original reservation unusable, completion
@@ -97,7 +102,13 @@ amount. Corrections use the points ledger rather than a receipt or refund form.
 
 ## Reports
 
-Filters accept a date range of up to 367 days, a service and/or a technician.
+Filters accept a date range of up to five years, a service and/or a technician.
+`groupBy=day|quarter|year` selects the completed-service grouping (API default:
+day). `dailyService` remains compatible; `periodService` supplies the selected
+grouping and CSV uses that same grouping. The page provides This quarter, This
+year and Last 3 years shortcuts. Partial periods contain only the selected dates;
+they are not extrapolated into full-quarter/year totals. Aggregation uses cents
+and preserves the completed amount snapshots and existing service-date basis.
 The selector groups current and historical services without removing old
 records. **Annual Cleaning Bundle** filters actual annual-visit links via
 `serviceGroup=annual`; standalone Cleaning is excluded. Choose either this group

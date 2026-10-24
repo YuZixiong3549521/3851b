@@ -1,4 +1,5 @@
 import { withBookingReference } from './booking-reference.mjs';
+import { assertAdminOrderEditable } from './admin-order-policy.mjs';
 import { createHash } from 'node:crypto';
 import { capturePerformanceVisitEnd } from './performance.mjs';
 import { z } from 'zod';
@@ -60,6 +61,7 @@ export async function snapshotVisit(c, jobId, outcome) {
 export async function listReturns(pool, role, userId) {
   const [rows] = await pool.execute(
     `SELECT w.job_id AS jobId,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,u.full_name AS customer,p.revision AS version,p.follow_up_status AS status,
+ (b.booking_status='In Progress' OR EXISTS(SELECT 1 FROM work_order active_work WHERE active_work.booking_id=b.booking_id AND active_work.current_status='In Progress')) AS adminReadOnly,
  DATE_FORMAT(p.follow_up_date,'%Y-%m-%d') AS date,p.follow_up_start AS start,p.follow_up_end AS end,
  b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,
  (SELECT e.reason FROM service_progress_event e WHERE e.job_id=w.job_id AND e.kind='Return required' ORDER BY e.revision DESC LIMIT 1) AS reason,
@@ -150,6 +152,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
         replayed: true,
       };
     }
+    if (role === 'admin') await assertAdminOrderEditable(c, w);
     const [[p]] = await c.execute(
       'SELECT * FROM service_progress WHERE job_id=? FOR UPDATE',
       [jobId],

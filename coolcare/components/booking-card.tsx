@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { ReleasedRewardsNotice } from '@/components/released-rewards-notice';
 import { CalendarDays, Clock3, MapPin, UserRound, Wind } from 'lucide-react';
 import {
   BookingStatus,
@@ -118,6 +119,7 @@ export function BookingCard({
             </p>
           </div>
         )}
+        {['Rejected', 'Expired', 'Cancelled'].includes(booking.status) && <div className="mt-4"><ReleasedRewardsNotice status={amounts?.rewardStatus} points={amounts?.rewardPoints} /></div>}
         <div className="mt-5 flex flex-wrap items-center justify-between gap-4 border-t border-border/70 pt-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">

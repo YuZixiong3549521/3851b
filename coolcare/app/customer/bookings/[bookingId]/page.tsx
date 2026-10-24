@@ -52,6 +52,7 @@ import {
   customerSupportEmail,
 } from '@/lib/customer-support';
 import type { BookingDetail, BookingInput } from '@/lib/coolcare-types';
+import { CustomerFeedbackPrompt } from '@/components/customer-feedback-prompt';
 
 type Action = 'cancel' | 'reschedule';
 type PendingChange = { action: Action; date: string; time: string };
@@ -326,6 +327,7 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
               ].includes(booking.status)}
               showActions={false}
             />
+            {booking.status === 'Completed' && <div className="mt-4"><CustomerFeedbackPrompt bookingId={bookingId} /></div>}
             <div className="mt-4 flex flex-wrap gap-3">
               {canModify && (
                 <>

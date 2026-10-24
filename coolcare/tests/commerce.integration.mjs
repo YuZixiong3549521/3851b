@@ -12,6 +12,7 @@ import { awardCompletedBookingRewards, reserveReward, releaseBookingRewardReserv
 import { updateTechnicianJobStatus } from '../server/technician.mjs';
 import { getReport, saveReport } from '../server/technician-pages.mjs';
 import { listBookings, getBookingDetail } from '../server/customer/booking-service.mjs';
+import { listBookingNotices } from '../server/customer/booking-notifications.mjs';
 
 const pool = mysql.createPool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME, dateStrings: true, connectionLimit: 5 });
 const cleanupPool = mysql.createPool({ host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: 'root', password: process.env.MYSQL_ROOT_PASSWORD, database: process.env.DB_NAME, dateStrings: true });
@@ -177,6 +178,14 @@ test('actual customer cancellation, admin rejection and expiry atomically releas
   await changePublicBooking(db, { id: f.userId, customerId: f.customerId }, f.bookings[0], 'cancel', { status: 'Cancelled' });
   assert.equal((await rewardsSummary(db, f.customerId)).available, 100);
   await rejectBooking(db, { userId: f.adminId }, f.bookings[1], { requestId: randomUUID(), reason: 'Isolated rejected request for release test.' });
+  const notices = await listBookingNotices(db, f.userId);
+  const rejection = notices.find(row => row.bookingId === f.bookings[1]);
+  assert.equal(rejection.rewardStatus, 'Released');
+  assert.equal(Number(rejection.rewardPoints), 100);
+  const rejectedBooking = await getBookingDetail(db, f.bookings[1], f.userId);
+  assert.equal(rejectedBooking.amounts.rewardStatus, 'Released');
+  assert.equal(rejectedBooking.amounts.rewardPoints, 100);
+  assert.deepEqual(await listBookingNotices(db, 4294967295), [], 'notice points stay customer-owned');
   assert.equal((await rewardsSummary(db, f.customerId)).available, 200);
   await c.execute('UPDATE booking SET expires_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 49 HOUR) WHERE booking_id=?', [f.bookings[2]]);
   const scoped = { ...db, execute: (sql, params) => sql.includes("SELECT booking_id FROM booking WHERE booking_status='Submitted'") ? c.execute(sql.replace("WHERE booking_status='Submitted'", "WHERE customer_id=? AND booking_status='Submitted'"), [f.customerId, ...params]) : db.execute(sql, params) };
@@ -223,6 +232,15 @@ test('reports show completed service values and reward discounts with service an
   assert.ok(!annual.orders.some(b => b.bookingId === f.bookings[1]), 'standalone cleaning is excluded from the annual filter');
   assert.ok(Number(annual.bundles.plans) >= 1);
   assert.ok(report.summary.completedServiceAmount >= 300);
+  for (const groupBy of ['quarter', 'year']) {
+    const grouped = await commerceReport(db, { from: today(), to: today(), serviceId: f.serviceId, groupBy });
+    assert.equal(grouped.periodService.length, 1);
+    assert.equal(grouped.periodService[0].completed, grouped.summary.completed);
+    assert.equal(grouped.periodService[0].serviceAmount, grouped.summary.completedServiceAmount);
+    assert.equal(grouped.periodService[0].rewardDiscounts, grouped.summary.rewardDiscounts);
+    assert.equal(grouped.periodService[0].netServiceAmount, grouped.summary.completedNetServiceAmount);
+    assert.deepEqual(grouped.dailyService, stable.dailyService, 'legacy daily API stays compatible');
+  }
   const all = await commerceReport(db, { from: today(), to: today(), technicianId: 4294967295 });
   assert.equal(all.orders.length, 0);
   assert.equal(all.summary.completedNetServiceAmount, 0);
@@ -266,12 +284,14 @@ test('commerce HTTP enforces role, CSRF and customer booking ownership', () => f
     assert.equal((await call('/api/commerce/admin/payments')).status, 410);
     assert.equal((await call(`/api/commerce/admin/payments/${f.bookings[0]}`, 'POST', {})).status, 410);
     assert.equal((await call('/api/commerce/admin/rewards')).status, 200);
-    const csv = await fetch(`${origin}/api/commerce/admin/reports.csv?from=${today()}&to=${today()}`, { headers: { Cookie: cookie } });
+    const csv = await fetch(`${origin}/api/commerce/admin/reports.csv?from=${today()}&to=${today()}&groupBy=quarter`, { headers: { Cookie: cookie } });
     assert.equal(csv.status, 200);
     const text = await csv.text();
     const reportBooking = (await listRewardBookings(db, f.customerId)).find(b => b.bookingId === f.bookings[0]);
     assert.ok(text.includes(reportBooking.bookingReference), 'CSV uses the same full reference as the rewards API');
     assert.match(text, /Net service amount SGD/);
+    assert.match(text, /"Group values by","quarter"/);
+    assert.match(text, /Scheduled service period/);
     assert.doesNotMatch(text, /receipts|refunds|netReceived/);
   } finally { await new Promise(resolve => server.close(resolve)); }
 }));

@@ -5,6 +5,8 @@ import { addCalendarMonths } from './annual-bookings.mjs';
 import { getBookingOptions } from './booking-options.mjs';
 
 const inactiveStatuses = new Set(['Cancelled', 'Rejected', 'Expired']);
+const preServiceStatuses = new Set(['Submitted', 'Confirmed', 'Assigned', 'On The Way']);
+export const EARLY_RENEWAL_POINTS = 100;
 const id = value => {
   const result = Number(value);
   if (!Number.isSafeInteger(result) || result < 1) throw new HttpError(400, 'Invalid plan identifier.');
@@ -28,9 +30,16 @@ export function describeAnnualPlan(series, visits, now = new Date()) {
   const nextVisit = activeVisits
     .filter(visit => appointmentInstant(visit.preferredDate, visit.slotStart || '09:00:00') >= now)
     .sort((a, b) => `${a.preferredDate} ${a.slotStart}`.localeCompare(`${b.preferredDate} ${b.slotStart}`))[0] ?? null;
-  const renewalOpenDate = addCalendarDays(validUntil, -60);
+  const finalVisit = visits.find(visit => Number(visit.visitNumber) === 4);
+  const earlyRenewalDeadline = finalVisit?.slotStart
+    ? appointmentInstant(finalVisit.preferredDate, finalVisit.slotStart) : null;
+  // Open before the final appointment, rather than after it near term expiry.
+  const renewalOpenDate = addCalendarDays(finalVisit?.preferredDate || validUntil, -60);
   const existingRenewalSeriesId = series.existingRenewalSeriesId ? Number(series.existingRenewalSeriesId) : null;
   const canRenew = !existingRenewalSeriesId && status !== 'Cancelled' && (today >= renewalOpenDate || status === 'Completed');
+  const earlyRenewalPromotionAvailable = !existingRenewalSeriesId && status === 'Active' && earlyRenewalDeadline > now
+    && preServiceStatuses.has(finalVisit?.status);
+  const earlyRenewalEligible = canRenew && earlyRenewalPromotionAvailable;
   const minimumFirstDate = nextWeekday([validUntil, minimumBookingDate(now)].sort().at(-1));
   const closedVisits = visits.filter(visit => inactiveStatuses.has(visit.status));
   const attentionMessage = closedVisits.length && activeVisits.length
@@ -57,6 +66,17 @@ export function describeAnnualPlan(series, visits, now = new Date()) {
     canRenew,
     minimumFirstDate,
     existingRenewalSeriesId,
+    earlyRenewalPoints: EARLY_RENEWAL_POINTS,
+    earlyRenewalDeadline: earlyRenewalDeadline?.toISOString() ?? null,
+    earlyRenewalEligible: Boolean(earlyRenewalEligible),
+    earlyRenewalPromotionAvailable: Boolean(earlyRenewalPromotionAvailable),
+    earlyRenewalReward: series.renewalBonusPoints ? {
+      points: Number(series.renewalBonusPoints),
+      deadline: series.renewalBonusDeadline,
+      status: series.renewalBonusAwardedEpoch ? 'Awarded'
+        : inactiveStatuses.has(visits.find(visit => Number(visit.visitNumber) === 1)?.status) ? 'Not eligible' : 'Pending first completion',
+      awardedAt: series.renewalBonusAwardedEpoch ? new Date(Number(series.renewalBonusAwardedEpoch) * 1000).toISOString() : null,
+    } : null,
     visits,
   };
 }
@@ -71,7 +91,9 @@ export function annualPlanReminders(plans, now = new Date()) {
       key: `renewal:${plan.validUntil}`,
       kind: 'renewal',
       title: plan.status === 'Expired' ? 'Your annual plan has ended' : 'Plan your next year of care',
-      message: `Your current plan ends on ${plan.validUntil}. Review current prices and choose the first visit for a new annual plan. No automatic renewal or charge applies.`,
+      message: plan.earlyRenewalEligible
+        ? `Renew before your final visit on ${plan.visits.find(visit => Number(visit.visitNumber) === 4).preferredDate} to earn ${plan.earlyRenewalPoints} bonus points after the renewed plan's first service is completed. Review My Plans for the exact deadline.`
+        : `Your current plan ends on ${plan.validUntil}. Review current prices and choose the first visit for a new annual plan. No automatic renewal or charge applies.`,
     });
     if (plan.nextVisit && plan.nextVisit.preferredDate <= soon) reminders.push({
       seriesId: plan.seriesId,
@@ -92,13 +114,17 @@ async function readPlans(executor, userId, { seriesId, now = new Date() } = {}) 
     s.property_label AS propertyLabel,s.included_units AS includedUnits,s.base_annual_price AS baseAnnualPrice,
     s.additional_unit_price AS additionalUnitPrice,s.address_id AS addressId,a.address_line AS addressLine,
     a.postal_code AS postalCode,a.is_archived AS addressArchived,r.renewed_series_id AS existingRenewalSeriesId,
-    p.source_series_id AS renewedFromSeriesId
+    p.source_series_id AS renewedFromSeriesId,u.full_name AS customerName,u.email,
+    bonus.points AS renewalBonusPoints,DATE_FORMAT(bonus.deadline_at,'%Y-%m-%dT%H:%i:%sZ') AS renewalBonusDeadline,
+    UNIX_TIMESTAMP(bonus.awarded_at) AS renewalBonusAwardedEpoch
     FROM annual_booking_series s JOIN customer c ON c.customer_id=s.customer_id
+    JOIN user_account u ON u.user_id=c.user_id
     JOIN service_address a ON a.address_id=s.address_id
     LEFT JOIN annual_plan_renewal r ON r.source_series_id=s.series_id
     LEFT JOIN annual_plan_renewal p ON p.renewed_series_id=s.series_id
-    WHERE c.user_id=? ${seriesId ? 'AND s.series_id=?' : ''}
-    ORDER BY s.first_service_date DESC,s.series_id DESC`, seriesId ? [userId, seriesId] : [userId]);
+    LEFT JOIN annual_renewal_bonus bonus ON bonus.renewed_series_id=s.series_id
+    WHERE ${userId === null ? '1=1' : 'c.user_id=?'} ${seriesId ? 'AND s.series_id=?' : ''}
+    ORDER BY s.first_service_date DESC,s.series_id DESC`, [...(userId === null ? [] : [userId]), ...(seriesId ? [seriesId] : [])]);
   if (!series.length) return [];
   const ids = series.map(item => item.seriesId);
   const [visits] = await executor.execute(`SELECT v.series_id AS seriesId,v.visit_number AS visitNumber,
@@ -128,13 +154,18 @@ export async function listAnnualPlans(executor, userId, now = new Date()) {
   };
 }
 
+// Only called by the existing administrator-authenticated commerce route.
+export async function listAdminAnnualPlans(executor, now = new Date()) {
+  return { plans: await readPlans(executor, null, { now }) };
+}
+
 export async function getAnnualPlanRenewal(executor, userId, seriesId, now = new Date()) {
   const [plan] = await readPlans(executor, userId, { seriesId: id(seriesId), now });
   if (!plan) throw new HttpError(404, 'Annual plan not found.');
   if (plan.existingRenewalSeriesId) return { existingRenewalSeriesId: plan.existingRenewalSeriesId };
   if (!plan.canRenew) throw new HttpError(409, plan.status === 'Cancelled'
     ? 'This plan was cancelled. Start a new booking to choose another annual plan.'
-    : `Renewal opens on ${plan.renewalOpenDate}, 60 days before your plan ends.`);
+    : `Renewal opens on ${plan.renewalOpenDate}, 60 days before your final scheduled visit.`);
   const options = await getBookingOptions(executor);
   const bundle = options.bundles.find(item => item.code === 'annual-cleaning');
   if (!bundle) throw new HttpError(409, 'The annual cleaning plan is currently unavailable. Contact support.');
@@ -150,6 +181,9 @@ export async function getAnnualPlanRenewal(executor, userId, seriesId, now = new
     minimumFirstDate: plan.minimumFirstDate,
     previousValidUntil: plan.validUntil,
     currentAnnualPrice: tier ? Number(tier.price) + Math.max(0, plan.unitCount - Number(tier.includedUnits)) * Number(tier.additionalUnitPrice) : null,
+    earlyRenewalPoints: plan.earlyRenewalPoints,
+    earlyRenewalDeadline: plan.earlyRenewalDeadline,
+    earlyRenewalEligible: plan.earlyRenewalEligible,
     pricingNote: 'Renewals use the current catalogue price. Review the property type, dates and price before submitting. Pay after each service; no automatic payment is taken.',
   };
 }
@@ -179,9 +213,36 @@ export async function assertAnnualPlanRenewal(connection, context, now = new Dat
   return sourceSeriesId;
 }
 
-export async function linkAnnualPlanRenewal(connection, sourceSeriesId, renewedSeriesId) {
+export async function linkAnnualPlanRenewal(connection, sourceSeriesId, renewedSeriesId, now = new Date(), expectedOffer) {
   if (sourceSeriesId == null) return;
+  // Read current rows under locks, not the transaction's earlier snapshot: a
+  // reschedule, completion or cancellation must not leave a stale offer valid.
+  let visits;
+  try {
+    [visits] = await connection.execute(`SELECT v.visit_number AS visitNumber,
+      b.preferred_service_date AS preferredDate,b.slot_start AS slotStart,b.booking_status AS status
+      FROM annual_booking_visit v JOIN booking b ON b.booking_id=v.booking_id
+      WHERE v.series_id=? ORDER BY v.visit_number FOR SHARE NOWAIT`, [id(sourceSeriesId)]);
+  } catch (error) {
+    // Booking creation already owns the customer lock. A simultaneous service
+    // completion can own a source booking while creating that customer's first
+    // wallet. Do not wait in the opposite lock order: roll back and retry safely.
+    if (error.code === 'ER_LOCK_NOWAIT') throw new HttpError(409, 'A service or schedule update is in progress. Refresh My Plans and retry your renewal.');
+    throw error;
+  }
+  const finalVisit = visits.find(visit => Number(visit.visitNumber) === 4);
+  const deadline = finalVisit?.slotStart ? appointmentInstant(finalVisit.preferredDate, finalVisit.slotStart) : null;
+  const eligible = deadline > now && preServiceStatuses.has(finalVisit?.status)
+    && visits.some(visit => !inactiveStatuses.has(visit.status));
+  if (expectedOffer && (!eligible || expectedOffer.points !== EARLY_RENEWAL_POINTS
+    || new Date(expectedOffer.deadline).getTime() !== deadline?.getTime())) {
+    throw new HttpError(409, 'The early renewal offer changed. Refresh the renewal offer and review it before confirming. No booking has been created.');
+  }
   await connection.execute('INSERT INTO annual_plan_renewal(source_series_id,renewed_series_id) VALUES (?,?)', [id(sourceSeriesId), id(renewedSeriesId)]);
+  if (eligible) {
+    await connection.execute(`INSERT INTO annual_renewal_bonus(renewed_series_id,source_series_id,points,deadline_at)
+      VALUES (?,?,?,?)`, [id(renewedSeriesId), id(sourceSeriesId), EARLY_RENEWAL_POINTS, deadline.toISOString().slice(0, 19).replace('T', ' ')]);
+  }
 }
 
 export async function dismissAnnualPlanNotice(executor, userId, seriesId, noticeKey, now = new Date()) {

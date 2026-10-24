@@ -1,4 +1,5 @@
 import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
+import { assertAdminOrderEditable } from './admin-order-policy.mjs';
 import { registerReturnRoutes } from './return-visits.mjs';
 import { registerAdminWorkspaceRoutes } from './admin-workspace.mjs';
 import { getServiceProgress } from './service-progress.mjs';
@@ -103,7 +104,7 @@ const pageSchema = z.object({
     ])
     .default(''),
   q: z.string().trim().max(120).default(''),
-  queue: z.enum(['', 'waiting', 'review', 'reports']).default(''),
+  queue: z.enum(['', 'waiting', 'review', 'reports', 'expiring', 'returns']).default(''),
   sort: z.enum(['placed', 'deadline']).default('placed'),
   page: z.coerce.number().int().min(1).max(1000000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
@@ -193,6 +194,7 @@ export async function lockedBooking(connection, bookingId) {
     [bookingId],
   );
   if (!booking) throw new AppError('Booking not found.', 404);
+  await assertAdminOrderEditable(connection, booking);
   const [[details]] = await connection.execute(
     `SELECT sa.address_line,COALESCE((SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ') FROM booking_service bs WHERE bs.booking_id=?),sc.service_name) AS service_name,
     (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=?) AS unit_count
@@ -416,7 +418,23 @@ export async function getAdminActionSummary(pool) {
     returnVisits = Number(returns.awaitingAdmin || 0),
     awaitingDispatch = Number(bookings.awaitingDispatch || 0),
     pendingReports = Number(reports.pendingReports || 0);
+  const itemConditions = {
+    submitted: "b.booking_status='Submitted' AND b.admin_waiting_since IS NULL AND (b.expires_at IS NULL OR b.expires_at>UTC_TIMESTAMP())",
+    expiringSoon: "b.booking_status='Submitted' AND b.expires_at>UTC_TIMESTAMP() AND b.expires_at<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 12 HOUR)",
+    awaitingDispatch: "b.booking_status='Confirmed' OR (b.booking_status='Submitted' AND b.admin_waiting_since IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at>UTC_TIMESTAMP()))",
+    returnVisits: "EXISTS(SELECT 1 FROM work_order w JOIN service_progress p ON p.job_id=w.job_id WHERE w.booking_id=b.booking_id AND p.follow_up_status IN ('Required','Awaiting confirmation'))",
+    pendingReports: pendingReportBookingCondition,
+  };
+  const items = {};
+  for (const [category, condition] of Object.entries(itemConditions)) {
+    const [rows] = await pool.execute(`SELECT b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,
+      u.full_name AS customerName,b.preferred_service_date AS preferredDate,b.expires_at AS expiresAt
+      FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN user_account u ON u.user_id=c.user_id
+      WHERE ${condition} ORDER BY ${category === 'expiringSoon' ? 'b.expires_at,' : ''} b.created_at,b.booking_id LIMIT 5`);
+    items[category] = rows.map(withBookingReference);
+  }
   return {
+    items,
     submitted,
     expiringSoon: Number(bookings.expiringSoon || 0),
     returnVisits,
@@ -1081,6 +1099,10 @@ export async function listAdminBookings(pool, query) {
     values = [];
   if (data.queue === 'reports') {
     where.push(pendingReportBookingCondition);
+  } else if (data.queue === 'expiring') {
+    where.push("b.booking_status='Submitted' AND b.expires_at>UTC_TIMESTAMP() AND b.expires_at<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 12 HOUR)");
+  } else if (data.queue === 'returns') {
+    where.push("EXISTS(SELECT 1 FROM work_order w JOIN service_progress p ON p.job_id=w.job_id WHERE w.booking_id=b.booking_id AND p.follow_up_status IN ('Required','Awaiting confirmation'))");
   } else if (data.queue === 'waiting') {
     where.push(
       "(b.booking_status='Confirmed' OR (b.booking_status='Submitted' AND b.admin_waiting_since IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at>UTC_TIMESTAMP())))",

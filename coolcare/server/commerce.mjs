@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { AppError, idSchema } from './inventory.mjs';
 import { isCalendarDate } from './customer/booking-schedule.mjs';
 import { readBookingAmounts } from './booking-amounts.mjs';
+import { groupServicePeriods } from './report-periods.mjs';
+import { listAdminAnnualPlans } from './customer/plans.mjs';
 
 const terminal = new Set(['Cancelled', 'Rejected', 'Expired']);
 const money = z.coerce.number().finite().positive().max(9999999.99).refine(v => Math.abs(v * 100 - Math.round(v * 100)) < 0.000001, 'Use at most two decimal places.');
@@ -130,7 +132,21 @@ export async function awardCompletedBookingRewards(c, rawBookingId) {
   if (net === null) note ||= 'No recorded service price; no points were awarded. Service completion was preserved.';
   await c.execute(`UPDATE booking_completion_reward SET outcome=?,base_amount=?,additional_fee=?,gross_amount=?,discount_amount=?,net_amount=?,requested_points=?,redeemed_points=?,awarded_points=?,points_per_dollar=?,rule_version=?,note=?,completed_at=CURRENT_TIMESTAMP() WHERE booking_id=?`,
     [outcome, b.total_amount, state.additionalFee / 100, state.quote === null ? null : state.quote / 100, discount / 100, net === null ? null : net / 100, requestedPoints, redeemedPoints, earned, config.pointsPerDollar, config.version, note, bookingId]);
-  return { bookingId, awardedPoints: earned, redeemedPoints, outcome, replayed: false };
+  // Only visit 1 of an eligible, snapshotted renewal receives this separate
+  // promotional award. Wallet + booking locks and the completion marker make
+  // retries, later reports and return completions unable to award it twice.
+  const [[bonus]] = await c.execute(`SELECT bonus.* FROM annual_renewal_bonus bonus
+    JOIN annual_booking_visit v ON v.series_id=bonus.renewed_series_id
+    WHERE v.booking_id=? AND v.visit_number=1 FOR UPDATE`, [bookingId]);
+  let bonusPoints = 0;
+  if (bonus && !bonus.loyalty_transaction_id) {
+    bonusPoints = Number(bonus.points);
+    const transactionId = await appendPoints(c, account, bookingId, bonusPoints, 'Earned',
+      `Early annual renewal bonus for plan #${bonus.renewed_series_id}; first renewed service completed.`);
+    await c.execute('UPDATE annual_renewal_bonus SET loyalty_transaction_id=?,awarded_at=CURRENT_TIMESTAMP() WHERE renewed_series_id=?',
+      [transactionId, bonus.renewed_series_id]);
+  }
+  return { bookingId, awardedPoints: earned, bonusPoints, redeemedPoints, outcome, replayed: false };
 }
 export async function reserveReward(pool, actorId, customerId, rawBookingId, raw) {
   const bookingId = idSchema.parse(rawBookingId), data = redemptionSchema.parse(raw);
@@ -265,9 +281,9 @@ export async function rewardsSummary(pool, customerId) {
   return { rules: config, balance, reserved, available: Math.max(0, balance - reserved), debt: Math.max(0, -balance), history: history.map(row => ({ ...withBookingReference(row), createdAt: instant(row.createdAt) })), bookings };
 }
 
-export const reportFilterSchema = z.object({ from: date, to: date, serviceId: idSchema.optional(), serviceGroup: z.enum(['annual']).optional(), technicianId: idSchema.optional() }).strict()
+export const reportFilterSchema = z.object({ from: date, to: date, serviceId: idSchema.optional(), serviceGroup: z.enum(['annual']).optional(), technicianId: idSchema.optional(), groupBy: z.enum(['day', 'quarter', 'year']).default('day') }).strict()
   .refine(v => !(v.serviceId && v.serviceGroup), 'Choose a service or the annual bundle filter.')
-  .refine(v => v.from <= v.to && (Date.parse(v.to) - Date.parse(v.from)) / 86400000 <= 366, 'Choose a date range of at most 367 days.');
+  .refine(v => v.from <= v.to && (Date.parse(v.to) - Date.parse(v.from)) / 86400000 <= 1830, 'Choose a date range of at most five years.');
 function bookingFilter(filters, alias = 'b') {
   const clauses = [], values = [];
   if (filters.serviceId) { clauses.push(`(${alias}.service_id=? OR EXISTS(SELECT 1 FROM booking_service bs WHERE bs.booking_id=${alias}.booking_id AND bs.service_id=?))`); values.push(filters.serviceId, filters.serviceId); }
@@ -332,7 +348,7 @@ export async function commerceReport(pool, raw) {
     completedServiceAmount: completedRows.reduce((sum, o) => sum + dollars(o.serviceAmount), 0) / 100,
     rewardDiscounts: completedRows.reduce((sum, o) => sum + dollars(o.rewardDiscount), 0) / 100,
     completedNetServiceAmount: completedRows.reduce((sum, o) => sum + dollars(o.netServiceAmount), 0) / 100,
-    unknownCompletedPrices: completedRows.filter(o => o.serviceAmount === null).length }, orders: mapped, dailyService, parts, bundles, services, technicians };
+    unknownCompletedPrices: completedRows.filter(o => o.serviceAmount === null).length }, orders: mapped, dailyService, periodService: groupServicePeriods(dailyService, filters.groupBy), parts, bundles, services, technicians };
 }
 function reportCsv(data) {
   return safeCsv([
@@ -340,7 +356,8 @@ function reportCsv(data) {
     ['Metric', 'Value'], ...Object.entries(data.summary),
     ['Service filter', data.filters.serviceGroup === 'annual' ? 'Annual Cleaning Bundle' : data.services.find(s => s.id === data.filters.serviceId)?.name ?? 'All'],
     ['Technician filter', data.technicians.find(t => t.id === data.filters.technicianId)?.name ?? 'All'],
-    [], ['Scheduled service date', 'Completed bookings', 'Service amount SGD', 'Reward discounts SGD', 'Net service amount SGD'], ...data.dailyService.map(r => [r.date, r.completed, r.serviceAmount, r.rewardDiscounts, r.netServiceAmount]),
+    ['Group values by', data.filters.groupBy],
+    [], ['Scheduled service period', 'Completed bookings', 'Service amount SGD', 'Reward discounts SGD', 'Net service amount SGD'], ...data.periodService.map(r => [r.period, r.completed, r.serviceAmount, r.rewardDiscounts, r.netServiceAmount]),
     [], ['Booking', 'Service date', 'Service', 'Status', 'Started visits', 'Return requests', 'Service amount SGD', 'Reward discount SGD', 'Net service amount SGD'], ...data.orders.map(r => [r.bookingReference, r.serviceDate, r.serviceName, r.status, r.visits, r.returns, r.serviceAmount, r.rewardDiscount, r.netServiceAmount]),
     [], ['Part', 'Unit', 'Issued', 'Returned'], ...data.parts.map(r => [r.name, r.unit, r.issued, r.returned]),
   ]);
@@ -356,6 +373,7 @@ export function registerCommerceRoutes(app, pool) {
   app.use('/api/commerce', (_req, res, next) => { res.set('Cache-Control', 'private, no-store'); next(); });
   app.use('/api/commerce/customer', auth('Customer'));
   app.use('/api/commerce/admin', auth('Admin'));
+  app.get('/api/commerce/admin/plans', async (_req, res) => res.json(await listAdminAnnualPlans(pool)));
   app.get('/api/commerce/customer/rewards', async (req, res) => res.json(await rewardsSummary(pool, req.commerceUser.customerId)));
   app.post('/api/commerce/customer/rewards/:bookingId', async (req, res) => res.json(await reserveReward(pool, req.commerceUser.id, req.commerceUser.customerId, req.params.bookingId, req.body)));
   app.all(['/api/commerce/admin/payments','/api/commerce/admin/payments/:bookingId'], (_req, res) => res.status(410).json({ error: 'Payment management has been removed. Rewards are awarded when the booking is completed.' }));

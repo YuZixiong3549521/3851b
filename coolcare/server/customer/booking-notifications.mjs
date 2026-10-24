@@ -4,8 +4,10 @@ import {asyncRoute,HttpError} from './errors.mjs';
 export async function listBookingNotices(pool,userId){
  const [rows]=await pool.execute(`SELECT b.booking_id AS bookingId,b.created_at AS createdAt,b.booking_status AS status,
   CASE WHEN b.booking_status='Expired' THEN 'This request was not confirmed within 48 hours. Please choose another appointment.' ELSE COALESCE(b.rejection_reason,'Please choose another appointment or contact support.') END AS reason,
-  CONCAT(b.booking_status,':',b.rejection_version) AS noticeKey
+  CONCAT(b.booking_status,':',b.rejection_version) AS noticeKey,
+  r.status AS rewardStatus,COALESCE(r.points,0) AS rewardPoints
   FROM booking b JOIN customer c ON c.customer_id=b.customer_id
+  LEFT JOIN reward_reservation r ON r.booking_id=b.booking_id
   WHERE c.user_id=? AND b.booking_status IN ('Rejected','Expired') AND NOT EXISTS
    (SELECT 1 FROM customer_booking_notice n WHERE n.booking_id=b.booking_id AND n.user_id=? AND n.notice_key=CONCAT(b.booking_status,':',b.rejection_version))
   ORDER BY b.booking_id DESC LIMIT 20`,[userId,userId]);

@@ -2,7 +2,8 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import mysql from 'mysql2/promise';
-import { listAnnualPlans, getAnnualPlanRenewal, dismissAnnualPlanNotice, assertAnnualPlanRenewal } from '../server/customer/plans.mjs';
+import { listAnnualPlans, listAdminAnnualPlans, getAnnualPlanRenewal, dismissAnnualPlanNotice, assertAnnualPlanRenewal, linkAnnualPlanRenewal } from '../server/customer/plans.mjs';
+import { awardCompletedBookingRewards } from '../server/commerce.mjs';
 import { getBookingOptions } from '../server/customer/booking-options.mjs';
 import { createBooking } from '../server/customer/booking-service.mjs';
 import { annualVisitSchedule, addCalendarMonths } from '../server/customer/annual-bookings.mjs';
@@ -60,6 +61,7 @@ async function fixture(work, { committed = false } = {}) {
         await cleanup.beginTransaction();
         const [bookings] = await cleanup.execute('SELECT booking_id FROM booking WHERE customer_id=?', [cleanupCustomerId]);
         const bookingIds = bookings.map(row => row.booking_id);
+        await cleanup.execute('DELETE r FROM annual_renewal_bonus r JOIN annual_booking_series s ON s.series_id=r.source_series_id WHERE s.customer_id=?', [cleanupCustomerId]);
         await cleanup.execute('DELETE n FROM annual_plan_notice n JOIN annual_booking_series s ON s.series_id=n.series_id WHERE s.customer_id=?', [cleanupCustomerId]);
         await cleanup.execute('DELETE r FROM annual_plan_renewal r JOIN annual_booking_series s ON s.series_id=r.source_series_id WHERE s.customer_id=?', [cleanupCustomerId]);
         if (bookingIds.length) {
@@ -100,7 +102,78 @@ test('annual plans show owned snapshots, four entitlements and durable reminder 
   await assert.rejects(getAnnualPlanRenewal(db, userId + 999999, seriesId), error => error.status === 404);
   await assert.rejects(dismissAnnualPlanNotice(db, userId + 999999, seriesId, listed.reminders[0].key), error => error.status === 404);
   await assert.rejects(dismissAnnualPlanNotice(db, userId, seriesId, 'forged-notice'), error => error.status === 409);
+  const adminPlan = (await listAdminAnnualPlans(db)).plans.find(plan => plan.seriesId === seriesId);
+  assert.equal(adminPlan.customerName, 'Annual Plan Test');
+  assert.equal(adminPlan.visits.length, 4);
 }));
+
+test('early renewal snapshots its offer and awards 100 points only once on the first renewed completion', async () => fixture(async ({ db, c, userId, seriesId }) => {
+  const finalDate = nextWeekday(addCalendarDays(singaporeToday(), 10));
+  await c.execute(`UPDATE booking b JOIN annual_booking_visit v ON v.booking_id=b.booking_id
+    SET b.preferred_service_date=?,b.booking_status='Submitted' WHERE v.series_id=? AND v.visit_number=4`, [finalDate, seriesId]);
+  const prefill = await getAnnualPlanRenewal(db, userId, seriesId);
+  assert.equal(prefill.earlyRenewalEligible, true);
+  const payload = {
+    renewalOfSeriesId: seriesId, packageId: prefill.packageId, propertyType: prefill.propertyType,
+    serviceAddress: prefill.serviceAddress, addressId: prefill.addressId, postalCode: prefill.postalCode,
+    numberOfUnits: prefill.numberOfUnits, preferredDate: prefill.minimumFirstDate,
+    timeSlot: '09:00 - 11:00', requestId: randomUUID(),
+    expectedRenewalOffer: { points: prefill.earlyRenewalPoints, deadline: prefill.earlyRenewalDeadline },
+  };
+  await c.execute(`UPDATE booking b JOIN annual_booking_visit v ON v.booking_id=b.booking_id
+    SET b.slot_start='11:00:00' WHERE v.series_id=? AND v.visit_number=4`, [seriesId]);
+  await assert.rejects(createBooking(db, payload, userId), error => error.status === 409 && /early renewal offer changed/.test(error.message));
+  const [[unlinked]] = await c.execute('SELECT COUNT(*) AS total FROM annual_plan_renewal WHERE source_series_id=?', [seriesId]);
+  assert.equal(unlinked.total, 0, 'stale bonus terms roll back the new series and its link');
+  const freshOffer = await getAnnualPlanRenewal(db, userId, seriesId);
+  payload.expectedRenewalOffer.deadline = freshOffer.earlyRenewalDeadline;
+  const created = await createBooking(db, payload, userId);
+  const [[offer]] = await c.execute('SELECT * FROM annual_renewal_bonus WHERE renewed_series_id=?', [created.annualBundle.seriesId]);
+  assert.equal(offer.points, 100);
+  assert.equal(offer.loyalty_transaction_id, null);
+  const [[originalTimezone]] = await c.query('SELECT @@session.time_zone AS zone');
+  try {
+    await c.query("SET time_zone='+08:00'");
+    const plan = (await listAnnualPlans(db, userId)).plans.find(plan => plan.seriesId === created.annualBundle.seriesId);
+    assert.equal(new Date(plan.earlyRenewalReward.deadline).toISOString(), freshOffer.earlyRenewalDeadline);
+  } finally { await c.execute('SET time_zone=?', [originalTimezone.zone]); }
+  assert.equal((await listAnnualPlans(db, userId)).plans.find(plan => plan.seriesId === created.annualBundle.seriesId).earlyRenewalReward.status, 'Pending first completion');
+  for (const status of ['Submitted', 'Rejected', 'Cancelled', 'Expired']) {
+    await c.execute('UPDATE booking SET booking_status=? WHERE booking_id=?', [status, created.bookingId]);
+    await assert.rejects(awardCompletedBookingRewards(c, created.bookingId), error => error.status === 409);
+    if (status !== 'Submitted') assert.equal((await listAnnualPlans(db, userId)).plans.find(plan => plan.seriesId === created.annualBundle.seriesId).earlyRenewalReward.status, 'Not eligible');
+  }
+  await c.execute("UPDATE booking SET booking_status='Completed' WHERE booking_id=?", [created.bookingId]);
+  const completion = await awardCompletedBookingRewards(c, created.bookingId);
+  assert.equal(completion.bonusPoints, 100);
+  assert.ok(completion.awardedPoints > 0, 'normal service points remain separate');
+  assert.equal((await awardCompletedBookingRewards(c, created.bookingId)).replayed, true);
+  const [[ledger]] = await c.execute('SELECT COUNT(*) AS count,SUM(points) AS total FROM loyalty_transaction WHERE booking_id=?', [created.bookingId]);
+  assert.equal(ledger.count, 2);
+  assert.equal(Number(ledger.total), completion.awardedPoints + 100);
+  const secondBookingId = created.annualBundle.visits[1].bookingId;
+  await c.execute("UPDATE booking SET booking_status='Completed' WHERE booking_id=?", [secondBookingId]);
+  assert.equal((await awardCompletedBookingRewards(c, secondBookingId)).bonusPoints, 0);
+  const after = (await listAnnualPlans(db, userId)).plans.find(plan => plan.seriesId === created.annualBundle.seriesId);
+  assert.equal(after.earlyRenewalReward.status, 'Awarded');
+  assert.ok(after.earlyRenewalReward.awardedAt);
+}));
+
+test('renewal source locks fail safely during a simultaneous service update', async () => fixture(async ({ db, seriesId }) => {
+  const writer = await pool.getConnection(), reader = await pool.getConnection();
+  try {
+    await writer.beginTransaction();
+    const [[visit]] = await writer.execute('SELECT booking_id FROM annual_booking_visit WHERE series_id=? AND visit_number=4', [seriesId]);
+    await writer.execute('SELECT booking_id FROM booking WHERE booking_id=? FOR UPDATE', [visit.booking_id]);
+    await reader.beginTransaction();
+    await assert.rejects(linkAnnualPlanRenewal(reader, seriesId, seriesId + 999999), error => error.status === 409 && /update is in progress/.test(error.message));
+    const [[count]] = await db.execute('SELECT COUNT(*) AS total FROM annual_plan_renewal WHERE source_series_id=?', [seriesId]);
+    assert.equal(count.total, 0, 'a lock conflict cannot create a renewal or bonus');
+  } finally {
+    await reader.rollback(); reader.release();
+    await writer.rollback(); writer.release();
+  }
+}, { committed: true }));
 
 test('annual renewal reviews current prices, validates term boundaries and creates only one successor', async () => fixture(async ({ db, c, userId, customerId, seriesId, bundle }) => {
   const prefill = await getAnnualPlanRenewal(db, userId, seriesId);

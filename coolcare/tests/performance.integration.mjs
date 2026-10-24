@@ -1,4 +1,4 @@
-import {arrangeVisitForNow} from './service-visit-fixture.mjs';
+import { arrangeVisitForNow } from './service-visit-fixture.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -7,6 +7,7 @@ import { openPrivilegedFixtureConnection } from './privileged-fixture.mjs';
 import {
   capturePerformanceVisitEnd,
   listPerformance,
+  listPendingCustomerFeedback,
   writePerformance,
   getPerformanceSettings,
 } from '../server/performance.mjs';
@@ -58,8 +59,11 @@ async function fixture(fn) {
       "UPDATE booking SET booking_status='Assigned' WHERE booking_id=?",
       [a.bookingId],
     );
-    await arrangeVisitForNow(c,a.jobId);
-    await c.execute("UPDATE work_order SET appointment_time=TIME(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR)) WHERE job_id=?",[a.jobId]);
+    await arrangeVisitForNow(c, a.jobId);
+    await c.execute(
+      'UPDATE work_order SET appointment_time=TIME(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR)) WHERE job_id=?',
+      [a.jobId],
+    );
     await updateTechnicianJobStatus(db, a.technicianUserId, a.jobId, {
       requestId: randomUUID(),
       expectedStatus: 'Assigned',
@@ -111,8 +115,15 @@ test('performance captures real visit start/end and ownership, with independent 
       [a.reportId],
     );
     assert.ok(captured.scheduled_start);
-    const [[scheduled]] = await c.execute("SELECT DATE_FORMAT(appointment_date,'%Y-%m-%d') AS day,appointment_time AS time FROM work_order WHERE job_id=?",[a.jobId]);
-    assert.equal(captured.scheduled_start,`${scheduled.day} ${scheduled.time}`,'appointment_date may already contain a time; never add it twice');
+    const [[scheduled]] = await c.execute(
+      "SELECT DATE_FORMAT(appointment_date,'%Y-%m-%d') AS day,appointment_time AS time FROM work_order WHERE job_id=?",
+      [a.jobId],
+    );
+    assert.equal(
+      captured.scheduled_start,
+      `${scheduled.day} ${scheduled.time}`,
+      'appointment_date may already contain a time; never add it twice',
+    );
     assert.ok(captured.actual_start);
     assert.ok(captured.actual_end);
     assert.equal(captured.technician_id, a.technicianId);
@@ -224,6 +235,15 @@ test('performance captures real visit start/end and ownership, with independent 
     assert.equal(customer.stars, 4);
     assert.equal('qualityScore' in customer, false);
     assert.equal('workPerformed' in customer, false);
+    const technicianReview = (
+      await listPerformance(db, a.technician, { reportId: a.reportId })
+    ).visits[0];
+    assert.equal(technicianReview.stars, 4);
+    assert.equal(
+      technicianReview.comment,
+      'Added feedback after testing the system.',
+    );
+    assert.equal(technicianReview.feedbackVersion, 2);
     assert.equal(
       (
         await listPerformance(
@@ -239,6 +259,80 @@ test('performance captures real visit start/end and ownership, with independent 
       [a.reportId],
     );
     assert.equal(count.n, 3);
+  }));
+
+test('completed-service reminders include pending reports and old visits, respect ownership and disappear after rating', () =>
+  fixture(async (db, c, a) => {
+    const query = { bookingId: a.bookingId };
+    const initially = await listPendingCustomerFeedback(db, a.customer, query);
+    assert.equal(
+      initially.visits.some((v) => v.reportId === a.reportId),
+      false,
+    );
+    await a.complete();
+    // Reminders and their direct links must not silently expire at 90 days.
+    await c.execute(
+      "UPDATE performance_visit SET actual_end='2020-01-08 10:00:00' WHERE report_id=?",
+      [a.reportId],
+    );
+    const reminder = await listPendingCustomerFeedback(db, a.customer, query);
+    const visit = reminder.visits.find((v) => v.reportId === a.reportId);
+    assert.ok(visit);
+    assert.equal(visit.reportSubmitted, false);
+    assert.match(visit.bookingReference, /^BK-\d{4}-\d+$/);
+    const direct = await listPerformance(db, a.customer, {
+      reportId: a.reportId,
+    });
+    assert.equal(direct.visits.length, 1);
+    assert.equal(direct.visits[0].reportId, a.reportId);
+    assert.equal(
+      (
+        await listPerformance(
+          db,
+          { id: 4294967295, role: 'Customer' },
+          { reportId: a.reportId },
+        )
+      ).visits.length,
+      0,
+    );
+    assert.deepEqual(
+      await listPendingCustomerFeedback(
+        db,
+        { id: 4294967295, role: 'Customer' },
+        query,
+      ),
+      { count: 0, visits: [] },
+    );
+    await assert.rejects(
+      listPendingCustomerFeedback(db, a.technician, query),
+      (e) => e.status === 403,
+    );
+    await writePerformance(db, a.customer, a.reportId, 'Customer feedback', {
+      requestId: randomUUID(),
+      expectedVersion: 0,
+      stars: 5,
+      comment: 'A helpful completed visit.',
+    });
+    const after = await listPendingCustomerFeedback(db, a.customer, query);
+    assert.equal(after.count, reminder.count - 1);
+    assert.equal(
+      after.visits.some((v) => v.reportId === a.reportId),
+      false,
+    );
+    const tech = await listPerformance(db, a.technician, {
+      reportId: a.reportId,
+    });
+    assert.equal(tech.visits[0].comment, 'A helpful completed visit.');
+    assert.equal(
+      (
+        await listPerformance(
+          db,
+          { id: 4294967295, role: 'Technician' },
+          { reportId: a.reportId },
+        )
+      ).visits.length,
+      0,
+    );
   }));
 
 test('reassignment and return visit never move a previous report score onto a new technician', () =>
@@ -262,8 +356,11 @@ test('reassignment and return visit never move a previous report score onto a ne
       "UPDATE work_order SET current_status='Return visit',appointment_time='15:00:00' WHERE job_id=?",
       [a.jobId],
     );
-    await arrangeVisitForNow(c,a.jobId);
-    await c.execute("UPDATE work_order SET appointment_time=TIME(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR)) WHERE job_id=?",[a.jobId]);
+    await arrangeVisitForNow(c, a.jobId);
+    await c.execute(
+      'UPDATE work_order SET appointment_time=TIME(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR)) WHERE job_id=?',
+      [a.jobId],
+    );
     await updateTechnicianJobStatus(db, other.userId, a.jobId, {
       requestId: randomUUID(),
       expectedStatus: 'Return visit',
@@ -424,6 +521,10 @@ test('performance HTTP endpoints enforce session, role and CSRF before storing o
         (await request('/api/performance/customer/visits')).status,
         401,
       );
+      assert.equal(
+        (await request('/api/performance/customer/pending-feedback')).status,
+        401,
+      );
       csrf = (await (await request('/api/session')).json()).csrf;
       const login = await request('/api/public/login', 'POST', {
         email: customer.email,
@@ -433,6 +534,14 @@ test('performance HTTP endpoints enforce session, role and CSRF before storing o
       csrf = (await login.json()).csrf;
       assert.equal((await request('/api/performance/admin')).status, 403);
       assert.equal((await request('/api/performance/technician')).status, 403);
+      const pending = await request(
+        `/api/performance/customer/pending-feedback?bookingId=${a.bookingId}`,
+      );
+      assert.equal(pending.status, 200);
+      assert.equal(pending.headers.get('cache-control'), 'private, no-store');
+      assert.ok(
+        (await pending.json()).visits.some((v) => v.reportId === a.reportId),
+      );
       const path = `/api/performance/customer/visits/${a.reportId}/feedback`,
         input = {
           requestId: randomUUID(),

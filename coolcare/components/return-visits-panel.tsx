@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { earliestBookingDate, bookingDateError } from '@/lib/booking-schedule';
 type Row = {
+  adminReadOnly?: boolean;
   earliestReturnDate: string;
   jobId: number;
   bookingId: number;
@@ -65,20 +66,23 @@ function rowsFrom(value: unknown): Row[] {
 export function ReturnVisitsPanel({
   viewerRole,
   noticeOnly = false,
+  bookingId,
 }: {
   viewerRole: 'admin' | 'customer';
   noticeOnly?: boolean;
+  bookingId?: number;
 }) {
   const [rows, setRows] = useState<Row[]>([]),
     [error, setError] = useState('');
   const load = useCallback(async () => {
     try {
-      setRows(rowsFrom(await request(`/api/${viewerRole}/return-visits`)));
+      const data = rowsFrom(await request(`/api/${viewerRole}/return-visits`));
+      setRows(bookingId ? data.filter((row) => row.bookingId === bookingId) : data);
       setError('');
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [viewerRole]);
+  }, [viewerRole, bookingId]);
   useEffect(() => {
     const initial = window.setTimeout(() => void load(), 0);
     const timer = setInterval(load, 30000);
@@ -87,6 +91,7 @@ export function ReturnVisitsPanel({
       clearInterval(timer);
     };
   }, [load]);
+  if (bookingId && !rows.length && !error) return null;
   if (noticeOnly) {
     const waiting = rows.filter(
       (r) => r.status === 'Awaiting customer' || r.status === 'Scheduled',
@@ -272,7 +277,8 @@ function ReturnCard({
           Retry same request
         </Button>
       ) : (
-        <fieldset disabled={busy} className="space-y-3">
+        <fieldset disabled={busy || (viewerRole === 'admin' && Boolean(row.adminReadOnly))} className="space-y-3">
+          {viewerRole === 'admin' && Boolean(row.adminReadOnly) && <p className="text-sm muted">This order is read-only while service is in progress.</p>}
           {viewerRole === 'admin' &&
             ['Required', 'Awaiting confirmation'].includes(row.status) && (
               <div className="space-y-3">

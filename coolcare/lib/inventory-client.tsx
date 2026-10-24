@@ -198,6 +198,9 @@ export type StaffMember = {
   hourlyLaborCost?: number | null;
 };
 export type AdminActionSummary = {
+  items?: Partial<Record<'submitted' | 'expiringSoon' | 'returnVisits' | 'awaitingDispatch' | 'pendingReports', {
+    bookingId: number; bookingReference: string; customerName: string; preferredDate: string; expiresAt: string | null;
+  }[]>>;
   submitted: number;
   expiringSoon: number;
   returnVisits: number;

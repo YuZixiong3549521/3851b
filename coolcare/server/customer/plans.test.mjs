@@ -39,10 +39,15 @@ test('annual plan lifecycle distinguishes completion, cancellation and expiry wi
   assert.equal(describeAnnualPlan(series, visits(['Completed', 'Completed', 'Completed', 'Submitted']), new Date('2027-01-05T00:00:00Z')).status, 'Expired');
 });
 
-test('renewal opens sixty days before expiry and an existing renewal cannot renew twice', () => {
+test('renewal opens sixty days before the final visit and an existing renewal cannot renew twice', () => {
   const active = visits(['Completed', 'Completed', 'Completed', 'Submitted']);
-  assert.equal(describeAnnualPlan(series, active, new Date('2026-11-05T15:59:59Z')).canRenew, false);
-  assert.equal(describeAnnualPlan(series, active, new Date('2026-11-05T16:00:00Z')).canRenew, true);
+  assert.equal(describeAnnualPlan(series, active, new Date('2026-08-05T15:59:59Z')).canRenew, false);
+  const futureOffer = describeAnnualPlan(series, active, new Date('2026-08-01T00:00:00Z'));
+  assert.equal(futureOffer.earlyRenewalPromotionAvailable, true);
+  assert.equal(futureOffer.earlyRenewalEligible, false);
+  assert.equal(futureOffer.earlyRenewalPoints, 100);
+  assert.equal(futureOffer.earlyRenewalDeadline, '2026-10-05T01:00:00.000Z');
+  assert.equal(describeAnnualPlan(series, active, new Date('2026-08-05T16:00:00Z')).canRenew, true);
   assert.equal(describeAnnualPlan({ ...series, existingRenewalSeriesId: 15 }, active, new Date('2026-12-01T00:00:00Z')).canRenew, false);
 });
 
@@ -65,7 +70,20 @@ test('reminders use Singapore time and only the next future active quarterly vis
   const now = new Date('2026-09-29T00:00:00Z');
   const plan = describeAnnualPlan(series, visits(['Completed', 'Cancelled', 'Completed', 'Confirmed']), now);
   assert.equal(plan.nextVisit.bookingId, 103);
-  assert.deepEqual(annualPlanReminders([plan], now).map(item => item.kind), ['visit']);
+  assert.deepEqual(annualPlanReminders([plan], now).map(item => item.kind), ['renewal', 'visit']);
   const renewed = describeAnnualPlan({ ...series, existingRenewalSeriesId: 99 }, visits(['Completed', 'Completed', 'Completed', 'Completed']), new Date('2026-12-20T00:00:00Z'));
   assert.equal(annualPlanReminders([renewed], new Date('2026-12-20T00:00:00Z')).length, 0);
+});
+
+test('early renewal bonus ends at the final appointment start and excludes closed or already-started final visits', () => {
+  const active = visits(['Completed', 'Completed', 'Completed', 'Submitted']);
+  const before = describeAnnualPlan(series, active, new Date('2026-10-05T00:59:59Z'));
+  assert.equal(before.earlyRenewalEligible, true);
+  assert.equal(before.earlyRenewalPoints, 100);
+  assert.equal(before.earlyRenewalDeadline, '2026-10-05T01:00:00.000Z');
+  assert.equal(describeAnnualPlan(series, active, new Date('2026-10-05T01:00:00Z')).earlyRenewalEligible, false);
+  for (const status of ['Completed', 'In Progress', 'Awaiting return arrangement', 'Return visit', 'Cancelled', 'Rejected', 'Expired']) {
+    assert.equal(describeAnnualPlan(series, visits(['Completed', 'Completed', 'Completed', status]), new Date('2026-10-04T00:00:00Z')).earlyRenewalEligible, false);
+  }
+  assert.equal(describeAnnualPlan({ ...series, existingRenewalSeriesId: 15 }, active, new Date('2026-10-04T00:00:00Z')).earlyRenewalEligible, false);
 });

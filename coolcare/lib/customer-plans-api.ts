@@ -40,6 +40,13 @@ export type AnnualPlan = {
   minimumFirstDate: string;
   existingRenewalSeriesId: number | null;
   renewedFromSeriesId: number | null;
+  customerName: string;
+  email: string;
+  earlyRenewalPoints: number;
+  earlyRenewalDeadline: string | null;
+  earlyRenewalEligible: boolean;
+  earlyRenewalPromotionAvailable: boolean;
+  earlyRenewalReward: { points: number; deadline: string; status: 'Awarded' | 'Not eligible' | 'Pending first completion'; awardedAt: string | null } | null;
   visits: AnnualPlanVisit[];
 };
 
@@ -70,6 +77,9 @@ export type AnnualPlanRenewal = {
   previousValidUntil: string;
   currentAnnualPrice: number | null;
   pricingNote: string;
+  earlyRenewalPoints: number;
+  earlyRenewalDeadline: string | null;
+  earlyRenewalEligible: boolean;
 };
 
 async function planRequest<T>(path: string, init?: RequestInit): Promise<T> {

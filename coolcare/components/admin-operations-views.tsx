@@ -1,5 +1,6 @@
 'use client';
 import { ReturnVisitsPanel } from '@/components/return-visits-panel';
+import { RejectionReasonField } from '@/components/rejection-reason-field';
 import {
   AdminPlanner,
   CustomerMailPanel,
@@ -155,9 +156,10 @@ export function OrdersPage({
   params: URLSearchParams;
 }) {
   const { go, version, refresh, actionSummary } = useInventory(),
+    specialQueue = mode === 'review' && ['reports', 'expiring', 'returns'].includes(params.get('queue') || '') ? params.get('queue')! : '',
     reportsQueue = mode === 'review' && params.get('queue') === 'reports',
     status =
-      reportsQueue ? '' : mode === 'review'
+      specialQueue ? '' : mode === 'review'
         ? ['Submitted', 'Rejected', 'Expired'].includes(
             params.get('status') || '',
           )
@@ -169,8 +171,8 @@ export function OrdersPage({
       status,
       page: String(page),
       pageSize: '20',
-      sort: params.get('sort') === 'deadline' ? 'deadline' : 'placed',
-      ...(reportsQueue ? { queue: 'reports' } : mode === 'dispatch'
+      sort: specialQueue === 'expiring' || params.get('sort') === 'deadline' ? 'deadline' : 'placed',
+      ...(specialQueue ? { queue: specialQueue } : mode === 'dispatch'
         ? { queue: 'waiting' }
         : status === 'Submitted' && params.get('sort') !== 'deadline'
           ? { queue: 'review' }
@@ -191,10 +193,12 @@ export function OrdersPage({
     <>
       <Heading
         eyebrow={search ? 'ORDERS / SEARCH' : mode === 'review' ? 'ORDERS / REVIEW' : 'ORDERS / DISPATCH'}
-        title={search ? 'Booking search' : reportsQueue ? 'Pending service reports' : mode === 'review' ? 'Booking review' : 'Dispatch queue'}
+        title={search ? 'Booking search' : reportsQueue ? 'Pending service reports' : specialQueue === 'expiring' ? 'Confirmation due within 12 hours' : specialQueue === 'returns' ? 'Return visits needing Admin' : mode === 'review' ? 'Booking review' : 'Dispatch queue'}
         description={
           search ? 'Find an order by booking reference, customer name or email across all statuses.' : reportsQueue
             ? 'Follow up with the responsible technician until each finished or paused visit has a submitted report.'
+            : specialQueue === 'expiring' ? 'Open a booking before its confirmation deadline to review availability and dispatch.'
+            : specialQueue === 'returns' ? 'Open the original order to review the return request and its service reports.'
             : mode === 'review'
             ? 'Review requests in placement order, then confirm and assign an available technician together.'
             : 'Assign confirmed visits to an available technician automatically or manually.'
@@ -241,7 +245,7 @@ export function OrdersPage({
                 Action centre
               </h2>
               <p className="text-sm muted">
-                Counts remain visible until the work is completed.
+                Open an order directly below. Each category shows up to five orders; urgent requests appear by deadline. View the full queue for more.
               </p>
             </div>
             <strong className="rounded-full bg-red-600 px-3 py-1 text-sm text-white">
@@ -249,48 +253,25 @@ export function OrdersPage({
             </strong>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-            <button
-              type="button"
-              className="rounded-xl border bg-white p-4 text-left shadow-sm"
-              onClick={() => go('/admin/orders?status=Submitted')}
-            >
-              <span className="text-sm muted">Awaiting confirmation</span>
-              <strong className="mt-2 block text-2xl">
-                {actionSummary.submitted}
-              </strong>
-            </button>
-            <button
-              type="button"
-              className="rounded-xl border bg-white p-4 text-left shadow-sm"
-              onClick={() => go('/admin/orders?queue=reports')}
-            >
-              <span className="text-sm muted">Reports awaiting submission</span>
-              <strong className="mt-2 block text-2xl">{actionSummary.pendingReports}</strong>
-            </button>
-            <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
-              <span className="text-sm text-orange-800">
-                Due within 12 hours
-              </span>
-              <strong className="mt-2 block text-2xl text-orange-900">
-                {actionSummary.expiringSoon}
-              </strong>
-            </div>
-            <div className="rounded-xl border bg-white p-4 shadow-sm">
-              <span className="text-sm muted">Return visits needing Admin</span>
-              <strong className="mt-2 block text-2xl">
-                {actionSummary.returnVisits}
-              </strong>
-            </div>
-            <button
-              type="button"
-              className="rounded-xl border bg-white p-4 text-left shadow-sm"
-              onClick={() => go('/admin/dispatch')}
-            >
-              <span className="text-sm muted">Awaiting dispatch</span>
-              <strong className="mt-2 block text-2xl">
-                {actionSummary.awaitingDispatch}
-              </strong>
-            </button>
+            {([
+              ['submitted', 'Awaiting confirmation', '/admin/orders?status=Submitted'],
+              ['pendingReports', 'Reports awaiting submission', '/admin/orders?queue=reports'],
+              ['expiringSoon', 'Due within 12 hours', '/admin/orders?queue=expiring&sort=deadline'],
+              ['returnVisits', 'Return visits needing Admin', '/admin/orders?queue=returns'],
+              ['awaitingDispatch', 'Awaiting dispatch', '/admin/dispatch'],
+            ] as const).map(([key, label, href]) => <div key={key} className={`min-w-0 rounded-xl border p-4 shadow-sm ${key === 'expiringSoon' ? 'border-orange-200 bg-orange-50' : 'bg-white'}`}>
+              <Button variant="ghost" className="h-auto w-full justify-start whitespace-normal p-0 text-left" onClick={() => go(href)}>
+                <span><span className="block text-sm">{label}</span><strong className="mt-2 block text-2xl">{actionSummary[key]}</strong></span>
+              </Button>
+              <ul className="mt-3 space-y-2">
+                {(actionSummary.items?.[key] || []).map((item) => <li key={item.bookingId}>
+                  <Button variant="link" className="h-auto max-w-full justify-start whitespace-normal p-0 text-left" onClick={() => go(`/admin/orders/${item.bookingId}`)}>
+                    <span><span className="block">{item.bookingReference}</span><span className="block text-xs font-normal text-slate-600">{item.customerName}</span></span>
+                  </Button>
+                </li>)}
+              </ul>
+              {actionSummary[key] > 0 && <Button variant="link" size="sm" className="mt-2 h-auto p-0" onClick={() => go(href)}>View queue →</Button>}
+            </div>)}
           </div>
         </section>
       )}
@@ -305,18 +286,20 @@ export function OrdersPage({
             <NativeSelect
               id="order-status-filter"
               className="mt-1"
-              value={reportsQueue ? 'reports' : status}
+              value={specialQueue || status}
               onChange={(event) =>
-                go(event.target.value === 'reports' ? '/admin/orders?queue=reports' : '/admin/orders?status=' + event.target.value)
+                go(['reports', 'expiring', 'returns'].includes(event.target.value) ? '/admin/orders?queue=' + event.target.value : '/admin/orders?status=' + event.target.value)
               }
             >
               <option value="Submitted">Awaiting confirmation</option>
               <option value="Rejected">Rejected</option>
               <option value="Expired">Expired</option>
               <option value="reports">Reports awaiting submission</option>
+              <option value="expiring">Due within 12 hours</option>
+              <option value="returns">Return visits needing Admin</option>
             </NativeSelect>
           </label>
-          {!reportsQueue && <label htmlFor="review-order-sort" className="text-sm font-semibold">
+          {!specialQueue && <label htmlFor="review-order-sort" className="text-sm font-semibold">
             Order by
             <NativeSelect
               id="review-order-sort"
@@ -429,12 +412,12 @@ export function OrdersPage({
         ) : (
           <NoResults
             title={
-              search ? 'No matching bookings' : reportsQueue ? 'No reports awaiting submission' : mode === 'review'
+              search ? 'No matching bookings' : reportsQueue ? 'No reports awaiting submission' : specialQueue ? 'No orders in this action queue' : mode === 'review'
                 ? 'No bookings awaiting review'
                 : 'No confirmed bookings awaiting dispatch'
             }
             description={
-              search ? 'Check the booking reference, including its creation year, or search by customer.' : reportsQueue ? 'Finished visits have their submitted reports. New unfinished reports will appear here.' : mode === 'review'
+              search ? 'Check the booking reference, including its creation year, or search by customer.' : reportsQueue ? 'Finished visits have their submitted reports. New unfinished reports will appear here.' : specialQueue ? 'New orders needing this action will appear here.' : mode === 'review'
                 ? 'New customer requests will appear here.'
                 : 'Approved bookings will appear here until assigned.'
             }
@@ -743,6 +726,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       version,
     ),
     booking = resource.data?.booking;
+  const orderReadOnly = booking?.status === 'In Progress' || Boolean(booking?.assignments.some((item) => item.workStatus === 'In Progress'));
   const [reason, setReason] = useState(''),
     [reasonDraft, setReasonDraft] = useState<string | null>(null),
     [scheduleDraft, setScheduleDraft] = useState<{
@@ -775,7 +759,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
             }
           : { bookingId, preferredDate: '', timeSlot: '' },
     canEditSchedule = Boolean(
-      booking && ['Submitted', 'Confirmed'].includes(booking.status),
+      booking && !orderReadOnly && ['Submitted', 'Confirmed'].includes(booking.status),
     ),
     scheduleDirty = Boolean(
       booking &&
@@ -794,7 +778,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
             trafficNote: booking?.trafficNote ?? '',
           },
     canEditTravel = Boolean(
-      booking &&
+      booking && !orderReadOnly &&
       ['Submitted', 'Confirmed', 'Awaiting return arrangement'].includes(
         booking.status,
       ),
@@ -811,7 +795,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       (travelMinutes !== Number(booking.travelBufferMinutes ?? 30) ||
         travel.trafficNote !== (booking.trafficNote ?? '')),
     );
-  const dispatchAction =
+  const dispatchAction = orderReadOnly ? null :
     booking?.status === 'Submitted' || booking?.status === 'Confirmed'
       ? 'dispatch'
       : booking?.status === 'Assigned' &&
@@ -1019,6 +1003,8 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
             description={`${displayDate(booking.preferredDate)} · ${displayServiceTime(booking)}`}
             actions={<BookingStatus status={booking.status} />}
           />
+          {orderReadOnly && <p role="status" className="notice mb-5">Service is in progress. This order is read-only for administrators; the assigned technician manages the active visit.</p>}
+          <ReturnVisitsPanel viewerRole="admin" bookingId={bookingId} />
           {booking.reportPending && <div role="status" className="mb-5 flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">
             <AlertCircle className="mt-0.5 size-5 shrink-0" />
             <div><strong>Report pending</strong><p className="mt-1">{booking.pendingReportTechnicianName || 'The assigned technician'} must submit the report for WO-{String(booking.pendingReportJobId).padStart(4, '0')}{booking.reportId ? ` (report #${booking.reportId})` : ''}. Service completion or a return request does not replace report submission.</p></div>
@@ -1311,22 +1297,9 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </p>
                 )}
               </div>
-              {booking.status === 'Submitted' && (
+              {booking.status === 'Submitted' && !orderReadOnly && (
                 <div className="mt-6 space-y-3">
-                  <label
-                    htmlFor="booking-rejection-reason"
-                    className="block text-sm font-semibold"
-                  >
-                    Rejection reason
-                    <Textarea
-                      id="booking-rejection-reason"
-                      className="mt-2 min-h-24"
-                      value={reason}
-                      maxLength={500}
-                      onChange={(event) => setReason(event.target.value)}
-                      placeholder="Explain why this request cannot be approved. The customer will see this message."
-                    />
-                  </label>
+                  <RejectionReasonField key={`reject-${bookingId}`} id="booking-rejection-reason" value={reason} onChange={setReason} disabled={Boolean(busy)} />
                   <Button
                     variant="destructive"
                     disabled={
@@ -1342,21 +1315,9 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </Button>
                 </div>
               )}
-              {booking.status === 'Rejected' && (
+              {booking.status === 'Rejected' && !orderReadOnly && (
                 <div className="mt-6 space-y-3">
-                  <label
-                    htmlFor={`rejection-reason-${bookingId}`}
-                    className="block text-sm font-semibold"
-                  >
-                    Rejection reason
-                    <Textarea
-                      id={`rejection-reason-${bookingId}`}
-                      className="mt-2 min-h-24"
-                      value={reasonDraft ?? booking.rejectionReason ?? ''}
-                      maxLength={500}
-                      onChange={(event) => setReasonDraft(event.target.value)}
-                    />
-                  </label>
+                  <RejectionReasonField key={`edit-${bookingId}-${booking.rejectionVersion}`} id={`rejection-reason-${bookingId}`} value={reasonDraft ?? booking.rejectionReason ?? ''} onChange={setReasonDraft} disabled={Boolean(busy)} />
                   <p className="text-sm muted">
                     The customer sees this reason. Every correction remains in
                     the status timeline.

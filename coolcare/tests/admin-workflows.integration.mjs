@@ -12,7 +12,10 @@ import {
   listAdminBookings,
   listAdminSchedule,
   listDispatchOptions,
+  editTravelPlan,
+  rescheduleAdminBooking,
 } from '../server/admin-operations.mjs';
+import { updateReturn } from '../server/return-visits.mjs';
 import { expireSubmittedBookings } from '../server/order-expiry.mjs';
 import {
   queueBooking,
@@ -345,6 +348,60 @@ test('rejection corrections enforce versioning, replay the same request and reta
       detail.timeline[0].note,
       'The requested service is unavailable.',
     );
+  }));
+
+test('admin action centre exposes bounded direct order references and precise deadline and return queues', () =>
+  fixture(async ({ c, db, actor, create }) => {
+    const ids = [];
+    for (let i = 0; i < 7; i++) {
+      const id = await create();
+      ids.push(id);
+      await c.execute("UPDATE booking SET created_at='2001-01-01 00:00:00',expires_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 6 HOUR) WHERE booking_id=?", [id]);
+    }
+    const outside = await create('Submitted', '2090-01-01 00:00:00');
+    const summary = await getAdminActionSummary(db);
+    assert.deepEqual(summary.items.submitted.map(row => row.bookingId), ids.slice(0, 5));
+    assert.ok(summary.items.submitted.every(row => row.bookingReference.startsWith('BK-2001-') && row.customerName));
+    assert.ok(Object.values(summary.items).every(rows => rows.length <= 5));
+    assert.equal((await listAdminBookings(db, { queue: 'expiring', q: String(ids[0]) })).total, 1);
+    assert.equal((await listAdminBookings(db, { queue: 'expiring', q: String(outside) })).total, 0);
+    const [[tech]] = await c.execute('SELECT technician_id FROM technician ORDER BY technician_id LIMIT 1');
+    const [assignment] = await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Assigned')", [outside, tech.technician_id, actor.userId]);
+    const [work] = await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status) VALUES (?,?,'2091-01-08 09:00:00','09:00:00','Awaiting return arrangement')", [outside, assignment.insertId]);
+    await c.execute("INSERT INTO service_progress(job_id,follow_up_status) VALUES (?,'Required')", [work.insertId]);
+    assert.equal((await listAdminBookings(db, { queue: 'returns', q: String(outside) })).rows[0].bookingId, outside);
+    await c.execute("UPDATE service_progress SET follow_up_status='Awaiting customer' WHERE job_id=?", [work.insertId]);
+    assert.equal((await listAdminBookings(db, { queue: 'returns', q: String(outside) })).total, 0);
+  }));
+
+test('admin order changes reject both In Progress bookings and stale bookings with active work, without side effects', () =>
+  fixture(async ({ c, db, actor, create }) => {
+    const [[tech]] = await c.execute('SELECT technician_id FROM technician ORDER BY technician_id LIMIT 1');
+    for (const status of ['In Progress', 'Submitted']) {
+      const id = await create(status);
+      const [assignment] = await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Assigned')", [id, tech.technician_id, actor.userId]);
+      const [work] = await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status) VALUES (?,?,'2091-01-08 09:00:00','09:00:00','In Progress')", [id, assignment.insertId]);
+      await c.execute("INSERT INTO service_progress(job_id,follow_up_status) VALUES (?,'Required')", [work.insertId]);
+      await c.execute('UPDATE booking SET slot_start=NULL,slot_end=NULL WHERE booking_id=?', [id]);
+      const [[before]] = await c.execute('SELECT * FROM booking WHERE booking_id=?', [id]);
+      const actions = [
+        () => approveBooking(db, actor, id, { requestId: randomUUID() }),
+        () => dispatchBooking(db, actor, id, { requestId: randomUUID() }),
+        () => dispatchBooking(db, actor, id, { requestId: randomUUID() }, { redispatch: true }),
+        () => rejectBooking(db, actor, id, { requestId: randomUUID(), reason: 'No technician available.' }),
+        () => editRejectionReason(db, actor, id, { requestId: randomUUID(), version: 1, reason: 'Updated reason.' }),
+        () => editTravelPlan(db, actor, id, { requestId: randomUUID(), travelBufferMinutes: 60, trafficNote: 'Change blocked.' }),
+        () => rescheduleAdminBooking(db, actor, id, { requestId: randomUUID(), preferredDate: '2091-01-09', timeSlot: '09:00 - 11:00' }),
+        () => queueBooking(db, actor, id, { requestId: randomUUID(), reason: 'Change blocked.' }),
+        () => updateReturn(db, 'admin', actor.userId, work.insertId, { requestId: randomUUID(), expectedVersion: 0, action: 'invite', customerMessage: 'Please choose another weekday.' }),
+      ];
+      for (const action of actions) await assert.rejects(action(), error => error.status === 409 && /in progress/.test(error.message));
+      const [[after]] = await c.execute('SELECT * FROM booking WHERE booking_id=?', [id]);
+      assert.deepEqual(after, before, 'blocked requests cannot even normalize a legacy appointment');
+      assert.equal((await listAdminAudit(db, { bookingId: id })).total, 0);
+      assert.equal((await getAdminBooking(db, id)).timeline.length, 0);
+      assert.equal((await listBookingEmails(db, id)).rows.length, 0);
+    }
   }));
 
 test('geographic dispatch uses an available same-area technician, then rejects that technician for an overlap', () =>

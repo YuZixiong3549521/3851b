@@ -174,6 +174,26 @@ The technician jobs API includes `canStart`, `startBlockedReason`, `canComplete`
 Annual visit 1 keeps the normal 48-hour confirmation deadline. Visits 2–4 remain reserved without that automatic deadline and are confirmed/dispatched separately. Closing one visit does not silently cancel the remaining quarterly visits; My Plans explains which visits need attention. Migration 31 only clears premature deadlines on future, still-Submitted later visits and never reopens closed orders.
 ## Plans, rewards, reporting and performance
 
+The meeting update adds Admin **Annual Packages** at `/admin/plans`, including
+customer search, plan status, quarterly order links and renewal reward status.
+Reports can group completed service value by date, quarter or year using the
+same applied range and CSV filters. The Action centre exposes individual order
+links; rejection reasons use a shared dropdown with an Other explanation. Admin
+order mutations are locked once service is In Progress, including stale-page
+requests checked against the actual work-order status.
+
+Customer Dashboard, Booking History and completed booking details reuse
+`CustomerFeedbackPrompt`, linking directly to an owned unrated visit even when
+its report is pending. Submitted feedback removes the prompt. Technician My
+performance includes a Reviews filter for that technician's captured visits.
+Rejected/expired notices and closed cards show persisted released loyalty points,
+with no invented credit for bookings that did not reserve points.
+
+My Plans and renewal review display the final-visit deadline and early renewal
+offer; migration 34 stores accepted offers. The 100-point bonus is granted once
+on the renewed plan's first completed quarterly order, separately from normal
+service earnings. See OPTIONAL-FEATURE-PLANS.md for eligibility and concurrency.
+
 Customer pages `/customer/plans`, `/customer/rewards` and `/customer/feedback` use `CoolCareShell`. Desktop navigation, the account menu and dashboard links expose these pages without expanding the five-item mobile bottom bar. My Plans reuses the existing booking detail/change flow and opens `/customer/book?renewPlan=<seriesId>` for a reviewed renewal; all prefill loading completes before the booking form becomes interactive.
 
 Admin routes `/admin/reports`, `/admin/rewards` and `/admin/performance` use `InventoryApp` and its shared navigation. The former `/admin/payments` page redirects to rewards management. Reporting uses the existing Recharts dependency and includes accessible tables and CSV output for completed service value and reward discounts. These amounts do not represent money received. Payment forms, receipt/refund APIs and collection totals are no longer part of the active application.

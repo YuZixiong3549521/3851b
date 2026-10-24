@@ -1,4 +1,5 @@
 import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
+import { assertAdminOrderEditable } from './admin-order-policy.mjs';
 import { z } from 'zod';
 import { AppError, idSchema } from './inventory.mjs';
 import {
@@ -48,6 +49,7 @@ export async function queueBooking(pool, actor, bookingId, raw) {
       [bookingId],
     );
     if (!booking) throw new AppError('Booking not found.', 404);
+    await assertAdminOrderEditable(c, booking);
     if (!['Submitted', 'Confirmed'].includes(booking.booking_status))
       throw new AppError(
         'Only unassigned requests can enter the waiting queue.',
