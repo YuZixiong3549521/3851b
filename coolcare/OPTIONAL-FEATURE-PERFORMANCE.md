@@ -5,6 +5,12 @@ No old performance scores or service reports are deleted. The old
 `technician_performance_score` table remains as legacy data and is not silently
 converted into customer feedback.
 
+## Team participation (migration 35)
+
+visit_member captures every participant and the lead when service starts. Existing unambiguous single-technician performance records become single-member snapshots; missing historical teams are not invented. Reassignment or a return team's replacement does not rewrite an earlier report's participants. Each new return report gets its own snapshot.
+
+Each member receives one completed-visit participation and the same customer feedback for the shared report, labelled Shared team review. The customer still sees one visit and submits one rating. Admin's company summary deduplicates reports, while individual summaries count participation. Team service-start time supplies punctuality and is labelled in the visit details; it is not a separate GPS arrival time for each helper. Orders, company revenue and customer rewards remain once per booking.
+
 ## Pages and access
 
 - Customer: `/customer/feedback` shows only that customer's closed visits and

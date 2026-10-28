@@ -1,3 +1,4 @@
+import {recommendedTeamSize,teamDuration} from '@/lib/team-rules.mjs';
 import React, { useEffect, useState } from 'react';
 import { SiteIcon } from '@/components/ui/site-icon';
 import { Button } from '@/components/ui/button';
@@ -337,7 +338,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 }
                 className="h-12 bg-ac-surface border-ac-outline-variant"
               >
-                {Array.from({ length: 10 }, (_, index) => index + 1).map(
+                {Array.from({ length: 20 }, (_, index) => index + 1).map(
                   (count) => (
                     <option key={count} value={count}>
                       {count} {count === 1 ? 'aircon unit' : 'aircon units'}
@@ -450,7 +451,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                         </p>
                         <p className="text-sm text-ac-on-surface-variant mt-2">
                           {card.name === 'Cleaning'
-                            ? `Visit estimate: ${formatMoney(total)} for ${numberOfUnits} unit(s) · approx. ${numberOfUnits * 45} minutes`
+                            ? `Visit estimate: ${formatMoney(total)} for ${numberOfUnits} unit(s)${offer?.durationMinutesPerUnit ? ` · approx. ${teamDuration(numberOfUnits,recommendedTeamSize(numberOfUnits),offer.durationMinutesPerUnit)} minutes with ${recommendedTeamSize(numberOfUnits)} technician(s)` : ''}`
                             : annual
                               ? `${offer?.propertyPrices?.find((tier) => tier.propertyType === propertyType)?.label ?? ''} · ${numberOfUnits} unit(s)`
                               : 'Minimum visit fee. Additional repair fees quoted by your technician.'}

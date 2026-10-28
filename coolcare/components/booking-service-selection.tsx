@@ -1,4 +1,6 @@
 'use client';
+import { recommendedTeamSize, teamDuration } from '@/lib/team-rules.mjs';
+'use client';
 
 import {useId} from 'react';
 import { CalendarDays, Check, Sparkles, Wrench } from 'lucide-react';
@@ -30,7 +32,7 @@ export function getBookingSelection(options: BookingOptions | null, selection: B
   const estimate = !selected || unitCount < 1 ? 0 : selection.mode === 'bundle'
     ? Number(property!.price) + Math.max(0, unitCount - Number(property!.includedUnits)) * Number(property!.additionalUnitPrice)
     : services.reduce((sum, service) => sum + Number(service.basePrice) + Math.max(0, unitCount - 1) * Number(service.additionalUnitPrice ?? 0), 0);
-  const durationMinutes = services.reduce((sum, service) => sum + Math.max(Number(service.minimumDurationMinutes ?? (service.code === 'repair' ? 60 : 0)), unitCount * Number(service.durationMinutesPerUnit ?? (service.code === 'cleaning' ? 45 : 0))), 0);
+  const durationMinutes = services.reduce((sum, service) => sum + Math.max(Number(service.minimumDurationMinutes ?? (service.code === 'repair' ? 60 : 0)), teamDuration(unitCount, recommendedTeamSize(unitCount), Number(service.durationMinutesPerUnit ?? (service.code === 'cleaning' ? 45 : 0)))), 0);
   return {
     valid: selected && services.length >= 1,
     estimate,

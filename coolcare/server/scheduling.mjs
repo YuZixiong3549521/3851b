@@ -1,3 +1,4 @@
+import { travelStartTime } from './travel-planning.mjs';
 import { AppError } from './inventory.mjs';
 
 export const BOOKING_TIME_SLOTS = [
@@ -144,7 +145,7 @@ export function peakConcurrentReservations(intervals, start, end) {
     const clippedEnd =
       String(interval.end) < String(end) ? String(interval.end) : String(end);
     if (clippedStart < clippedEnd)
-      events.push([clippedStart, 1], [clippedEnd, -1]);
+      events.push([clippedStart, Number(interval.technicians ?? 1)], [clippedEnd, -Number(interval.technicians ?? 1)]);
   }
   events.sort(
     (a, b) =>
@@ -164,16 +165,16 @@ export async function activeReservationCount(
   { date, start, end, excludeBookingId = 0, additionalReservations = [] },
 ) {
   const [rows] = await executor.execute(
-    `SELECT b.booking_id,b.slot_start AS start,b.slot_end AS end FROM booking b
+    `SELECT b.booking_id,SUBTIME(b.slot_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60)) AS start,b.slot_end AS end,b.required_technicians AS technicians FROM booking b
     WHERE b.preferred_service_date=? AND b.booking_status IN ('Submitted','Confirmed','Assigned','On The Way','In Progress','Return visit')
     AND b.booking_id<>? AND b.slot_start IS NOT NULL AND b.slot_end IS NOT NULL
-    AND b.slot_start<? AND b.slot_end>? ORDER BY b.booking_id FOR UPDATE`,
+    AND SUBTIME(b.slot_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60))<? AND b.slot_end>? ORDER BY b.booking_id FOR UPDATE`,
     [date, excludeBookingId, end, start],
   );
   const [followups] = await executor.execute(
-    `SELECT p.job_id,p.follow_up_start AS start,p.follow_up_end AS end FROM service_progress p JOIN work_order w ON w.job_id=p.job_id
+    `SELECT p.job_id,SUBTIME(p.follow_up_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60)) AS start,p.follow_up_end AS end,b.required_technicians AS technicians FROM service_progress p JOIN work_order w ON w.job_id=p.job_id JOIN booking b ON b.booking_id=w.booking_id
     WHERE p.follow_up_date=? AND p.follow_up_status IN ('Scheduled','In Progress') AND w.current_status NOT IN ('Return visit','In Progress') AND w.booking_id<>?
-    AND p.follow_up_start<? AND p.follow_up_end>? ORDER BY p.job_id FOR UPDATE`,
+    AND SUBTIME(p.follow_up_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60))<? AND p.follow_up_end>? ORDER BY p.job_id FOR UPDATE`,
     [date, excludeBookingId, end, start],
   );
   return peakConcurrentReservations(
@@ -199,8 +200,9 @@ export async function assertTeamCapacity(
       visit.start && visit.end ? visit : normalizeBookingSlot(visit.timeSlot);
     return {
       date: String(visit.date).slice(0, 10),
-      start: slot.start,
+      start: travelStartTime(slot.start,visit.travelBufferMinutes??30),
       end: slot.end,
+      technicians:Number(visit.technicians??1),
     };
   });
   await lockServiceDates(
@@ -221,7 +223,7 @@ export async function assertTeamCapacity(
       excludeBookingId,
       additionalReservations: proposed,
     });
-    if (reserved >= technicianCount) {
+    if (reserved + visit.technicians > technicianCount) {
       conflicts.push({ ...visit, reserved, capacity: technicianCount });
     } else {
       proposed.push(visit);
@@ -241,7 +243,7 @@ export async function assertTeamCapacity(
 export async function getTeamSlotAvailability(
   executor,
   dates,
-  { durationMinutes, excludeBookingId = 0 } = {},
+  { durationMinutes, excludeBookingId = 0, technicians = 1, travelBufferMinutes = 30 } = {},
 ) {
   const unique = [...new Set(dates.map((value) => String(value).slice(0, 10)))];
   const technicianCount = await eligibleTechnicianCount(executor);
@@ -264,14 +266,14 @@ export async function getTeamSlotAvailability(
       }
       const reserved = await activeReservationCount(executor, {
         date,
-        start: slot.start,
+        start: travelStartTime(slot.start,travelBufferMinutes),
         end: slot.end,
         excludeBookingId,
       });
       slots.push({
         code: slot.code,
         label: slot.label,
-        available: technicianCount > reserved,
+        available: technicianCount >= reserved + technicians,
         start: slot.start,
         end: slot.end,
         durationMinutes: durationMinutes ?? null,

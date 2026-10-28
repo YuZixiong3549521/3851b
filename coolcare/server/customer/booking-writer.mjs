@@ -35,7 +35,7 @@ export async function writeSelectedBookings(connection,selection,context) {
     await assertAddressBookingLimit(connection,context.customerId,context.addressLine,visit.preferredDate,0,{includesCleaning:selection.includesCleaning});
   }
   const slot=context.legacy?null:bookingServiceSlot(context.timeSlot,selection.estimatedDurationMinutes);
-  if(!context.legacy)await assertTeamCapacity(connection,schedule.map(visit=>({date:visit.preferredDate,start:slot.start,end:slot.end})));
+  if(!context.legacy)await assertTeamCapacity(connection,schedule.map(visit=>({date:visit.preferredDate,start:slot.start,end:slot.end,technicians:selection.requiredTechnicians})));
   let seriesId;
   if(selection.annual) {
     const [series]=await connection.execute(`INSERT INTO annual_booking_series(customer_id,address_id,package_id,package_name,
@@ -52,6 +52,7 @@ export async function writeSelectedBookings(connection,selection,context) {
     [context.customerId,context.addressId,selection.services[0].serviceId,visit.preferredDate,context.timeSlot,slot?.start??null,slot?.end??null,
       context.legacy?null:selection.estimatedDurationMinutes,
       context.legacy||(selection.annual&&visit.visitNumber>1)?null:bookingExpiryDate(),context.problemDescription||null,visit.totalAmount]);
+    await connection.execute('UPDATE booking SET required_technicians=?,cleaning_minutes_per_unit=?,diagnostic_minutes=? WHERE booking_id=?',[selection.requiredTechnicians??1,selection.cleaningMinutesPerUnit??null,selection.diagnosticMinutes??null,booking.insertId]);
     firstBookingId??=booking.insertId;
     for(const unitId of context.unitIds)await connection.execute('INSERT INTO booking_aircon_unit(booking_id,unit_id) VALUES (?,?)',[booking.insertId,unitId]);
     await connection.execute('INSERT INTO web_booking_details(booking_id,service_package,contact_phone,special_notes,request_id) VALUES (?,?,?,?,?)',

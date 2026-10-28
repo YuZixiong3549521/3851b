@@ -1,5 +1,13 @@
 # Shared UI and application architecture
 
+## Team staffing and immediate reward activity
+
+Migration 35 adds assignment_member for current assignment participants, visit_member for immutable report participation, and reward_activity for availability movements that do not alter the balance ledger. server/teams.mjs centralizes membership, complete-team selection, durations, schedule conflicts and team names. The legacy assignment owner remains the lead; one work order/report continues to identify the visit. All technician mutation endpoints keep lead-only checks, while reads permit participants.
+
+Manual dispatch uses checkboxes and a lead select in the existing panel. Its final review queries the selected team size, displays recalculated duration/end and submits the reviewed IDs. Customer, Admin, Technician and email readers show team/lead; historical report names use captured visit participants. Public/customer/Assistant booking entry points share the 20-unit limit and parallel-duration estimate. Capacity checks count technicians, including travel, rather than counting orders.
+
+My Rewards combines append-only reservation/return/settlement events with the existing loyalty balance ledger. Signed availableDelta controls display; existing ledger points retain their meaning. Successful customer writes emit a local update and a BroadcastChannel invalidation, without customer data, so other tabs reload their own authenticated wallet immediately. Focus/reconnect/periodic refresh remains a fallback.
+
 ## Booking references
 
 Every portal displays the server-provided booking reference, such as

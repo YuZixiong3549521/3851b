@@ -2,6 +2,7 @@ export type HomepageOffer = {
   name: string;
   base: number;
   perUnit: number;
+  durationMinutesPerUnit?: number;
   includedVisits?: number;
   propertyPrices?: Array<{
     propertyType: string;
@@ -67,6 +68,7 @@ export function readHomepageOffers(value: unknown): HomepageOffer[] {
         name: String(item.name),
         base: Number(item.base),
         perUnit: Number(item.perUnit),
+        ...(Number(item.durationMinutesPerUnit)>0?{durationMinutesPerUnit:Number(item.durationMinutesPerUnit)}:{}),
         includedVisits: item.name === 'Annual Cleaning Bundle' ? 4 : undefined,
         ...(propertyPrices ? { propertyPrices } : {}),
       },
@@ -83,7 +85,7 @@ export function homepageOfferTotal(
     !offer ||
     !Number.isInteger(numberOfUnits) ||
     numberOfUnits < 1 ||
-    numberOfUnits > 10
+    numberOfUnits > 20
   )
     return null;
   if (offer.propertyPrices) {

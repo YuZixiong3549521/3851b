@@ -1,3 +1,4 @@
+import {memberSql} from './teams.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -24,7 +25,7 @@ export const photoUploadSchema = z
   .strict();
 async function owned(c, userId, jobId, lock = false) {
   const [[w]] = await c.execute(
-    `SELECT w.job_id,w.current_status,a.technician_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id WHERE w.job_id=? AND t.user_id=? AND u.status='Active' AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') ${lock ? 'FOR UPDATE' : ''}`,
+    `SELECT w.job_id,w.current_status,a.technician_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON ${lock ? 't.technician_id=a.technician_id' : memberSql('a','t.technician_id')} JOIN user_account u ON u.user_id=t.user_id WHERE w.job_id=? AND t.user_id=? AND u.status='Active' AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') ${lock ? 'FOR UPDATE' : ''}`,
     [jobId, userId],
   );
   if (!w) throw new AppError('Work order not found for this technician.', 404);
@@ -167,14 +168,14 @@ export function registerServicePhotoMedia(app, pool) {
   app.get('/api/service-photos/:photoId', async (req, res) => {
     const user = await sessionUser(pool, req);
     const [[p]] = await pool.execute(
-      `SELECT p.photo_url,t.user_id AS technicianUserId,cu.user_id AS customerUserId,r.submitted_time FROM photo p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id LEFT JOIN service_report r ON r.report_id=p.report_id WHERE p.photo_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')`,
+      `SELECT EXISTS(SELECT 1 FROM assignment_member am JOIN technician mt ON mt.technician_id=am.technician_id WHERE am.assignment_id=a.assignment_id AND mt.user_id=${Number(user.id)}) AS teamMember,p.photo_url,t.user_id AS technicianUserId,cu.user_id AS customerUserId,r.submitted_time FROM photo p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id LEFT JOIN service_report r ON r.report_id=p.report_id WHERE p.photo_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')`,
       [idSchema.parse(req.params.photoId)],
     );
     if (
       !p ||
       !(
         user.role === 'Admin' ||
-        (user.role === 'Technician' && user.id === p.technicianUserId) ||
+        (user.role === 'Technician' && (user.id === p.technicianUserId || p.teamMember)) ||
         (user.role === 'Customer' &&
           user.id === p.customerUserId &&
           p.submitted_time)

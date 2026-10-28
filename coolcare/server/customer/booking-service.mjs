@@ -1,3 +1,4 @@
+import {bookingTeam,assignmentTeamNameSql,visitTeamNameSql} from '../teams.mjs';
 import { bookingReference } from '../booking-reference.mjs';
 export { bookingReference } from '../booking-reference.mjs';
 import { z } from 'zod';
@@ -31,9 +32,9 @@ export const createBookingSchema = z.object({
   reward_points: bookingRewardPointsSchema.optional(),
   rewardRuleVersion: bookingRewardRuleVersionSchema.optional(),
   addressId: z.coerce.number().int().positive().optional(),
-  unitIds: z.array(z.coerce.number().int().positive()).min(1).max(10).optional(),
+  unitIds: z.array(z.coerce.number().int().positive()).min(1).max(20).optional(),
   serviceAddress: addressLineSchema.optional(),
-  numberOfUnits: z.coerce.number().int().min(1).max(10).optional(),
+  numberOfUnits: z.coerce.number().int().min(1).max(20).optional(),
   preferredDate: z.string().refine(isCalendarDate, 'Choose a valid service date.'),
   timeSlot: z.enum(timeSlots),
   problemDescription: z.string().trim().max(1000).optional().default(''),
@@ -144,7 +145,7 @@ export async function listBookings(pool, scope = 'all', userId) {
        sa.address_label AS addressLabel,
        sa.address_line AS addressLine,
        sa.postal_code AS postalCode,
-       tech_user.full_name AS technicianName,
+       ${assignmentTeamNameSql('a','tech_user.full_name')} AS technicianName,
        sr.report_id AS reportId
      FROM booking b
      JOIN service_catalog sc ON sc.service_id = b.service_id
@@ -220,7 +221,7 @@ export async function getBookingReport(pool, bookingId, userId) {
        COALESCE(sr.visit_service_date,'') AS serviceDate,
        COALESCE(TIME_FORMAT(sr.visit_start_time,'%H:%i'),'') AS timeSlot,
        sc.service_name AS serviceName,
-       COALESCE(tech_user.full_name,'Not recorded') AS technicianName,
+       ${visitTeamNameSql('sr',"COALESCE(tech_user.full_name,'Not recorded')")} AS technicianName,
        sr.report_id AS reportId,
        w.job_id AS jobId,
        TIMESTAMPDIFF(MINUTE,sr.started_at,sr.completed_at) AS durationMinutes,

@@ -695,24 +695,13 @@ void test('manual dispatch lists every technician, enforces eligibility, support
         (option) => option.technicianId === automaticFirst.technicianId,
       );
     assert.equal(current.current, true);
-    assert.equal(current.eligible, false);
-    assert.match(current.reason, /currently assigned/i);
+    assert.equal(current.eligible, true);
+    assert.equal(current.reason, null);
     assert.equal(replacement.eligible, true);
-    await assert.rejects(
-      dispatchBooking(
-        db,
-        owner,
-        first.bookingId,
-        {
-          requestId: randomUUID(),
-          mode: 'manual',
-          technicianId: manuallySelected.technicianId,
-        },
-        { redispatch: true },
-      ),
-      (error) =>
-        error.status === 409 && /different technician/i.test(error.message),
-    );
+    await connection.query('SAVEPOINT retained_team');
+    const retained=await dispatchBooking(db,owner,first.bookingId,{requestId:randomUUID(),mode:'manual',technicianId:manuallySelected.technicianId},{redispatch:true});
+    assert.equal(retained.technician.technicianId,manuallySelected.technicianId);
+    await connection.query('ROLLBACK TO SAVEPOINT retained_team');
     const redispatchRequest = randomUUID();
     const reassigned = await dispatchBooking(
       db,

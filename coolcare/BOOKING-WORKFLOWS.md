@@ -1,5 +1,17 @@
 # Booking, annual cleaning, inventory and mail workflows
 
+## Team dispatch (migration 35)
+
+All booking surfaces accept 1–20 AC units. Automatic staffing is ceil(units / 4): 1–4 units need one technician, 5–8 two, 9–12 three, 13–16 four, and 17–20 five. Manual dispatch accepts any nonempty set of active, available technicians and requires a lead from that set. Automatic dispatch retains the existing postal/travel-cost/workload ranking, selects the whole team atomically and uses its highest-ranked member as lead. A shortage leaves the booking unconfirmed with no partial work order or customer email.
+
+Cleaning duration is the recorded per-unit duration times ceil(units / team size); diagnostic duration remains unchanged and is added for combined services. Prices and reward discounts do not vary with team size. New bookings reserve the automatic team size. Manual review recalculates duration and displays the team, lead, end time and travel buffer; the write rechecks these values, every member's conflicts, and weighted slot capacity. No finish after 18:00 is accepted. Legacy booking timing is preserved. Redispatch may retain members until travel starts; failures leave the old assignment intact.
+
+One assignment and work order identify each visit; assignment_member records the full team while assignment.technician_id remains its lead. Legacy single-technician payloads are supported. GET dispatch-options accepts optional teamSize for advisory manual previews and returns unitCount, requiredTechnicians, teamSize and each candidate's eligibility/current flag. POST dispatch/redispatch accepts manual technicianIds and leadTechnicianId; review optionally includes technicianIds and estimatedDurationMinutes, checked alongside the existing schedule fields. Booking/work-order IDs and existing routes remain unchanged.
+
+Every participant sees the shared job/report. Only the lead may change status, assessments, stock, repair quotes, photos, signatures or reports. Starting service checks that no member is already in another active job. Every member occupies the complete service and travel interval, including extensions, returns and leave/suspension checks. A successful dispatch queues one customer email naming the team and lead.
+
+Return cards default to the previous team. Admin can change members, lead and duration (15-minute increments, within the remaining business day). Return dispatch accepts technicianIds, leadTechnicianId and durationMinutes; legacy technicianId remains supported. It replaces the assignment atomically after checking the entire proposed team and preserves the original report and participant snapshot. Return notifications remain in-app, matching the existing workflow.
+
 ## Booking rules
 
 - New appointments must be at least **14 calendar days after today's date in Asia/Singapore**, and service dates must be **Monday through Friday**. Saturday and Sunday are closed. The 14th day is eligible when it is a weekday; otherwise the earliest date is the following Monday. Both creation APIs enforce this on the server as well as in the UI. Self-service changes require 72 hours before the original appointment and at least 72 hours before the new target; weekday and annual-window restrictions still apply.

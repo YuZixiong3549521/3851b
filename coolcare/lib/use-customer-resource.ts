@@ -45,12 +45,15 @@ export function useCustomerResource<T>(load: () => Promise<T>) {
     const onReturn = () => { if (document.visibilityState === 'visible' && !pending.current) void refresh(); };
     // A completed mutation must supersede any read started before it finished.
     const onBookingsUpdated = () => { void refresh(); };
+    const channel=typeof BroadcastChannel!=='undefined'?new BroadcastChannel('coolcare-customer-updates'):null;
+    if(channel)channel.onmessage=onBookingsUpdated;
     window.addEventListener('focus', onReturn);
     window.addEventListener('online', onReturn);
     window.addEventListener('coolcare:bookings-updated', onBookingsUpdated);
     document.addEventListener('visibilitychange', onReturn);
     const interval = window.setInterval(onReturn, 60_000);
     return () => {
+      channel?.close();
       mounted.current = false;
       request.current += 1;
       pending.current = false;

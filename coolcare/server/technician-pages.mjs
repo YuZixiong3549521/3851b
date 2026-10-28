@@ -1,3 +1,4 @@
+import {assignmentTeam,memberSql} from './teams.mjs';
 import {visitCompletionBlockReason,serviceTimingTestMode} from './visit-start.mjs';
 import { bookingReference, withBookingReference } from './booking-reference.mjs';
 import {snapshotVisit} from './return-visits.mjs';
@@ -43,7 +44,7 @@ const reportSelect = `SELECT r.report_id AS reportId,r.visit_technician_id AS te
 async function ownedWork(c, userId, jobId, lock = false) {
   if(lock){const [[booking]]=await c.execute('SELECT booking_id FROM work_order WHERE job_id=?',[jobId]);if(booking)await c.execute('SELECT booking_id FROM booking WHERE booking_id=? FOR UPDATE',[booking.booking_id]);}
   const [[row]] = await c.execute(
-    `SELECT w.*,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,a.technician_id,b.booking_status FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id WHERE w.job_id=? AND t.user_id=? AND u.status='Active' AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') ${lock ? 'FOR UPDATE' : ''}`,
+    `SELECT w.*,t.user_id AS viewerUserId,(t.technician_id=a.technician_id) AS isLead,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,a.technician_id,b.booking_status FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON ${lock ? 't.technician_id=a.technician_id' : memberSql('a','t.technician_id')} JOIN user_account u ON u.user_id=t.user_id WHERE w.job_id=? AND t.user_id=? AND u.status='Active' AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') ${lock ? 'FOR UPDATE' : ''}`,
     [jobId, userId],
   );
   if (!row) throw new AppError('Report not found for this technician.', 404);
@@ -68,7 +69,9 @@ export async function getReport(c, userId, jobId) {
     repairEligible:Boolean(eligibility.repairEligible),
     serviceProgress: await getServiceProgress(c,jobId),
     report: reportDates(report),
-    canEdit:['In Progress','Completed','Awaiting return arrangement'].includes(work.current_status)&&!(work.current_status==='In Progress'&&visitCompletionBlockReason(work.serviceDate))&&(!report?.technicianId||report.technicianId===work.technician_id),
+    team:await assignmentTeam(c,work.assignment_id),
+    isLead:Boolean(work.isLead),
+    canEdit:Boolean(work.isLead)&&['In Progress','Completed','Awaiting return arrangement'].includes(work.current_status)&&!(work.current_status==='In Progress'&&visitCompletionBlockReason(work.serviceDate))&&(!report?.technicianId||report.technicianId===work.technician_id),
     reportPending:['Completed','Awaiting return arrangement'].includes(work.current_status)&&!report?.submittedAtEpoch,
     version: hash(report ?? null),
     history: history.map((r) => ({
@@ -310,7 +313,7 @@ export function registerTechnicianPages(router, pool) {
   );
   router.get('/reports', async (req, res) => {
     const [rows] = await pool.execute(
-      `SELECT w.job_id AS jobId,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,r.report_id AS reportId,u.full_name AS customer,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,sc.service_name AS serviceType,w.current_status AS jobStatus,UNIX_TIMESTAMP(r.submitted_time) AS submittedAtEpoch,(w.current_status IN ('Completed','Awaiting return arrangement') AND r.submitted_time IS NULL) AS reportPending FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN user_account u ON u.user_id=cu.user_id JOIN service_catalog sc ON sc.service_id=b.service_id LEFT JOIN service_report r ON r.job_id=w.job_id WHERE t.user_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status IN ('In Progress','Completed','Awaiting return arrangement') ORDER BY w.appointment_date DESC,w.job_id DESC`,
+      `SELECT w.job_id AS jobId,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,r.report_id AS reportId,u.full_name AS customer,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,sc.service_name AS serviceType,w.current_status AS jobStatus,UNIX_TIMESTAMP(r.submitted_time) AS submittedAtEpoch,(w.current_status IN ('Completed','Awaiting return arrangement') AND r.submitted_time IS NULL) AS reportPending FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON ${memberSql('a','t.technician_id')} JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN user_account u ON u.user_id=cu.user_id JOIN service_catalog sc ON sc.service_id=b.service_id LEFT JOIN service_report r ON r.job_id=w.job_id WHERE t.user_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status IN ('In Progress','Completed','Awaiting return arrangement') ORDER BY w.appointment_date DESC,w.job_id DESC`,
       [req.technicianUser.id],
     );
     res.json({ reports: rows.map(row=>({...withBookingReference(reportDates(row)),reportPending:Boolean(row.reportPending)})) });

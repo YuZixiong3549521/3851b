@@ -15,6 +15,6 @@ test('address fields trim whitespace, preserve leading-zero postcodes and reject
 test('quantity booking accepts a typed address without registered units and rejects ambiguous input',()=>{
   const input={serviceId:1,serviceAddress:'123 Sample Street',numberOfUnits:3,preferredDate:'2027-01-04',timeSlot:'09:00 - 11:00'};
   assert.equal(createBookingSchema.safeParse(input).success,true);
-  for(const invalid of [{unitIds:[1]},{numberOfUnits:0},{numberOfUnits:11},{numberOfUnits:undefined},{serviceAddress:undefined}])assert.equal(createBookingSchema.safeParse({...input,...invalid}).success,false);
+  for(const invalid of [{unitIds:[1]},{numberOfUnits:0},{numberOfUnits:21},{numberOfUnits:undefined},{serviceAddress:undefined}])assert.equal(createBookingSchema.safeParse({...input,...invalid}).success,false);
   assert.equal(createBookingSchema.safeParse({...input,addressId:1}).success,true);
 });

@@ -1,7 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import mysql from 'mysql2/promise';
-import { sampleDataDeletionOrder, sampleDataTables } from '../scripts/sample-data-schema.mjs';
+import { sampleDataDeletionOrder, sampleDataTables, optionalSampleDataTables } from '../scripts/sample-data-schema.mjs';
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -27,6 +27,7 @@ test('sample-data replacement covers every foreign-key child of its business tab
     [process.env.DB_NAME],
   );
   const order = sampleDataDeletionOrder(edges);
-  assert.equal(order.length, sampleDataTables.length);
-  assert.equal(new Set(order).size, sampleDataTables.length);
+  const expected=sampleDataTables.length+optionalSampleDataTables.filter(table=>edges.some(edge=>edge.child===table)).length;
+  assert.equal(order.length, expected);
+  assert.equal(new Set(order).size, expected);
 });

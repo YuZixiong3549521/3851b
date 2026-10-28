@@ -74,6 +74,7 @@ export type AdminBooking = {
   pendingReportTechnicianName?: string | null;
 };
 export type AdminBookingDetail = AdminBooking & {
+  team?:{technicianId:number;fullName:string;isLead:boolean}[];
   reports?: Array<{
     photos?: Array<{
       photoId: number;
@@ -168,6 +169,7 @@ export type DispatchTechnicianOption = {
   reason: string | null;
 };
 export type DispatchOptions = {
+  unitCount: number; requiredTechnicians: number; teamSize: number;
   bookingId: number;
   status: string;
   preferredDate: string;

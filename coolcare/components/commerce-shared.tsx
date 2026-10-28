@@ -1,4 +1,5 @@
 'use client';
+import {notifyCustomerUpdate} from '@/lib/customer-updates';
 
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
@@ -12,7 +13,7 @@ export type RewardBooking = {
   rewardStatus: string | null; rewardPoints: number; canReserve: boolean;
   completionReward: { awardedPoints: number; redeemedPoints: number; discountAmount: number; netServiceAmount: number | null; completedAt: string; outcome: string; note: string } | null;
 };
-export type RewardHistory = { id: number; bookingId: number | null; bookingReference: string; type: string; points: number; description: string; createdAt: string; adjustedBy?: string };
+export type RewardHistory = { id: number | string; bookingId: number | null; bookingReference: string; type: string; points: number; availableDelta?:number; reservedPoints?: number; settledPoints?: number; description: string; createdAt: string; adjustedBy?: string };
 export type RewardsData = { rules: RewardRule; balance: number; reserved: number; available: number; debt: number; history: RewardHistory[]; bookings: RewardBooking[] };
 export const money = (v: number | string | null) => v === null ? 'Not recorded' : new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(Number(v));
 export const day = (v: string) => new Intl.DateTimeFormat('en-SG', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(v.slice(0, 10) + 'T00:00:00Z'));
@@ -27,6 +28,7 @@ export async function commerceApi<T>(path: string, method = 'GET', body?: unknow
   const response = await fetch('/api/commerce' + path, { credentials: 'same-origin', method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   const data = await response.json() as { error?: string };
   if (!response.ok) throw Object.assign(new Error(data.error || 'Unable to complete this request.'), { status: response.status });
+  if(method!=='GET')notifyCustomerUpdate();
   return data as T;
 }
 export function useCommerceMutation(refresh: () => unknown) {
@@ -82,5 +84,5 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   return <label className="grid min-w-0 gap-2 text-sm font-medium">{label}{children}</label>;
 }
 export function RewardHistoryTable({ rows }: { rows: RewardHistory[] }) {
-  return rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-left text-sm"><caption className="sr-only">Points transaction history</caption><thead><tr className="border-b">{['Date', 'Points', 'Booking', 'Reason'].map(v => <th className="p-3 font-medium" key={v}>{v}</th>)}</tr></thead><tbody>{rows.map(r => <tr className="border-b align-top" key={r.id}><td className="p-3">{moment(r.createdAt)}</td><td className="p-3 whitespace-nowrap font-medium">{r.points > 0 ? '+' : ''}{r.points}<div className="text-xs text-muted-foreground">{r.type}</div></td><td className="p-3 whitespace-nowrap">{r.bookingId ? r.bookingReference : 'Account'}</td><td className="max-w-md p-3">{r.description}{r.adjustedBy && <div className="text-xs text-muted-foreground">Adjusted by {r.adjustedBy}</div>}</td></tr>)}</tbody></table></div> : <p className="text-sm text-muted-foreground">No points transactions yet.</p>;
+  return rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-left text-sm"><caption className="sr-only">Points transaction history</caption><thead><tr className="border-b">{['Date', 'Points', 'Booking', 'Reason'].map(v => <th className="p-3 font-medium" key={v}>{v}</th>)}</tr></thead><tbody>{rows.map(r => <tr className="border-b align-top" key={r.id}><td className="p-3">{moment(r.createdAt)}</td><td className="p-3 whitespace-nowrap font-medium">{(r.availableDelta??r.points) > 0 ? '+' : ''}{r.availableDelta??r.points}<div className="text-xs text-muted-foreground">{r.type === 'Reserved' ? 'Points reserved' : r.type === 'Returned' ? 'Points returned' : r.type === 'Settled' ? 'Reservation settled' : r.type === 'Redeemed' ? 'Points used (already reserved)' : r.type}{r.settledPoints ? ` · ${r.settledPoints} points` : ''}</div></td><td className="p-3 whitespace-nowrap">{r.bookingId ? r.bookingReference : 'Account'}</td><td className="max-w-md p-3">{r.description}{r.adjustedBy && <div className="text-xs text-muted-foreground">Adjusted by {r.adjustedBy}</div>}</td></tr>)}</tbody></table></div> : <p className="text-sm text-muted-foreground">No points transactions yet.</p>;
 }

@@ -59,6 +59,7 @@ test('start dates are enforced by the API, and simultaneous starts allow only on
   for(const id of jobs){
    await c.execute('DELETE FROM technician_work_operation WHERE job_id=?',[id]);
    await c.execute('DELETE FROM performance_visit WHERE job_id=?',[id]);
+   await c.execute('DELETE vm FROM visit_member vm JOIN service_report r ON r.report_id=vm.report_id WHERE r.job_id=? OR r.archived_job_id=?',[id,id]);
    await c.execute('DELETE FROM service_report WHERE job_id=? OR archived_job_id=?',[id,id]);
    await c.execute('DELETE FROM work_order WHERE job_id=?',[id]);
   }

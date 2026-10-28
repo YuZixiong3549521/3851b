@@ -10,6 +10,14 @@ work. Older payment records and audit tables remain in the database as inactive
 history. They are not deleted, do not drive new rewards, and are not exposed
 through active payment pages or APIs.
 
+## Immediate reservation and return activity (migration 35)
+
+My Rewards records Points reserved immediately after successful booking creation and Points returned when cancellation, rejection, expiry or explicit release commits. Each row has the booking reference, persisted time, amount and reason. Reservations and activity are written inside the booking/wallet transaction; rejected operations and idempotent retries cannot leave duplicate entries. Existing activity can only be reconstructed from the reservation's recorded current state and timestamp, labelled Existing reservation or Previously returned; missing earlier events are not fabricated.
+
+For a 500-point wallet with a 100-point selection, available=400, reserved=100 and account balance=500. Cancellation returns available=500 and reserved=0 while the balance remains 500. Completion settles the reservation and changes the balance ledger once. Its displayed available-points effect is zero (plus any unused reservation released); earned points are separate. Existing history.points continues to describe balance-ledger points; the additive availableDelta and settledPoints fields clarify display. Reservation activity IDs are namespaced strings so they do not collide with legacy numeric ledger IDs. The latest 200 merged activities are displayed.
+
+All three booking entry points share the transaction and immediate refresh behavior. A customer mutation broadcasts an invalidation so another open My Rewards tab rereads authenticated data; no wallet data or credentials are broadcast. A multi-technician visit still redeems/earns once per booking, uses one report's extra charges, and contributes once to company service-value reports.
+
 ## Earning points when an order is completed
 
 Default rules: one point per SGD 1 of the completed order's service amount, and

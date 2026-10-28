@@ -1,3 +1,6 @@
+import {visitTeamNameSql} from './teams.mjs';
+import {assignmentTeam,assertTeamCanStart} from './teams.mjs';
+import {memberSql} from './teams.mjs';
 import { snapshotVisit } from './return-visits.mjs';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -104,7 +107,7 @@ export async function getServiceProgress(c, jobId) {
     'SELECT visit_id AS id,technician_id AS technicianId,started_at AS startedAt,ended_at AS endedAt,outcome,report_snapshot AS snapshot FROM service_visit_record WHERE job_id=? ORDER BY visit_id',
     [jobId],
   );
-  const [reports] = await c.execute(`SELECT r.report_id AS reportId,r.visit_technician_id AS technicianId,u.full_name AS technician,DATE_FORMAT(r.visit_service_date,'%Y-%m-%d') AS serviceDate,r.visit_start_time AS scheduledStart,r.job_id IS NOT NULL AS isCurrent,work_performed AS workPerformed,problem_found AS remarks,solution_applied AS solution,checklist_result AS checklist,customer_signature_url AS customerSignatureUrl,technician_signature_url AS technicianSignatureUrl,UNIX_TIMESTAMP(submitted_time) AS submittedAtEpoch,started_at AS startedAt,completed_at AS completedAt FROM service_report r LEFT JOIN technician t ON t.technician_id=r.visit_technician_id LEFT JOIN user_account u ON u.user_id=t.user_id WHERE r.job_id=? OR r.archived_job_id=? ORDER BY r.report_id`,[jobId,jobId]);
+  const [reports] = await c.execute(`SELECT r.report_id AS reportId,r.visit_technician_id AS technicianId,${visitTeamNameSql('r','u.full_name')} AS technician,DATE_FORMAT(r.visit_service_date,'%Y-%m-%d') AS serviceDate,r.visit_start_time AS scheduledStart,r.job_id IS NOT NULL AS isCurrent,work_performed AS workPerformed,problem_found AS remarks,solution_applied AS solution,checklist_result AS checklist,customer_signature_url AS customerSignatureUrl,technician_signature_url AS technicianSignatureUrl,UNIX_TIMESTAMP(submitted_time) AS submittedAtEpoch,started_at AS startedAt,completed_at AS completedAt FROM service_report r LEFT JOIN technician t ON t.technician_id=r.visit_technician_id LEFT JOIN user_account u ON u.user_id=t.user_id WHERE r.job_id=? OR r.archived_job_id=? ORDER BY r.report_id`,[jobId,jobId]);
   const [photos] = await c.execute('SELECT photo_id AS photoId,report_id AS reportId,description,UNIX_TIMESTAMP(captured_time) AS uploadedAtEpoch FROM photo WHERE job_id=? ORDER BY captured_time,photo_id',[jobId]);
   // Before migration 25, return visits reused the current report. Keep the
   // recorded first-visit snapshot visible without manufacturing a new report.
@@ -154,14 +157,14 @@ export function extendTime(start, minutes) {
 async function assertTechnicianFree(c, technicianId, jobId, date, start, end) {
   const [conflicts] = await c.execute(
     `SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
-  JOIN booking b ON b.booking_id=w.booking_id WHERE a.technician_id=? AND w.job_id<>? AND a.assignment_status NOT IN ('Completed','Cancelled','Declined','Reassigned')
+  JOIN booking b ON b.booking_id=w.booking_id WHERE EXISTS(SELECT 1 FROM technician member_tech WHERE member_tech.technician_id=? AND ${memberSql('a','member_tech.technician_id')}) AND w.job_id<>? AND a.assignment_status NOT IN ('Completed','Cancelled','Declined','Reassigned')
   AND w.current_status IN ('Assigned','On The Way','In Progress') AND DATE(w.appointment_date)=?
   AND SUBTIME(b.slot_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60))<? AND b.slot_end>? FOR UPDATE`,
     [technicianId, jobId, date, end, start],
   );
   const [returns] = await c.execute(
     `SELECT p.job_id FROM service_progress p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN booking b ON b.booking_id=w.booking_id
-  WHERE a.technician_id=? AND p.job_id<>? AND a.assignment_status NOT IN ('Cancelled','Declined','Reassigned')
+  WHERE EXISTS(SELECT 1 FROM technician member_tech WHERE member_tech.technician_id=? AND ${memberSql('a','member_tech.technician_id')}) AND p.job_id<>? AND a.assignment_status NOT IN ('Cancelled','Declined','Reassigned')
   AND p.follow_up_status IN ('Scheduled','In Progress') AND p.follow_up_date=?
   AND SUBTIME(p.follow_up_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60))<? AND p.follow_up_end>? FOR UPDATE`,
     [technicianId, jobId, date, end, start],
@@ -211,7 +214,7 @@ async function saveServiceProgress(pool, userId, jobId, raw) {
       await lockTechnicianRoster(c);
     }
     const [[w]] = await c.execute(
-      `SELECT w.*,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,a.technician_id,t.availability_status,b.slot_start,b.slot_end,b.service_id,
+      `SELECT w.*,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,a.technician_id,t.availability_status,b.slot_start,b.slot_end,b.travel_buffer_minutes,b.service_id,
    EXISTS(SELECT 1 FROM simple_service_catalog ss WHERE ss.service_id=b.service_id AND ss.code='repair') OR EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog ss ON ss.service_id=bs.service_id WHERE bs.booking_id=b.booking_id AND ss.code='repair') AS repairEligible
    FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
    JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id
@@ -302,10 +305,10 @@ async function saveServiceProgress(pool, userId, jobId, raw) {
         : w.serviceDate;
       minutes = d.minutes;
       kind = 'Extension';
-      await assertTeamCapacity(c, [{ date, start, end }], {
+      await assertTeamCapacity(c, [{ date, start, end, technicians:(await assignmentTeam(c,w.assignment_id)).length,travelBufferMinutes:w.travel_buffer_minutes }], {
         excludeBookingId: w.booking_id,
       });
-      await assertTechnicianFree(c, w.technician_id, jobId, date, start, end);
+      for(const member of await assignmentTeam(c,w.assignment_id))await assertTechnicianFree(c, member.technicianId, jobId, date, start, end);
       if (returnInProgress)
         await c.execute(
           'UPDATE service_progress SET follow_up_end=? WHERE job_id=?',

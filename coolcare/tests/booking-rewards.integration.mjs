@@ -174,6 +174,7 @@ test('concurrent customer and public submissions cannot reserve the same availab
     const c = await openPrivilegedFixtureConnection();
     try {
       await c.beginTransaction();
+      await c.execute('DELETE activity FROM reward_activity activity JOIN booking b ON b.booking_id=activity.booking_id WHERE b.customer_id=?',[user.customerId]);
       await c.execute('DELETE r FROM reward_reservation r JOIN booking b ON b.booking_id=r.booking_id WHERE b.customer_id=?', [user.customerId]);
       await c.execute('DELETE d FROM web_booking_details d JOIN booking b ON b.booking_id=d.booking_id WHERE b.customer_id=?', [user.customerId]);
       await c.execute('DELETE FROM booking WHERE customer_id=?', [user.customerId]);

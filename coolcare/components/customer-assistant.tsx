@@ -98,7 +98,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   const availability = useBookingAvailability({ serviceAddress: draft.serviceAddress, selectedDate: draft.preferredDate, serviceIds: selected.payload.serviceIds, packageId: selected.payload.packageId, enabled: Boolean(open && context && screen === 'schedule' && !locked) });
   const annual = Boolean(draft.packageId);
   const slotDates=annual?annualVisitDates(draft.preferredDate):draft.preferredDate?[draft.preferredDate]:[];
-  const slotAvailability=useSlotAvailability(slotDates,Boolean(open&&context&&screen==='schedule'&&!locked),selected.durationMinutes);
+  const slotAvailability=useSlotAvailability(slotDates,Boolean(open&&context&&screen==='schedule'&&!locked),selected.durationMinutes,undefined,draft.numberOfUnits);
   const selectedSlotFull=Boolean(draft.timeWindow&&!slotAvailability.isAvailable(timeCodes[draft.timeWindow]));
   const receipt = record?.status === 'completed' ? record.booking : null;
   const quote = record?.quote;
@@ -326,7 +326,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
           </> : <Button className="h-14 justify-start" onClick={() => void startBooking()} disabled={locked}><CalendarPlus />Create a new booking</Button>}</div>}
           {screen === 'service' && options && <fieldset disabled={locked} className="min-w-0 space-y-4">
             <BookingServiceSelection options={options} value={selection} onChange={value=>store.update({serviceId:undefined,serviceIds:value.serviceIds,packageId:value.mode==='bundle'?value.packageId:undefined,propertyType:value.mode==='bundle'?value.propertyType:undefined})} />
-            <div><label htmlFor="assistant-unit-count" className="mb-2 block text-sm font-semibold">Number of aircon units</label><NativeSelect id="assistant-unit-count" value={draft.numberOfUnits} onChange={event => store.update({ numberOfUnits: Number(event.target.value) })}>{Array.from({ length: 10 }, (_, index) => index + 1).map(count => <option key={count} value={count}>{count} {count === 1 ? 'aircon unit' : 'aircon units'}</option>)}</NativeSelect></div>
+            <div><label htmlFor="assistant-unit-count" className="mb-2 block text-sm font-semibold">Number of aircon units</label><NativeSelect id="assistant-unit-count" value={draft.numberOfUnits} onChange={event => store.update({ numberOfUnits: Number(event.target.value) })}>{Array.from({ length: 20 }, (_, index) => index + 1).map(count => <option key={count} value={count}>{count} {count === 1 ? 'aircon unit' : 'aircon units'}</option>)}</NativeSelect></div>
             <Button variant="outline" className="w-full" aria-expanded={help === 'service'} onClick={() => setHelp(help === 'service' ? null : 'service')}><HelpCircle className="size-4" />Help me choose a service</Button>
           </fieldset>}
           {screen === 'address' && <fieldset disabled={locked} className="min-w-0 space-y-4">

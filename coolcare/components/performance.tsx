@@ -9,6 +9,7 @@ import { EnglishDatePicker } from '@/components/english-date-picker';
 import { englishCalendarDate } from '@/lib/english-date';
 
 type Visit = {
+  teamReview?:boolean;isLead?:boolean;
   reportId: number;
   jobId: number;
   bookingId: number;
@@ -125,7 +126,7 @@ function SummaryCards({ summary }: { summary: Summary }) {
         note="Finished visits that needed a further appointment."
       />
       <Stat
-        label="Service start punctuality"
+        label="Team service start punctuality"
         value={
           summary.punctualityPercent == null
             ? 'No recorded starts'
@@ -478,7 +479,7 @@ function PerformanceWorkspace({
             ) : (
               visibleVisits.map((v) => (
                 <VisitCard
-                  key={`${v.reportId}-${v.feedbackVersion}`}
+                  key={`${v.reportId}-${v.technicianId}-${v.feedbackVersion}`}
                   visit={v}
                   role={role}
                   mutate={mutate}
@@ -508,7 +509,7 @@ function VisitCard({
     [comment, setComment] = useState(v.comment);
   return (
     <article
-      id={`visit-${v.reportId}`}
+      id={`visit-${v.reportId}-${v.technicianId}`}
       className="rounded-2xl border bg-card p-5 sm:p-6"
     >
       <header className="flex flex-wrap justify-between gap-3">
@@ -518,7 +519,7 @@ function VisitCard({
           </p>
           <h3 className="mt-1 text-lg font-semibold">{v.service}</h3>
           <p className="text-sm text-muted-foreground">
-            {v.technician} · {englishCalendarDate(v.actualEnd.slice(0, 10))}
+            {v.technician}{v.teamReview ? (v.isLead?' · Team lead · Shared team review':' · Team member · Shared team review'):''} · {englishCalendarDate(v.actualEnd.slice(0, 10))}
           </p>
         </div>
         <span className="h-fit rounded-full bg-muted px-3 py-1 text-xs">
@@ -535,7 +536,7 @@ function VisitCard({
           Scheduled: {time(v.scheduledStart)}
         </p>
         <p>
-          Started: {time(v.actualStart)} · Ended: {time(v.actualEnd)}
+          Team service started: {time(v.actualStart)} · Ended: {time(v.actualEnd)}
         </p>
         <p className="flex items-center gap-2">
           <ClipboardCheck className="size-4 shrink-0" />

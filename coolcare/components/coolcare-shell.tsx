@@ -1,4 +1,5 @@
 'use client';
+import {notifyCustomerUpdate} from '@/lib/customer-updates';
 
 import Link from 'next/link';
 import {BookingNotifications} from '@/components/booking-notifications';
@@ -101,7 +102,7 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
         </Button>
       </nav>
       {ready && <BookingNotifications key={user?.id} enabled={!assistantOpen} />}
-      {ready && <CustomerAssistant open={assistantOpen} onOpenChange={setAssistantOpen} dialogId={assistantDialogId} returnFocus={() => desktopAssistantTrigger.current?.getClientRects().length ? desktopAssistantTrigger.current : mobileAssistantTrigger.current} onBookingCreated={() => window.dispatchEvent(new Event('coolcare:bookings-updated'))} />}
+      {ready && <CustomerAssistant open={assistantOpen} onOpenChange={setAssistantOpen} dialogId={assistantDialogId} returnFocus={() => desktopAssistantTrigger.current?.getClientRects().length ? desktopAssistantTrigger.current : mobileAssistantTrigger.current} onBookingCreated={notifyCustomerUpdate} />}
     </div>
   );
 }

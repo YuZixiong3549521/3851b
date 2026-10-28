@@ -1,3 +1,4 @@
+import {notifyCustomerUpdate} from './customer-updates';
 import type {
   Address,
   Booking,
@@ -39,6 +40,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
       : 'Unable to complete the request.';
     throw Object.assign(new Error(message), { status: response.status });
   }
+  if(init?.method && !['GET','HEAD'].includes(init.method))notifyCustomerUpdate();
   return result as T;
 }
 
@@ -62,8 +64,8 @@ export const coolcareApi = {
     Object.entries(input).forEach(([key, value]) => { if (value !== undefined) query.set(key, String(value)); });
     return apiRequest<BookingAvailability>(`/booking-availability?${query}`);
   },
-  getSlotAvailability: async (dates: string[], durationMinutes?: number, excludeBookingId?: number) =>
-    apiRequest<SlotAvailability>(`/slot-availability?dates=${encodeURIComponent(dates.join(','))}${durationMinutes ? `&durationMinutes=${durationMinutes}` : ''}${excludeBookingId ? `&excludeBookingId=${excludeBookingId}` : ''}`),
+  getSlotAvailability: async (dates: string[], durationMinutes?: number, excludeBookingId?: number, numberOfUnits?: number) =>
+    apiRequest<SlotAvailability>(`/slot-availability?dates=${encodeURIComponent(dates.join(','))}${durationMinutes ? `&durationMinutes=${durationMinutes}` : ''}${excludeBookingId ? `&excludeBookingId=${excludeBookingId}` : ''}${numberOfUnits ? `&numberOfUnits=${numberOfUnits}` : ''}`),
   createAddress: async (input: CreateAddressInput) => {
     const result = await apiRequest<{ address: Address }>('/addresses', { method: 'POST', body: JSON.stringify(input) });
     if (!result.address || !Number.isInteger(Number(result.address.addressId)) || Number(result.address.addressId) < 1 || typeof result.address.addressLine !== 'string') {

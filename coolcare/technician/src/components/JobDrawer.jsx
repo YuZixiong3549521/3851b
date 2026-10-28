@@ -584,15 +584,17 @@ export default function JobDrawer({
           </p>
           {job.reportPending && <p role="status" className="text-amber-800">Report pending. <a href="#reports">Complete this visit's report</a>{job.status==='Awaiting return arrangement'?' before the return visit can be dispatched.':'.'}</p>}
           <p>Last modified: {formatInstantDateTime(job.lastModified)}</p>
-          <WorkStatusActions
+          {job.canManage===false && <p className="tech-guidance">Team member — read only. The lead technician manages status, inventory and the service report.</p>}
+          {job.team?.length>0 && <p>Team: {job.team.map(t=>t.fullName+(t.isLead?' (Lead)':'')).join(', ')}</p>}
+          {job.canManage!==false && <WorkStatusActions
             job={job}
             lock={setLocked}
             externallyLocked={locked}
             onReload={() => setVersion((v) => v + 1)}
             onStatusChanged={onStatusChanged}
             onSaved={(text) => setNotice(text)}
-          />
-          {detail && (
+          />}
+          {detail && job.canManage!==false && (
               <ServiceProgress jobId={job.jobId} status={canonicalStatus(job.status)} repairEligible={job.repairEligible} progress={job.serviceProgress} disabled={locked} onLockedChange={setLocked} onSaved={()=>{setVersion(v=>v+1);onStatusChanged();}}/>
           )}
           <h3>Service address</h3>
@@ -619,7 +621,7 @@ export default function JobDrawer({
           )}
           {detail && (
             <>
-              <CleaningAssessment
+              {job.canManage!==false && <CleaningAssessment
                 key={`assessment-${job.jobId}-${version}`}
                 job={job}
                 history={detail.cleaningAssessmentHistory || []}
@@ -631,6 +633,7 @@ export default function JobDrawer({
                   setVersion((v) => v + 1);
                 }}
               />
+              }
               <h3>Work details</h3>
               {job.report ? (
                 <Report report={job.report} />
@@ -692,7 +695,7 @@ export default function JobDrawer({
             </>
           )}
           {notice && <output className="tech-guidance">{notice}</output>}
-          {options && (
+          {options && job.canManage!==false && (
             <StockOut
               key={`${job.jobId}-${version}`}
               jobId={job.jobId}

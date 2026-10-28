@@ -46,7 +46,7 @@ test('new customer can save an address without AC records and book by count thro
     assert.equal((await request('/api/customer/bookings','POST',{...payload,addressId:foreign.address_id,serviceAddress:foreign.address_line})).status,400);
     assert.equal((await request('/api/customer/bookings','POST',{...payload,serviceAddress:'A different address'})).status,400);
     assert.equal((await request('/api/customer/bookings','POST',{...payload,expectedUserId:login.user.id+100000})).status,409);
-    for(const count of [0,11,2.5])assert.equal((await request('/api/customer/bookings','POST',{...payload,numberOfUnits:count})).status,400);
+    for(const count of [0,21,2.5])assert.equal((await request('/api/customer/bookings','POST',{...payload,numberOfUnits:count})).status,400);
     assert.equal((await request('/api/customer/bookings','POST',{...payload,unitIds:[1]})).status,400);
     const createdResponse=await request('/api/customer/bookings','POST',payload);assert.equal(createdResponse.status,201);
     const annual=(await createdResponse.json()).booking;

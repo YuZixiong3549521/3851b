@@ -19,7 +19,7 @@ const draftSchema=z.object({
   serviceIds:z.array(positiveId).max(2).optional(),propertyType:z.string().max(40).optional(),
   rewardPoints:bookingRewardPointsSchema.optional(),rewardRuleVersion:bookingRewardRuleVersionSchema.optional(),
   postalCode:z.string().refine(value=>value===''||/^\d{6}$/.test(value),'Enter a six-digit Singapore postal code.').optional(),
-  numberOfUnits:z.number().int().min(1).max(10),
+  numberOfUnits:z.number().int().min(1).max(20),
   serviceAddress:z.string().max(255),phone:z.string().max(30),
   preferredDate:z.string().max(10),timeWindow:z.union([z.enum(timeWindows),z.literal('')]),notes:z.string().max(1000),
 }).strict();
@@ -218,7 +218,7 @@ async function validateSchedule(connection,customerId,input,quote,state) {
   }
   try {
     const slot=bookingServiceSlot(input.timeWindow,quote.estimatedDurationMinutes);
-    await assertTeamCapacity(connection,quote.visits.map(visit=>({date:visit.preferredDate,start:slot.start,end:slot.end})));
+    await assertTeamCapacity(connection,quote.visits.map(visit=>({date:visit.preferredDate,start:slot.start,end:slot.end,technicians:Math.ceil(input.numberOfUnits/4)})));
   } catch(error) {
     if(!error.status||error.status>=500)throw error;
     const capacityDates=error.capacityConflicts?.length?new Set(error.capacityConflicts.map(conflict=>conflict.date)):null;

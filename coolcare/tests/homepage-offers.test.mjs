@@ -79,7 +79,7 @@ test('missing, malformed or incompatible public prices do not produce made-up es
     [],
   );
   assert.equal(homepageOfferTotal(undefined, 2), null);
-  for (const units of [0, 1.5, 11, NaN])
+  for (const units of [0, 1.5, 21, NaN])
     assert.equal(
       homepageOfferTotal({ name: 'Cleaning', base: 50, perUnit: 25 }, units),
       null,

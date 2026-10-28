@@ -1,3 +1,5 @@
+import {assignmentTeam,bookingTeam,staffingBooking,selectDispatchTeam,saveAssignmentTeam} from './teams.mjs';
+import {memberSql} from './teams.mjs';
 import { withBookingReference } from './booking-reference.mjs';
 import { assertAdminOrderEditable } from './admin-order-policy.mjs';
 import { createHash } from 'node:crypto';
@@ -34,7 +36,10 @@ export const returnRequestSchema = z.discriminatedUnion('action', [
     .object({
       ...base,
       action: z.literal('dispatch'),
-      technicianId: z.number().int().positive(),
+      technicianId: z.number().int().positive().optional(),
+      technicianIds:z.array(z.number().int().positive()).min(1).optional(),
+      leadTechnicianId:z.number().int().positive().optional(),
+      durationMinutes:z.number().int().min(15).max(540).refine(n=>n%15===0).optional(),
     })
     .strict(),
 ]);
@@ -73,7 +78,7 @@ export async function listReturns(pool, role, userId) {
  WHERE p.follow_up_status NOT IN ('None','Completed') ${role === 'customer' ? 'AND cu.user_id=?' : ''} ORDER BY w.job_id DESC`,
     role === 'customer' ? [userId] : [],
   );
-  return { rows: rows.map(row => ({...withBookingReference(row), earliestReturnDate: minimumReturnDate(row.serviceDate)})) };
+  return { rows: await Promise.all(rows.map(async row => ({...withBookingReference(row),team:await bookingTeam(pool,row.bookingId), earliestReturnDate: minimumReturnDate(row.serviceDate)}))) };
 }
 export async function returnAvailability(pool, userId, jobId, date) {
   assertBookableDate(date);
@@ -81,7 +86,7 @@ export async function returnAvailability(pool, userId, jobId, date) {
   try {
     await c.beginTransaction();
     const [[w]] = await c.execute(
-      `SELECT w.booking_id,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,b.estimated_duration_minutes FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN service_progress p ON p.job_id=w.job_id WHERE w.job_id=? AND cu.user_id=? AND p.follow_up_status='Awaiting customer'`,
+      `SELECT w.booking_id,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,b.estimated_duration_minutes,b.required_technicians FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id JOIN service_progress p ON p.job_id=w.job_id WHERE w.job_id=? AND cu.user_id=? AND p.follow_up_status='Awaiting customer'`,
       [jobId, userId],
     );
     if (!w)
@@ -91,7 +96,7 @@ export async function returnAvailability(pool, userId, jobId, date) {
     for (const s of BOOKING_TIME_SLOTS) {
       try {
         const slot = bookingServiceSlot(s.code, w.estimated_duration_minutes);
-        await assertTeamCapacity(c, [{ date, ...slot }], {
+        await assertTeamCapacity(c, [{ date, ...slot,technicians:w.required_technicians,travelBufferMinutes:w.travel_buffer_minutes }], {
           excludeBookingId: w.booking_id,
         });
         slots.push({ code: s.code, label: s.label, available: true });
@@ -129,7 +134,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       [hint.booking_id],
     );
     const [[w]] = await c.execute(
-      `SELECT w.*,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,b.booking_status,b.estimated_duration_minutes,b.travel_buffer_minutes,b.traffic_note,cu.user_id AS customerUser FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id WHERE w.job_id=? FOR UPDATE`,
+      `SELECT w.*,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,b.booking_status,b.estimated_duration_minutes,b.required_technicians,b.travel_buffer_minutes,b.traffic_note,cu.user_id AS customerUser FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN customer cu ON cu.customer_id=b.customer_id WHERE w.job_id=? FOR UPDATE`,
       [jobId],
     );
     if (role === 'customer' && w.customerUser !== userId)
@@ -188,7 +193,7 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       date = d.date;
       start = slot.start;
       end = slot.end;
-      await assertTeamCapacity(c, [{ date, start, end }], {
+      await assertTeamCapacity(c, [{ date, start, end,technicians:w.required_technicians,travelBufferMinutes:w.travel_buffer_minutes }], {
         excludeBookingId: w.booking_id,
       });
       state = 'Awaiting confirmation';
@@ -205,28 +210,17 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       assertReturnDate(date, w.serviceDate);
       await lockServiceDates(c, [date]);
       await lockTechnicianRoster(c);
-      await assertTeamCapacity(c, [{ date, start, end }], {
-        excludeBookingId: w.booking_id,
-      });
-      const [[tech]] = await c.execute(
-        `SELECT t.technician_id FROM technician t JOIN user_account u ON u.user_id=t.user_id WHERE t.technician_id=? AND u.status='Active' AND t.availability_status NOT IN ('Unavailable','On Leave') FOR UPDATE`,
-        [d.technicianId],
-      );
-      if (!tech)
-        throw new AppError('Select an active available technician.', 409);
-      const [conflicts] = await c.execute(
-        `SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id JOIN booking b ON b.booking_id=w.booking_id WHERE a.technician_id=? AND w.job_id<>? AND w.current_status IN ('Assigned','On The Way','In Progress','Return visit') AND DATE(w.appointment_date)=? AND SUBTIME(b.slot_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60))<? AND b.slot_end>? FOR UPDATE`,
-        [d.technicianId, jobId, date, end, travelStart],
-      );
-      const [legacyConflicts] = await c.execute(
-        `SELECT p.job_id FROM service_progress p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id JOIN booking b ON b.booking_id=w.booking_id WHERE a.technician_id=? AND p.job_id<>? AND p.follow_up_status IN ('Scheduled','In Progress') AND p.follow_up_date=? AND SUBTIME(p.follow_up_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60))<? AND p.follow_up_end>? FOR UPDATE`,
-        [d.technicianId, jobId, date, end, travelStart],
-      );
-      if (conflicts.length || legacyConflicts.length)
-        throw new AppError(
-          'This technician has overlapping work. Choose another technician.',
-          409,
-        );
+      if(d.durationMinutes){
+        const [h,m]=String(start).split(':').map(Number);const finish=h*60+m+d.durationMinutes;
+        if(finish>18*60)throw new AppError('The return visit would finish after 6:00 PM.',409);
+        end=String(Math.floor(finish/60)).padStart(2,'0')+':'+String(finish%60).padStart(2,'0')+':00';
+      }
+      const previousTeam=await assignmentTeam(c,w.assignment_id);
+      const ids=d.technicianIds??(d.technicianId?[d.technicianId]:previousTeam.map(t=>t.technicianId));
+      const staffing=await staffingBooking(c,w.booking_id);
+      staffing.preferred_service_date=date;staffing.overrideSlot={start,end};
+      const {members,lead}=await selectDispatchTeam(c,staffing,{mode:'manual',technicianIds:ids,leadTechnicianId:d.leadTechnicianId??d.technicianId??previousTeam.find(t=>t.isLead)?.technicianId});
+      await assertTeamCapacity(c,[{date,start,end,technicians:members.length,travelBufferMinutes:w.travel_buffer_minutes}],{excludeBookingId:w.booking_id});
       await c.execute("UPDATE service_report SET archived_job_id=job_id,job_id=NULL WHERE report_id=?",[report.report_id]);
       await c.execute(
         "UPDATE assignment SET assignment_status='Reassigned' WHERE assignment_id=?",
@@ -234,8 +228,9 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       );
       const [a] = await c.execute(
         `INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,dispatch_request_id,assignment_status) VALUES (?,?,?,?,'Assigned')`,
-        [w.booking_id, d.technicianId, userId, d.requestId],
+        [w.booking_id, lead.technicianId, userId, d.requestId],
       );
+      await saveAssignmentTeam(c,a.insertId,members.map(t=>t.technicianId));
       await c.execute(
         "UPDATE work_order SET assignment_id=?,appointment_date=?,appointment_time=?,current_status='Return visit' WHERE job_id=?",
         [a.insertId, date + ' ' + start, start, jobId],
@@ -252,8 +247,9 @@ export async function updateReturn(pool, role, userId, jobId, raw) {
       );
       await c.execute(
         'UPDATE technician SET last_assigned_at=UTC_TIMESTAMP() WHERE technician_id=?',
-        [d.technicianId],
+        [lead.technicianId],
       );
+      await c.execute('UPDATE booking SET required_technicians=?,estimated_duration_minutes=TIMESTAMPDIFF(MINUTE,?,?) WHERE booking_id=?',[members.length,date+' '+start,date+' '+end,w.booking_id]);
       state = 'Scheduled';
       kind = 'Return scheduled';
       notes = 'Return visit confirmed and assigned by the administrator.';

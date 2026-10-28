@@ -3,11 +3,13 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { NativeSelect } from '@/components/ui/native-select';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { earliestBookingDate, bookingDateError } from '@/lib/booking-schedule';
 import { formatDate, formatTimeSlot } from '@/lib/format';
 type Row = {
+  team?: {technicianId:number;fullName:string;isLead:boolean}[];
   adminReadOnly?: boolean;
   earliestReturnDate: string;
   jobId: number;
@@ -138,7 +140,9 @@ function ReturnCard({
 }) {
   const [date, setDate] = useState(''),
     [slot, setSlot] = useState(''),
-    [tech, setTech] = useState(''),
+    [tech, setTech] = useState(String(row.team?.find(t=>t.isLead)?.technicianId??'')),
+    [members,setMembers]=useState<number[]>(row.team?.map(t=>t.technicianId)??[]),
+    [duration,setDuration]=useState(row.start&&row.end?String((Number(row.end.slice(0,2))*60+Number(row.end.slice(3,5)))-(Number(row.start.slice(0,2))*60+Number(row.start.slice(3,5)))):'60'),
     [customerMessage, setCustomerMessage] = useState(
       row.customerMessage ||
         'A return visit is required. Please choose a new weekday appointment at least 14 days after the original service date and at least 14 days from today.',
@@ -165,6 +169,7 @@ function ReturnCard({
       timeSlot?: string;
       customerMessage?: string;
       technicianId?: number;
+      technicianIds?: number[];leadTechnicianId?:number;durationMinutes?:number;
     } | null>(null),
     inFlight = useRef(false);
   useEffect(() => {
@@ -219,7 +224,7 @@ function ReturnCard({
         ...(action === 'invite'
           ? { customerMessage: customerMessage.trim() }
           : {}),
-        ...(action === 'dispatch' ? { technicianId: Number(tech) } : {}),
+        ...(action === 'dispatch' ? { technicianIds:members,leadTechnicianId:Number(tech),durationMinutes:Number(duration) } : {}),
       };
       await request(
         `/api/${viewerRole}/return-visits/${row.jobId}`,
@@ -360,16 +365,18 @@ function ReturnCard({
           )}
           {viewerRole === 'admin' && row.status === 'Awaiting confirmation' && (
             <>
+              <fieldset className="space-y-2"><legend>Return team members</legend>{staff.map(t=><label key={t.technicianId} className="flex gap-2"><input type="checkbox" checked={members.includes(t.technicianId)} disabled={t.status!=='Active'||['Unavailable','On Leave'].includes(t.availability)} onChange={()=>{const next=members.includes(t.technicianId)?members.filter(id=>id!==t.technicianId):[...members,t.technicianId];setMembers(next);if(!next.includes(Number(tech)))setTech(String(next[0]??''));}}/>{t.fullName} · {t.availability}</label>)}</fieldset>
+              <label className="grid gap-2">Return duration (minutes)<Input type="number" min={15} max={540} step={15} value={duration} onChange={e=>setDuration(e.target.value)}/></label>
               <NativeSelect
-                aria-label="Return visit technician"
+                aria-label="Return visit lead technician"
                 value={tech}
                 onChange={(e) => setTech(e.target.value)}
               >
-                <option value="">Choose technician</option>
+                <option value="">Choose lead technician</option>
                 {staff
                   .filter(
                     (t) =>
-                      t.status === 'Active' &&
+                      members.includes(t.technicianId) && t.status === 'Active' &&
                       !['Unavailable', 'On Leave'].includes(t.availability),
                   )
                   .map((t) => (
@@ -382,7 +389,7 @@ function ReturnCard({
                 Availability and the 14-day lead time are checked again on
                 confirmation.
               </p>
-              <Button disabled={!tech} onClick={() => void save('dispatch')}>
+              <Button disabled={!tech||!members.length||!members.includes(Number(tech))||!Number.isInteger(Number(duration))||Number(duration)<15||Number(duration)>540||Number(duration)%15!==0} onClick={() => void save('dispatch')}>
                 Confirm time & dispatch
               </Button>
             </>

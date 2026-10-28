@@ -1,3 +1,5 @@
+import {visitTeamNameSql} from './teams.mjs';
+import {assignmentTeam,memberSql,assertTeamCanStart,teamStartBlockReason} from './teams.mjs';
 import {lockTechnicianRoster} from './scheduling.mjs';
 import {visitStartBlockReason,visitCompletionBlockReason,serviceTimingTestMode} from './visit-start.mjs';
 import { withBookingReference } from './booking-reference.mjs';
@@ -24,7 +26,7 @@ export async function getTechnician(pool, email = process.env.DEMO_TECHNICIAN_EM
 }
 
 export async function getTechnicianJobs(pool, technicianId, jobId) {
-  const [rows] = await pool.execute(`SELECT w.job_id AS jobId, w.booking_id AS bookingId,b.created_at AS bookingCreatedAt,
+  const [rows] = await pool.execute(`SELECT a.assignment_id AS assignmentId,a.technician_id AS leadTechnicianId,w.job_id AS jobId, w.booking_id AS bookingId,b.created_at AS bookingCreatedAt,
     u.full_name AS customer, DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS date,
     COALESCE(DATE_FORMAT(w.appointment_time,'%H:%i'),'') AS time,b.slot_end AS endTime,
     COALESCE((SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ') FROM booking_service bs WHERE bs.booking_id=b.booking_id),sc.service_name) AS serviceType, sa.address_line AS address,
@@ -49,15 +51,15 @@ export async function getTechnicianJobs(pool, technicianId, jobId) {
     LEFT JOIN annual_booking_visit av ON av.booking_id=b.booking_id
     LEFT JOIN service_progress sp ON sp.job_id=w.job_id
     LEFT JOIN service_report r ON r.job_id=w.job_id
-    WHERE a.technician_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
+    WHERE EXISTS(SELECT 1 FROM technician member_tech WHERE member_tech.technician_id=? AND ${memberSql('a','member_tech.technician_id')}) AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
     ${jobId === undefined ? '' : 'AND w.job_id=?'}
     ORDER BY w.appointment_date,w.appointment_time,w.job_id`,jobId === undefined ? [technicianId] : [technicianId,jobId]);
-  const [[active]]=await pool.execute(`SELECT w.job_id AS jobId FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id WHERE a.technician_id=? AND w.current_status='In Progress' LIMIT 1`,[technicianId]);
+  const [[active]]=await pool.execute(`SELECT w.job_id AS jobId FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id WHERE EXISTS(SELECT 1 FROM technician member_tech WHERE member_tech.technician_id=? AND ${memberSql('a','member_tech.technician_id')}) AND w.current_status='In Progress' LIMIT 1`,[technicianId]);
   const now=new Date();
-  return rows.map(({lastModifiedEpoch,reportSubmittedAtEpoch,...row})=>{const startBlockedReason=visitStartBlockReason(row.date,row.time,now,active?.jobId!==row.jobId?active?.jobId:null);return {...withBookingReference(row),lastModified:lastModifiedEpoch?new Date(Number(lastModifiedEpoch)*1000).toISOString():null,reportSubmittedAt:reportSubmittedAtEpoch?new Date(Number(reportSubmittedAtEpoch)*1000).toISOString():null,reportPending:Boolean(row.reportPending),canStart:!startBlockedReason,startBlockedReason,canComplete:!visitCompletionBlockReason(row.date,now),completionBlockedReason:visitCompletionBlockReason(row.date,now),cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
+  return Promise.all(rows.map(async ({lastModifiedEpoch,reportSubmittedAtEpoch,...row})=>{const startBlockedReason=visitStartBlockReason(row.date,row.time,now,active?.jobId!==row.jobId?active?.jobId:null)||await teamStartBlockReason(pool,row.assignmentId,row.jobId);return {...withBookingReference(row),team:await assignmentTeam(pool,row.assignmentId),isLead:row.leadTechnicianId===technicianId,canManage:row.leadTechnicianId===technicianId,lastModified:lastModifiedEpoch?new Date(Number(lastModifiedEpoch)*1000).toISOString():null,reportSubmittedAt:reportSubmittedAtEpoch?new Date(Number(reportSubmittedAtEpoch)*1000).toISOString():null,reportPending:Boolean(row.reportPending),canStart:row.leadTechnicianId===technicianId&&!startBlockedReason,startBlockedReason,canComplete:row.leadTechnicianId===technicianId&&!visitCompletionBlockReason(row.date,now),completionBlockedReason:visitCompletionBlockReason(row.date,now),cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
     status:row.status==='On The Way'?'On the Way':row.status,
     serviceTimingTestMode:serviceTimingTestMode(),
-    initials:row.customer.split(/\s+/).map(s=>s[0]).slice(0,2).join('')};});
+    initials:row.customer.split(/\s+/).map(s=>s[0]).slice(0,2).join('')};}));
 }
 
 export const cleaningAssessmentSchema=z.object({
@@ -105,7 +107,7 @@ export async function getTechnicianJobDetails(pool, technicianId, jobId) {
   if(!job)throw new AppError('Job not found for this technician.',404);
   const reportSelect=`SELECT r.report_id AS reportId,w.job_id AS jobId,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,
     b.subscription_id AS subscriptionId,mp.package_name AS packageName,sa.address_line AS address,
-    DATE_FORMAT(r.visit_service_date,'%Y-%m-%d') AS date,r.visit_technician_id AS technicianId,ru.full_name AS technician,r.visit_start_time AS scheduledStart,r.work_performed AS workPerformed,
+    DATE_FORMAT(r.visit_service_date,'%Y-%m-%d') AS date,r.visit_technician_id AS technicianId,${visitTeamNameSql('r','ru.full_name')} AS technician,r.visit_start_time AS scheduledStart,r.work_performed AS workPerformed,
     r.problem_found AS problemFound,r.solution_applied AS solutionApplied,r.checklist_result AS checklist,
     r.customer_signature_url AS customerSignatureUrl,r.technician_signature_url AS technicianSignatureUrl,
     UNIX_TIMESTAMP(r.submitted_time) AS submittedAtEpoch,r.started_at AS startedAt,r.completed_at AS completedAt,
@@ -183,7 +185,8 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
       throw new AppError('Reload this work order and complete each status step in order.',409);
     }
     if(data.status==='In Progress'){
-      const [active]=await connection.execute(`SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id WHERE a.technician_id=? AND w.job_id<>? AND w.current_status='In Progress' FOR UPDATE`,[work.technician_id,jobId]);
+      await assertTeamCanStart(connection,work.assignment_id,jobId);
+      const [active]=await connection.execute(`SELECT w.job_id FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id WHERE EXISTS(SELECT 1 FROM technician member_tech WHERE member_tech.technician_id=? AND ${memberSql('a','member_tech.technician_id')}) AND w.job_id<>? AND w.current_status='In Progress' FOR UPDATE`,[work.technician_id,jobId]);
       const reason=visitStartBlockReason(work.serviceDate,work.serviceTime,new Date(),active[0]?.job_id);
       if(reason)throw new AppError(reason,409);
     }

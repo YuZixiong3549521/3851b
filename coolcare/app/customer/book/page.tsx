@@ -97,7 +97,7 @@ export default function BookServicePage() {
   const minimumDate = [earliestBookingDate(), renewal?.minimumFirstDate ?? ''].sort().at(-1)!;
   const availability = useBookingAvailability({ serviceAddress: form.serviceAddress, selectedDate: form.preferredDate, serviceIds: selectedServices.payload.serviceIds, packageId: selectedServices.payload.packageId, enabled: Boolean(context && !created && step >= 2 && !retryLocked) });
   const slotDates=selectedServices.isAnnual?annualVisitDates(form.preferredDate):form.preferredDate?[form.preferredDate]:[];
-  const slotAvailability=useSlotAvailability(slotDates,Boolean(context&&!created&&step>=3&&!retryLocked),selectedServices.durationMinutes);
+  const slotAvailability=useSlotAvailability(slotDates,Boolean(context&&!created&&step>=3&&!retryLocked),selectedServices.durationMinutes,undefined,form.numberOfUnits);
   const selectedSlotFull=Boolean(form.timeSlot&&!slotAvailability.isAvailable(form.timeSlot));
 
   const submitBooking = useCallback(async (input: BookingInput) => {
@@ -113,7 +113,7 @@ export default function BookServicePage() {
         if (input.serviceAddress !== undefined || input.numberOfUnits !== undefined) {
           if (input.unitIds !== undefined) throw Object.assign(new Error('Use an AC unit count or individual units, not both.'), { status: 400 });
           if (typeof input.serviceAddress !== 'string' || input.serviceAddress.trim().length < 5 || input.serviceAddress.trim().length > 255) throw Object.assign(new Error('Enter a service address between 5 and 255 characters.'), { status: 400 });
-          if (!Number.isInteger(input.numberOfUnits) || Number(input.numberOfUnits) < 1 || Number(input.numberOfUnits) > 10) throw Object.assign(new Error('Enter an AC unit count from 1 to 10.'), { status: 400 });
+          if (!Number.isInteger(input.numberOfUnits) || Number(input.numberOfUnits) < 1 || Number(input.numberOfUnits) > 20) throw Object.assign(new Error('Enter an AC unit count from 1 to 20.'), { status: 400 });
         }
       }
       if (!pendingRequest.current) pendingRequest.current = { ...input, expectedUserId: context.customer.userId, requestId: input.requestId || requestId.current };
@@ -188,7 +188,7 @@ export default function BookServicePage() {
   function validateCurrentStep() {
     if (step === 1 && !selectedServices.valid) return 'Choose your service(s), and select a property type for an annual bundle.';
     if (step === 2 && (form.serviceAddress.trim().length < 5 || form.serviceAddress.trim().length > 255)) return 'Enter a service address between 5 and 255 characters.';
-    if (step === 2 && (!Number.isInteger(form.numberOfUnits) || form.numberOfUnits < 1 || form.numberOfUnits > 10)) return 'Enter an AC unit count from 1 to 10.';
+    if (step === 2 && (!Number.isInteger(form.numberOfUnits) || form.numberOfUnits < 1 || form.numberOfUnits > 20)) return 'Enter an AC unit count from 1 to 20.';
     if (step === 2 && form.postalCode && !/^\d{6}$/.test(form.postalCode)) return 'Enter a six-digit Singapore postal code.';
     if (step === 3 && bookingDateError(form.preferredDate)) return bookingDateError(form.preferredDate);
     if (step === 3 && form.preferredDate < minimumDate) return `Choose a date on or after ${formatDate(minimumDate)} for this renewal.`;
@@ -318,7 +318,7 @@ export default function BookServicePage() {
               {step === 2 && (
                 <div><h2 className="text-xl font-bold">Where should we service?</h2><p className="mt-1 text-sm text-muted-foreground">Choose a saved address or enter a new service address.</p>
                   <div className="mt-6"><BookingAddressField key={context.customer.userId} expectedUserId={context.customer.userId} addresses={context.addresses} value={form.serviceAddress} postalCode={form.postalCode} onPostalCodeChange={postalCode=>setForm(current=>({...current,postalCode}))} onChange={value => { setForm(current => ({ ...current, serviceAddress: value })); setFieldError(''); }} onAddressSaved={handleAddressSaved} onEditingChange={setAddressEditorOpen} /></div>
-                  <div className="mt-7"><FieldLabel htmlFor="number-of-units">Number of AC units</FieldLabel><Input id="number-of-units" type="number" inputMode="numeric" min={1} max={10} step={1} value={form.numberOfUnits || ''} onChange={event => { setForm(current => ({ ...current, numberOfUnits: Number(event.target.value) })); setFieldError(''); }} className="mt-2 h-12 max-w-40" /><p className="mt-2 text-xs text-muted-foreground">Enter how many air conditioners need service (1–10). Estimated visit duration: {selectedServices.durationMinutes} minutes.</p><p className="mt-3 text-sm font-semibold text-primary">{selectedServices.isAnnual ? 'Annual estimate' : 'Visit estimate'}: {formatMoney(total)}</p></div>
+                  <div className="mt-7"><FieldLabel htmlFor="number-of-units">Number of AC units</FieldLabel><Input id="number-of-units" type="number" inputMode="numeric" min={1} max={20} step={1} value={form.numberOfUnits || ''} onChange={event => { setForm(current => ({ ...current, numberOfUnits: Number(event.target.value) })); setFieldError(''); }} className="mt-2 h-12 max-w-40" /><p className="mt-2 text-xs text-muted-foreground">Enter how many air conditioners need service (1–20). Estimated visit duration: {selectedServices.durationMinutes} minutes.</p><p className="mt-3 text-sm font-semibold text-primary">{selectedServices.isAnnual ? 'Annual estimate' : 'Visit estimate'}: {formatMoney(total)}</p></div>
                 </div>
               )}
 

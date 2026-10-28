@@ -1,3 +1,5 @@
+import {visitTeamNameSql,assignmentTeamNameSql} from './teams.mjs';
+import {assignmentTeam,bookingTeam,memberSql,staffingBooking,teamDispatchOptions,selectDispatchTeam,saveAssignmentTeam} from './teams.mjs';
 import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
 import { assertAdminOrderEditable } from './admin-order-policy.mjs';
 import { registerReturnRoutes } from './return-visits.mjs';
@@ -6,10 +8,6 @@ import { getServiceProgress } from './service-progress.mjs';
 import { assertBookingNotExpired } from './order-expiry.mjs';
 import { releaseBookingRewardReservation } from './commerce.mjs';
 import { readBookingAmounts } from './booking-amounts.mjs';
-import {
-  addDispatchProximity,
-  compareDispatchCandidates,
-} from './postal-proximity.mjs';
 import { listServicePhotos } from './service-photo-upload.mjs';
 import express from 'express';
 import { createHash } from 'node:crypto';
@@ -46,6 +44,8 @@ const dispatchRequestSchema = requestSchema.extend({
       timeSlot: z.string().max(50),
       travelBufferMinutes: z.number().int().min(0).max(180),
       technicianId: idSchema,
+      technicianIds: z.array(idSchema).min(1).optional(),
+      estimatedDurationMinutes: z.number().int().positive().nullable().optional(),
     })
     .strict()
     .optional(),
@@ -55,7 +55,7 @@ const dispatchSchema = z.union([
     .extend({ mode: z.literal('automatic').optional() })
     .strict(),
   dispatchRequestSchema
-    .extend({ mode: z.literal('manual'), technicianId: idSchema })
+    .extend({ mode: z.literal('manual'), technicianId: idSchema.optional(), technicianIds:z.array(idSchema).min(1).optional(),leadTechnicianId:idSchema.optional() })
     .strict(),
 ]);
 const rejectSchema = requestSchema
@@ -445,294 +445,12 @@ export async function getAdminActionSummary(pool) {
   };
 }
 
-async function chooseTechnician(
-  connection,
-  booking,
-  { excludeTechnicianId = 0 } = {},
-) {
-  const date = String(booking.preferred_service_date).slice(0, 10),
-    travelStart = travelStartTime(
-      booking.slot_start,
-      booking.travel_buffer_minutes,
-    );
-  await lockTechnicianRoster(connection);
-  const [eligible] = await connection.execute(
-    `SELECT t.technician_id FROM technician t JOIN user_account u ON u.user_id=t.user_id
-    JOIN role r ON r.role_id=u.role_id WHERE u.status='Active' AND r.role_name='Technician'
-    AND t.availability_status NOT IN ('Unavailable','On Leave') AND t.technician_id<>? ORDER BY t.technician_id`,
-    [excludeTechnicianId],
-  );
-  if (!eligible.length)
-    throw new AppError(
-      'No technician is available for this appointment. Change the appointment or technician availability, or reject the request.',
-      409,
-    );
-  const eligibleIds = eligible.map((row) => row.technician_id);
-  await connection.execute(
-    `SELECT technician_id FROM technician WHERE technician_id IN (${eligibleIds.map(() => '?').join(',')}) ORDER BY technician_id FOR UPDATE`,
-    eligibleIds,
-  );
-  const [rows] = await connection.execute(
-    `SELECT t.technician_id AS technicianId,t.user_id AS userId,u.full_name AS fullName,
-    t.last_assigned_at AS lastAssignedAt,t.base_postal_code AS basePostalCode,t.hourly_labor_cost AS hourlyLaborCost,
-    (SELECT COUNT(*) FROM assignment daily_assignment JOIN work_order daily_work ON daily_work.assignment_id=daily_assignment.assignment_id
-      WHERE daily_assignment.technician_id=t.technician_id AND DATE(daily_work.appointment_date)=?
-      AND daily_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
-      AND daily_work.current_status NOT IN ('Completed','Cancelled')) AS dailyJobs
-    FROM technician t JOIN user_account u ON u.user_id=t.user_id JOIN role r ON r.role_id=u.role_id
-    WHERE u.status='Active' AND r.role_name='Technician' AND t.availability_status NOT IN ('Unavailable','On Leave')
-    AND t.technician_id<>?
-    AND NOT EXISTS (
-      SELECT 1 FROM assignment occupied_assignment
-      JOIN work_order occupied_work ON occupied_work.assignment_id=occupied_assignment.assignment_id
-      JOIN booking occupied_booking ON occupied_booking.booking_id=occupied_work.booking_id
-      WHERE occupied_assignment.technician_id=t.technician_id
-      AND occupied_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
-      AND occupied_work.current_status NOT IN ('Completed','Cancelled')
-      AND occupied_booking.preferred_service_date=?
-      AND SUBTIME(occupied_booking.slot_start,SEC_TO_TIME(COALESCE(occupied_booking.travel_buffer_minutes,30)*60))<?
-      AND occupied_booking.slot_end>?
-    )
-
-    AND NOT EXISTS (SELECT 1 FROM service_progress fp JOIN work_order fw ON fw.job_id=fp.job_id
-      JOIN assignment fa ON fa.assignment_id=fw.assignment_id
-      JOIN booking fb ON fb.booking_id=fw.booking_id
-      WHERE fa.technician_id=t.technician_id AND fa.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
-      AND fp.follow_up_status IN ('Scheduled','In Progress') AND fp.follow_up_date=?
-      AND SUBTIME(fp.follow_up_start,SEC_TO_TIME(COALESCE(fb.travel_buffer_minutes,30)*60))<?
-      AND fp.follow_up_end>?)
-    ORDER BY dailyJobs ASC,(t.last_assigned_at IS NULL) DESC,t.last_assigned_at ASC,t.technician_id ASC
-    `,
-    [
-      date,
-      excludeTechnicianId,
-      date,
-      booking.slot_end,
-      travelStart,
-      date,
-      booking.slot_end,
-      travelStart,
-    ],
-  );
-  if (!rows.length)
-    throw new AppError(
-      'No technician is available for this appointment. Change the appointment or technician availability, or reject the request.',
-      409,
-    );
-  await addDispatchProximity(connection, booking, rows);
-  return rows.sort(compareDispatchCandidates)[0];
-}
-
-async function chooseManualTechnician(
-  connection,
-  booking,
-  technicianId,
-  { excludeTechnicianId = 0 } = {},
-) {
-  await lockTechnicianRoster(connection);
-  const [[lockedTechnician]] = await connection.execute(
-    'SELECT technician_id FROM technician WHERE technician_id=? FOR UPDATE',
-    [technicianId],
-  );
-  if (!lockedTechnician)
-    throw new AppError('The selected technician was not found.', 409);
-  const [[technician]] = await connection.execute(
-    `SELECT t.technician_id AS technicianId,t.user_id AS userId,u.full_name AS fullName,
-    u.status AS accountStatus,t.availability_status AS availability,t.last_assigned_at AS lastAssignedAt,
-    t.hourly_labor_cost AS hourlyLaborCost
-    FROM technician t JOIN user_account u ON u.user_id=t.user_id
-    JOIN role r ON r.role_id=u.role_id
-    WHERE t.technician_id=? AND r.role_name='Technician'`,
-    [technicianId],
-  );
-  if (!technician)
-    throw new AppError('The selected technician was not found.', 409);
-  if (technician.technicianId === excludeTechnicianId)
-    throw new AppError(
-      'Choose a different technician for this reassignment.',
-      409,
-    );
-  if (technician.accountStatus !== 'Active')
-    throw new AppError(
-      'The selected technician does not have an active account.',
-      409,
-    );
-  if (['Unavailable', 'On Leave'].includes(technician.availability))
-    throw new AppError(
-      `The selected technician is ${technician.availability.toLowerCase()}.`,
-      409,
-    );
-  const date = String(booking.preferred_service_date).slice(0, 10),
-    travelStart = travelStartTime(
-      booking.slot_start,
-      booking.travel_buffer_minutes,
-    );
-  const [[conflict]] = await connection.execute(
-    `SELECT COUNT(*) AS count FROM assignment occupied_assignment
-    JOIN work_order occupied_work ON occupied_work.assignment_id=occupied_assignment.assignment_id
-    JOIN booking occupied_booking ON occupied_booking.booking_id=occupied_work.booking_id
-    WHERE occupied_assignment.technician_id=?
-    AND occupied_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
-    AND occupied_work.current_status NOT IN ('Completed','Cancelled')
-    AND occupied_booking.preferred_service_date=?
-    AND SUBTIME(occupied_booking.slot_start,SEC_TO_TIME(COALESCE(occupied_booking.travel_buffer_minutes,30)*60))<?
-    AND occupied_booking.slot_end>?`,
-    [technicianId, date, booking.slot_end, travelStart],
-  );
-  if (Number(conflict.count) > 0)
-    throw new AppError(
-      'The selected technician already has an overlapping work order.',
-      409,
-    );
-  const [[followUp]] = await connection.execute(
-    `SELECT COUNT(*) AS count FROM service_progress fp
-    JOIN work_order fw ON fw.job_id=fp.job_id JOIN assignment fa ON fa.assignment_id=fw.assignment_id
-    JOIN booking fb ON fb.booking_id=fw.booking_id
-    WHERE fa.technician_id=? AND fa.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
-    AND fp.follow_up_status IN ('Scheduled','In Progress') AND fp.follow_up_date=?
-    AND SUBTIME(fp.follow_up_start,SEC_TO_TIME(COALESCE(fb.travel_buffer_minutes,30)*60))<?
-    AND fp.follow_up_end>?`,
-    [technicianId, date, booking.slot_end, travelStart],
-  );
-  if (Number(followUp.count) > 0)
-    throw new AppError(
-      'The selected technician has an overlapping return visit.',
-      409,
-    );
-  return technician;
-}
-
-function dispatchOptionReason(option, currentTechnicianId) {
-  if (option.technicianId === currentTechnicianId)
-    return 'Currently assigned to this booking.';
-  if (option.accountStatus !== 'Active')
-    return `Account is ${String(option.accountStatus).toLowerCase()}.`;
-  if (option.availability === 'Unavailable') return 'Marked unavailable.';
-  if (option.availability === 'On Leave') return 'Currently on leave.';
-  if (Number(option.hasConflict) > 0 || Number(option.followUpConflict) > 0)
-    return 'Overlapping service or planned travel time.';
-  return null;
-}
-
-export async function listDispatchOptions(pool, bookingId, candidate = null) {
-  const [[booking]] = await pool.execute(
-    `SELECT b.booking_id,b.booking_status,b.preferred_service_date,b.preferred_time_slot,
-    b.slot_start,b.slot_end,b.estimated_duration_minutes,b.travel_buffer_minutes,b.traffic_note,b.address_id FROM booking b WHERE b.booking_id=?`,
-    [bookingId],
-  );
-  if (!booking) throw new AppError('Booking not found.', 404);
-  if (candidate) {
-    const slot = bookingServiceSlot(
-      candidate.timeSlot,
-      booking.estimated_duration_minutes,
-    );
-    Object.assign(booking, {
-      preferred_service_date: candidate.date,
-      preferred_time_slot: slot.code,
-      slot_start: slot.start,
-      slot_end: slot.end,
-    });
-  }
-  if (!['Submitted', 'Confirmed', 'Assigned'].includes(booking.booking_status))
-    throw new AppError(
-      'Dispatch options are available only for bookings awaiting confirmation, dispatch or reassignment.',
-      409,
-    );
-  if (!booking.slot_start || !booking.slot_end) {
-    const slot = normalizeBookingSlot(booking.preferred_time_slot);
-    booking.slot_start = slot.start;
-    booking.slot_end = slot.end;
-  }
-  let currentTechnicianId = 0;
-  if (booking.booking_status === 'Assigned') {
-    const [[current]] = await pool.execute(
-      `SELECT a.technician_id AS technicianId,w.current_status AS workStatus
-      FROM assignment a JOIN work_order w ON w.assignment_id=a.assignment_id
-      WHERE a.booking_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
-      ORDER BY a.assignment_id DESC LIMIT 1`,
-      [bookingId],
-    );
-    if (!current || current.workStatus !== 'Assigned')
-      throw new AppError(
-        'A work order can only be redispatched before the technician starts travelling.',
-        409,
-      );
-    currentTechnicianId = current.technicianId;
-  }
-  const date = String(booking.preferred_service_date).slice(0, 10),
-    travelStart = travelStartTime(
-      booking.slot_start,
-      booking.travel_buffer_minutes,
-    );
-  const [rows] = await pool.execute(
-    `SELECT t.technician_id AS technicianId,t.user_id AS userId,u.full_name AS fullName,u.email,
-    u.status AS accountStatus,t.availability_status AS availability,t.last_assigned_at AS lastAssignedAt,t.base_postal_code AS basePostalCode,t.hourly_labor_cost AS hourlyLaborCost,
-    (SELECT COUNT(*) FROM assignment daily_assignment
-      JOIN work_order daily_work ON daily_work.assignment_id=daily_assignment.assignment_id
-      WHERE daily_assignment.technician_id=t.technician_id AND DATE(daily_work.appointment_date)=?
-      AND daily_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
-      AND daily_work.current_status NOT IN ('Completed','Cancelled')) AS dailyJobs,
-    (SELECT COUNT(*) FROM assignment occupied_assignment
-      JOIN work_order occupied_work ON occupied_work.assignment_id=occupied_assignment.assignment_id
-      JOIN booking occupied_booking ON occupied_booking.booking_id=occupied_work.booking_id
-      WHERE occupied_assignment.technician_id=t.technician_id
-      AND occupied_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
-      AND occupied_work.current_status NOT IN ('Completed','Cancelled')
-      AND occupied_booking.preferred_service_date=?
-      AND SUBTIME(occupied_booking.slot_start,SEC_TO_TIME(COALESCE(occupied_booking.travel_buffer_minutes,30)*60))<?
-      AND occupied_booking.slot_end>?) AS hasConflict,
-    (SELECT COUNT(*) FROM service_progress fp JOIN work_order fw ON fw.job_id=fp.job_id JOIN assignment fa ON fa.assignment_id=fw.assignment_id
-      JOIN booking fb ON fb.booking_id=fw.booking_id
-      WHERE fa.technician_id=t.technician_id AND fa.assignment_status NOT IN ('Declined','Reassigned','Cancelled')
-      AND fp.follow_up_status IN ('Scheduled','In Progress') AND fp.follow_up_date=?
-      AND SUBTIME(fp.follow_up_start,SEC_TO_TIME(COALESCE(fb.travel_buffer_minutes,30)*60))<? AND fp.follow_up_end>?) AS followUpConflict
-    FROM technician t JOIN user_account u ON u.user_id=t.user_id
-    JOIN role r ON r.role_id=u.role_id WHERE r.role_name='Technician'
-    ORDER BY u.status='Active' DESC,u.full_name,t.technician_id`,
-    [
-      date,
-      date,
-      booking.slot_end,
-      travelStart,
-      date,
-      booking.slot_end,
-      travelStart,
-    ],
-  );
-  await addDispatchProximity(pool, booking, rows);
-  rows.sort(
-    (a, b) =>
-      Number(Boolean(dispatchOptionReason(a, currentTechnicianId))) -
-        Number(Boolean(dispatchOptionReason(b, currentTechnicianId))) ||
-      compareDispatchCandidates(a, b),
-  );
-  return {
-    bookingId,
-    status: booking.booking_status,
-    preferredDate: date,
-    timeSlot: booking.preferred_time_slot,
-    slotStart: booking.slot_start,
-    slotEnd: booking.slot_end,
-    estimatedDurationMinutes: booking.estimated_duration_minutes,
-    travelBufferMinutes: Number(booking.travel_buffer_minutes ?? 30),
-    trafficNote: booking.traffic_note || null,
-    technicians: rows.map((row) => {
-      const reason = dispatchOptionReason(row, currentTechnicianId);
-      return {
-        technicianId: row.technicianId,
-        fullName: row.fullName,
-        email: row.email,
-        accountStatus: row.accountStatus,
-        availability: row.availability,
-        dailyJobs: Number(row.dailyJobs),
-        proximity: row.proximity,
-        travelPlan: row.travelPlan,
-        current: row.technicianId === currentTechnicianId,
-        eligible: reason === null,
-        reason,
-      };
-    }),
-  };
+export async function listDispatchOptions(pool, bookingId, candidate=null, query={}) {
+  const booking=await staffingBooking(pool,bookingId);
+  if(!['Submitted','Confirmed','Assigned'].includes(booking.booking_status))throw new AppError('This booking is not awaiting dispatch.',409);
+  if(candidate){booking.preferred_service_date=candidate.date;booking.preferred_time_slot=candidate.timeSlot;}
+  const count=query.teamSize===undefined?undefined:z.coerce.number().int().min(1).max(1000).parse(query.teamSize);
+  return teamDispatchOptions(pool,booking,count);
 }
 
 async function createAssignment(
@@ -841,23 +559,15 @@ export async function dispatchBooking(
           409,
         );
     }
-    const selectionOptions = {
-      excludeTechnicianId: previous?.technicianId ?? 0,
-    };
-    const technician =
-      mode === 'manual'
-        ? await chooseManualTechnician(
-            connection,
-            booking,
-            data.technicianId,
-            selectionOptions,
-          )
-        : await chooseTechnician(connection, booking, selectionOptions);
-    if (data.review && data.review.technicianId !== technician.technicianId)
-      throw new AppError(
-        'The recommended technician changed. Review the refreshed recommendation and confirm again.',
-        409,
-      );
+    const staffing=await staffingBooking(connection,bookingId);
+    const {members,lead:technician,options:teamPlan}=await selectDispatchTeam(connection,staffing,data);
+    if(data.review && (data.review.technicianId!==technician.technicianId ||
+      (data.review.technicianIds && JSON.stringify([...data.review.technicianIds].sort((a,b)=>a-b))!==JSON.stringify(members.map(t=>t.technicianId).sort((a,b)=>a-b))) ||
+      (data.review.estimatedDurationMinutes!==undefined && data.review.estimatedDurationMinutes!==teamPlan.estimatedDurationMinutes)))
+      throw new AppError('The recommended technician changed or the team changed. Refresh and review the latest team.',409);
+    await assertTeamCapacity(connection,[{date:booking.preferred_service_date,start:teamPlan.slotStart,travelBufferMinutes:booking.travel_buffer_minutes,end:teamPlan.slotEnd,technicians:members.length}],{excludeBookingId:bookingId});
+    booking.slot_start=teamPlan.slotStart;booking.slot_end=teamPlan.slotEnd;
+    await connection.execute('UPDATE booking SET required_technicians=?,estimated_duration_minutes=?,slot_start=?,slot_end=? WHERE booking_id=?',[members.length,teamPlan.estimatedDurationMinutes,teamPlan.slotStart,teamPlan.slotEnd,bookingId]);
     if (previous) {
       await connection.execute(
         "UPDATE assignment SET assignment_status='Reassigned' WHERE assignment_id=?",
@@ -875,6 +585,7 @@ export async function dispatchBooking(
       technician,
       data.requestId,
     );
+    await saveAssignmentTeam(connection,created.assignmentId,members.map(t=>t.technicianId));
     if (!redispatch) {
       await connection.execute(
         "UPDATE booking SET booking_status='Assigned',admin_waiting_since=NULL,admin_waiting_reason=NULL WHERE booking_id=?",
@@ -911,7 +622,7 @@ export async function dispatchBooking(
       bookingId,
       'booking.assigned',
       {
-        technicianName: technician.fullName,
+        technicianName: members.map(t=>t.fullName+(t.technicianId===technician.technicianId?' (Lead)':'')).join(', '),
         eventKey: redispatch
           ? `booking.reassigned:${bookingId}:${created.assignmentId}`
           : undefined,
@@ -919,7 +630,9 @@ export async function dispatchBooking(
     );
     const result = {
       bookingId,
-      status: 'Assigned',
+      status:'Assigned',
+      technicians:members.map(t=>({technicianId:t.technicianId,fullName:t.fullName,isLead:t.technicianId===technician.technicianId})),
+      estimatedDurationMinutes:teamPlan.estimatedDurationMinutes,
       technician: {
         technicianId: technician.technicianId,
         fullName: technician.fullName,
@@ -1037,6 +750,8 @@ export async function rescheduleAdminBooking(pool, actor, bookingId, raw) {
           date: data.preferredDate,
           start: slot.start,
           end: slot.end,
+          technicians:booking.required_technicians,
+          travelBufferMinutes:booking.travel_buffer_minutes,
         },
       ],
       { excludeBookingId: bookingId },
@@ -1142,7 +857,7 @@ export async function listAdminBookings(pool, query) {
     ${pendingReportColumns},
     sa.address_line AS addressLine,COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
     (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
-    (SELECT technician_user.full_name FROM assignment latest_assignment JOIN technician latest_technician ON latest_technician.technician_id=latest_assignment.technician_id
+    (SELECT ${assignmentTeamNameSql('latest_assignment','technician_user.full_name')} FROM assignment latest_assignment JOIN technician latest_technician ON latest_technician.technician_id=latest_assignment.technician_id
       JOIN user_account technician_user ON technician_user.user_id=latest_technician.user_id WHERE latest_assignment.booking_id=b.booking_id
       ORDER BY latest_assignment.assignment_id DESC LIMIT 1) AS technicianName
     FROM booking b JOIN customer c ON c.customer_id=b.customer_id JOIN user_account u ON u.user_id=c.user_id
@@ -1172,7 +887,7 @@ export async function listAdminSchedule(pool, query) {
     sa.address_line AS addressLine,
     COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
     (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
-    (SELECT technician_user.full_name FROM assignment latest_assignment
+    (SELECT ${assignmentTeamNameSql('latest_assignment','technician_user.full_name')} FROM assignment latest_assignment
       JOIN technician latest_technician ON latest_technician.technician_id=latest_assignment.technician_id
       JOIN user_account technician_user ON technician_user.user_id=latest_technician.user_id
       WHERE latest_assignment.booking_id=b.booking_id
@@ -1226,7 +941,7 @@ export async function getAdminBooking(pool, bookingId) {
   const [reports] = await pool.execute(
     `SELECT w.job_id AS jobId,r.report_id AS reportId,r.work_performed AS workPerformed,r.problem_found AS problemFound,r.solution_applied AS solutionApplied,r.checklist_result AS checklist,
       r.customer_signature_url AS customerSignatureUrl,r.technician_signature_url AS technicianSignatureUrl,r.started_at AS startedAt,r.completed_at AS completedAt,
-      r.visit_service_date AS serviceDate,r.visit_start_time AS scheduledStart,ru.full_name AS technicianName,r.archived_job_id IS NOT NULL AS archived
+      r.visit_service_date AS serviceDate,r.visit_start_time AS scheduledStart,${visitTeamNameSql('r','ru.full_name')} AS technicianName,r.archived_job_id IS NOT NULL AS archived
       FROM service_report r JOIN work_order w ON w.job_id=COALESCE(r.job_id,r.archived_job_id)
       LEFT JOIN technician rt ON rt.technician_id=r.visit_technician_id LEFT JOIN user_account ru ON ru.user_id=rt.user_id
       WHERE w.booking_id=? AND r.submitted_time IS NOT NULL ORDER BY r.report_id DESC`,
@@ -1234,11 +949,14 @@ export async function getAdminBooking(pool, bookingId) {
   );
   return {
     ...describeAdminBooking(booking),
+    team:await bookingTeam(pool,bookingId),
     amounts: (await readBookingAmounts(pool, [bookingId])).get(bookingId),
     timeline: timeline.map(({ changedAtEpoch, ...event }) => ({ ...event, changedAt: timestampIso(changedAtEpoch) })),
     assignments: await Promise.all(
       assignments.map(async ({ assignedAtEpoch, ...item }) => ({
         ...item,
+        team:await assignmentTeam(pool,item.assignmentId),
+        technicianName:(await assignmentTeam(pool,item.assignmentId)).map(t=>t.fullName+(t.isLead?' (Lead)':'')).join(', '),
         assignedAt: timestampIso(assignedAtEpoch),
         progress: item.jobId
           ? await getServiceProgress(pool, item.jobId)
@@ -1261,7 +979,7 @@ export async function listStaff(pool, roleName) {
       ? 'p.access_level AS accessLevel'
       : `p.technician_id AS technicianId,p.availability_status AS availability,p.last_assigned_at AS lastAssignedAt,p.base_postal_code AS basePostalCode,p.hourly_labor_cost AS hourlyLaborCost,
     (SELECT COUNT(*) FROM assignment future_assignment JOIN work_order future_work ON future_work.assignment_id=future_assignment.assignment_id
-      WHERE future_assignment.technician_id=p.technician_id AND future_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
+      WHERE ${memberSql('future_assignment','p.technician_id')} AND future_assignment.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
       AND future_work.current_status NOT IN ('Completed','Cancelled') AND future_work.appointment_date>=CURRENT_DATE) AS futureWorkOrders`;
   const [rows] = await pool.execute(
     `SELECT u.user_id AS userId,u.full_name AS fullName,u.email,u.phone,u.status,u.created_at AS createdAt,${extra},
@@ -1280,13 +998,13 @@ export async function assertTechnicianCanBecomeUnavailable(
 ) {
   const [[assigned]] = await connection.execute(
     `SELECT COUNT(*) AS count FROM assignment a JOIN work_order w ON w.assignment_id=a.assignment_id
-    WHERE a.technician_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
+    WHERE EXISTS(SELECT 1 FROM technician member_tech WHERE member_tech.technician_id=? AND ${memberSql('a','member_tech.technician_id')}) AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')
     AND w.current_status NOT IN ('Completed','Cancelled') AND (w.current_status IN ('On The Way','In Progress') OR w.appointment_date>=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR))`,
     [technicianId],
   );
   const [[returns]] = await connection.execute(
     `SELECT COUNT(*) AS count FROM service_progress p JOIN work_order w ON w.job_id=p.job_id JOIN assignment a ON a.assignment_id=w.assignment_id
-    WHERE a.technician_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND p.follow_up_status IN ('Scheduled','In Progress')`,
+    WHERE EXISTS(SELECT 1 FROM technician member_tech WHERE member_tech.technician_id=? AND ${memberSql('a','member_tech.technician_id')}) AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND p.follow_up_status IN ('Scheduled','In Progress')`,
     [technicianId],
   );
   if (Number(assigned.count) > 0 || Number(returns.count) > 0)
@@ -1299,10 +1017,11 @@ export async function assertTechnicianCanBecomeUnavailable(
     WHERE u.status='Active' AND t.availability_status NOT IN ('Unavailable','On Leave')`);
   const remaining = Number(roster.count) - 1;
   const [reservations] =
-    await connection.execute(`SELECT b.preferred_service_date AS date,b.slot_start AS start,b.slot_end AS end FROM booking b
-    WHERE b.preferred_service_date>=CURRENT_DATE AND b.booking_status IN ('Submitted','Confirmed','Assigned','On The Way','In Progress')
-    UNION ALL SELECT p.follow_up_date AS date,p.follow_up_start AS start,p.follow_up_end AS end FROM service_progress p
-    WHERE p.follow_up_status IN ('Scheduled','In Progress') AND p.follow_up_date>=CURRENT_DATE`);
+    await connection.execute(`SELECT b.preferred_service_date AS date,SUBTIME(b.slot_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60)) AS start,b.slot_end AS end,b.required_technicians AS technicians FROM booking b
+    WHERE b.preferred_service_date>=CURRENT_DATE AND b.booking_status IN ('Submitted','Confirmed','Assigned','On The Way','In Progress','Return visit')
+    UNION ALL SELECT p.follow_up_date AS date,SUBTIME(p.follow_up_start,SEC_TO_TIME(COALESCE(b.travel_buffer_minutes,30)*60)) AS start,p.follow_up_end AS end,b.required_technicians AS technicians FROM service_progress p
+    JOIN work_order w ON w.job_id=p.job_id JOIN booking b ON b.booking_id=w.booking_id
+    WHERE p.follow_up_status IN ('Scheduled','In Progress') AND p.follow_up_date>=CURRENT_DATE AND w.current_status NOT IN ('Return visit','In Progress')`);
   const days = [
     ...new Set(reservations.map((row) => String(row.date).slice(0, 10))),
   ];
@@ -1600,7 +1319,7 @@ export function createAdminOperationsRouter(pool, { origin } = {}) {
     ),
   );
   router.get('/bookings/:id/dispatch-options', async (req, res) =>
-    res.json(await listDispatchOptions(pool, idSchema.parse(req.params.id))),
+    res.json(await listDispatchOptions(pool, idSchema.parse(req.params.id), null, req.query)),
   );
   router.post('/bookings/:id/dispatch', async (req, res) =>
     res

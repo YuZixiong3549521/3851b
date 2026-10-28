@@ -1,3 +1,4 @@
+import {captureVisitTeam} from './teams.mjs';
 import { withBookingReference } from './booking-reference.mjs';
 import express from 'express';
 import { createHash } from 'node:crypto';
@@ -57,6 +58,7 @@ const filterSchema = z
 // Called inside the existing booking/work-order transaction, after the report is created.
 // INSERT IGNORE preserves both the scheduled time and the technician of the first start.
 export async function capturePerformanceVisitStart(c, jobId) {
+  await captureVisitTeam(c,jobId);
   await c.execute(
     `INSERT IGNORE INTO performance_visit
     (report_id,job_id,technician_id,scheduled_start,actual_start)
@@ -69,6 +71,7 @@ export async function capturePerformanceVisitStart(c, jobId) {
 }
 
 export async function capturePerformanceVisitEnd(c, jobId, outcome) {
+  await captureVisitTeam(c,jobId);
   // Legacy services which were already running when this feature was installed have
   // no trustworthy captured scheduled time. Keep it NULL instead of using a later edit.
   await c.execute(
@@ -174,7 +177,8 @@ function filters(raw) {
     );
   return f;
 }
-const visitSelect = `SELECT p.report_id AS reportId,p.job_id AS jobId,p.technician_id AS technicianId,
+const visitSelect = `SELECT p.report_id AS reportId,p.job_id AS jobId,COALESCE(vm.technician_id,p.technician_id) AS technicianId,COALESCE(vm.is_lead,TRUE) AS isLead,
+  (SELECT COUNT(*)>1 FROM visit_member members WHERE members.report_id=p.report_id) AS teamReview,
   tech.full_name AS technician,b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,customer.full_name AS customer,
   sa.address_line AS address,COALESCE((SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ')
     FROM booking_service bs WHERE bs.booking_id=b.booking_id),sc.service_name) AS service,
@@ -191,10 +195,10 @@ const visitSelect = `SELECT p.report_id AS reportId,p.job_id AS jobId,p.technici
     ORDER BY e.revision DESC LIMIT 1) AS returnReason,
   (SELECT e.part_notes FROM service_progress_event e WHERE e.report_id=p.report_id AND e.kind='Return required'
     ORDER BY e.revision DESC LIMIT 1) AS returnParts
-  FROM performance_visit p JOIN service_report r ON r.report_id=p.report_id
+  FROM performance_visit p LEFT JOIN visit_member vm ON vm.report_id=p.report_id JOIN service_report r ON r.report_id=p.report_id
   JOIN work_order w ON w.job_id=p.job_id JOIN booking b ON b.booking_id=w.booking_id
   JOIN customer cu ON cu.customer_id=b.customer_id JOIN user_account customer ON customer.user_id=cu.user_id
-  JOIN technician t ON t.technician_id=p.technician_id JOIN user_account tech ON tech.user_id=t.user_id
+  JOIN technician t ON t.technician_id=COALESCE(vm.technician_id,p.technician_id) JOIN user_account tech ON tech.user_id=t.user_id
   JOIN service_address sa ON sa.address_id=b.address_id JOIN service_catalog sc ON sc.service_id=b.service_id
   LEFT JOIN performance_feedback f ON f.report_id=p.report_id LEFT JOIN performance_quality q ON q.report_id=p.report_id`;
 
@@ -214,11 +218,11 @@ export async function listPerformance(pool, user, raw = {}) {
     values.push(user.id);
   }
   if (user.role === 'Customer') {
-    where.push('cu.user_id=?');
+    where.push('cu.user_id=?','(vm.is_lead=TRUE OR vm.report_id IS NULL)');
     values.push(user.id);
   }
   if (f.technicianId) {
-    where.push('p.technician_id=?');
+    where.push('COALESCE(vm.technician_id,p.technician_id)=?');
     values.push(f.technicianId);
   }
   const [rows] = await pool.execute(
@@ -279,7 +283,7 @@ export async function listPerformance(pool, user, raw = {}) {
     visits,
     settings,
     filters: f,
-    summary: summarizePerformance(visits, settings),
+    summary: summarizePerformance([...new Map(visits.map(v=>[v.reportId,v])).values()], settings),
     technicians: [...technicians.values()].map((t) => ({
       ...t,
       ...summarizePerformance(

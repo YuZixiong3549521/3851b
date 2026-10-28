@@ -160,7 +160,7 @@ export async function resolveSignature(pool, user, id) {
   if (!z.uuid().safeParse(id).success)
     throw new AppError('Signature not found.', 404);
   const [[s]] = await pool.execute(
-    `SELECT s.*,a.technician_id,t.user_id AS technicianUserId,c.user_id AS customerUserId,r.submitted_time,
+    `SELECT EXISTS(SELECT 1 FROM assignment_member am JOIN technician mt ON mt.technician_id=am.technician_id WHERE am.assignment_id=a.assignment_id AND mt.user_id=${Number(user.id)}) AS teamMember,s.*,a.technician_id,t.user_id AS technicianUserId,c.user_id AS customerUserId,r.submitted_time,
  r.customer_signature_url,r.technician_signature_url FROM report_signature s JOIN work_order w ON w.job_id=s.job_id JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id JOIN technician t ON t.technician_id=a.technician_id JOIN booking b ON b.booking_id=w.booking_id JOIN customer c ON c.customer_id=b.customer_id LEFT JOIN service_report r ON COALESCE(r.job_id,r.archived_job_id)=w.job_id AND (r.customer_signature_url=CONCAT('/api/report-signatures/',s.signature_id) OR r.technician_signature_url=CONCAT('/api/report-signatures/',s.signature_id)) WHERE s.signature_id=? AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled')`,
     [id],
   );
@@ -172,7 +172,7 @@ export async function resolveSignature(pool, user, id) {
   const allowed =
     s &&
     ((user.role === 'Technician' &&
-      s.technicianUserId === user.id &&
+      (s.technicianUserId === user.id || (s.teamMember && linked)) &&
       (linked || s.uploaded_by_user_id === user.id)) ||
       (linked &&
         s.submitted_time &&

@@ -742,6 +742,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
     [dispatchMode, setDispatchMode] = useState<'automatic' | 'manual'>(
       'automatic',
     ),
+    [selectedTechnicianIds, setSelectedTechnicianIds] = useState<number[]>([]),
     [selectedTechnicianId, setSelectedTechnicianId] = useState<number | null>(
       null,
     ),
@@ -814,6 +815,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
         (technician) => technician.eligible,
       ),
     );
+  useEffect(()=>{setSelectedTechnicianIds([]);setSelectedTechnicianId(null);},[bookingId]);
   useEffect(() => {
     setDirty(
       scheduleDirty ||
@@ -875,6 +877,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       pending.current = null;
       setReason('');
       setSelectedTechnicianId(null);
+      setSelectedTechnicianIds([]);
       notify(
         type === 'dispatch' || type === 'redispatch'
           ? `${booking?.status === 'Submitted' ? 'Booking confirmed and assigned' : 'Assigned'} to ${result.technician?.fullName}. Customer email queued.`
@@ -1401,6 +1404,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   </fieldset>
                   {dispatchMode === 'automatic' ? (
                     <div className="mt-3 rounded-lg border bg-white p-3 text-sm">
+                      <p className="font-medium">{dispatchOptions.data?.unitCount} AC units · {dispatchOptions.data?.requiredTechnicians} technician(s) required automatically.</p>
                       <p className="font-medium">
                         Available technicians are ranked by postal area, known
                         travel labour cost, then workload.
@@ -1414,7 +1418,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                       <LoadState {...dispatchOptions} />
                       {dispatchOptions.data?.technicians
                         .filter((tech) => tech.eligible)
-                        .slice(0, 3)
+                        .slice(0, dispatchOptions.data?.requiredTechnicians ?? 1)
                         .map((tech) => (
                           <p key={tech.technicianId} className="mt-2">
                             <strong>{tech.fullName}</strong> ·{' '}
@@ -1443,31 +1447,30 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                         (dispatchOptions.data.technicians.length ? (
                           <div
                             className="manual-dispatch-list"
-                            role="radiogroup"
-                            aria-label="Choose technician"
+                            role="group"
+                            aria-label="Choose team members"
                           >
                             {dispatchOptions.data.technicians.map(
                               (technician) => (
                                 <label
                                   className="manual-dispatch-option"
-                                  data-disabled={!technician.eligible}
+                                  data-disabled={technician.accountStatus!=='Active'||['Unavailable','On Leave'].includes(technician.availability)}
                                   key={technician.technicianId}
                                 >
                                   <input
-                                    type="radio"
+                                    type="checkbox"
                                     name={`dispatch-technician-${bookingId}`}
                                     value={technician.technicianId}
                                     checked={
-                                      selectedTechnicianId ===
-                                      technician.technicianId
+                                      selectedTechnicianIds.includes(technician.technicianId)
                                     }
                                     disabled={
-                                      !technician.eligible || Boolean(busy)
+                                      technician.accountStatus !== 'Active' || ['Unavailable','On Leave'].includes(technician.availability) || Boolean(busy)
                                     }
                                     onChange={() => {
-                                      setSelectedTechnicianId(
-                                        technician.technicianId,
-                                      );
+                                      const next=selectedTechnicianIds.includes(technician.technicianId)?selectedTechnicianIds.filter(id=>id!==technician.technicianId):[...selectedTechnicianIds,technician.technicianId];
+                                      setSelectedTechnicianIds(next);
+                                      if(!selectedTechnicianId||!next.includes(selectedTechnicianId))setSelectedTechnicianId(next[0]??null);
                                       setError('');
                                     }}
                                   />
@@ -1515,7 +1518,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                         ))}
                     </div>
                   )}
-                  {dispatchOptions.data && !hasEligibleTechnician && (
+                  {dispatchMode==='automatic' && dispatchOptions.data && !hasEligibleTechnician && (
                     <p className="notice error mt-3" role="alert">
                       No technician is available for this appointment. Change
                       the appointment, move it to waiting dispatch, update
@@ -1523,20 +1526,21 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                       cannot be confirmed without an assignment.
                     </p>
                   )}
+                  {dispatchMode==='manual'&&selectedTechnicianIds.length>0&&<label className="mt-3 grid gap-2 text-sm">Lead technician<NativeSelect value={selectedTechnicianId??''} onChange={e=>setSelectedTechnicianId(Number(e.target.value))}>{selectedTechnicianIds.map(id=><option key={id} value={id}>{dispatchOptions.data?.technicians.find(t=>t.technicianId===id)?.fullName}</option>)}</NativeSelect><span>{selectedTechnicianIds.length} selected. Admin decides team size. Review checks the recalculated duration and availability.</span></label>}
                   <div className="mt-4">
                     <DispatchReviewButton
                       booking={booking}
                       mode={dispatchMode}
                       technicianId={selectedTechnicianId}
+                      technicianIds={selectedTechnicianIds}
                       onReload={dispatchOptions.reload}
                       disabled={
                         Boolean(busy) ||
                         scheduleDirty ||
                         travelDirty ||
                         dispatchOptions.loading ||
-                        !hasEligibleTechnician ||
-                        (dispatchMode === 'manual' &&
-                          !selectedTechnician?.eligible)
+                        (dispatchMode==='automatic' && !hasEligibleTechnician) ||
+                        (dispatchMode==='manual'&&(!selectedTechnicianIds.length||!selectedTechnicianId))
                       }
                     />
                     {dispatchAction === 'dispatch' && (

@@ -1,3 +1,4 @@
+import {notifyCustomerUpdate} from '@/lib/customer-updates';
 import { SiteIcon } from '@/components/ui/site-icon';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -183,7 +184,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             if (
               Number.isInteger(prefill.numberOfUnits) &&
               prefill.numberOfUnits! >= 1 &&
-              prefill.numberOfUnits! <= 10
+              prefill.numberOfUnits! <= 20
             )
               setUnitsCount(prefill.numberOfUnits!);
             if (prefill.symptoms?.trim()) {
@@ -258,6 +259,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       isOpen && currentUser && pricesReady && step === 'form' && !retryLocked,
     ),
     selectedServices.durationMinutes || undefined,
+    undefined,
+    unitsCount,
   );
   const selectedSlotCode =
     publicSlots.find((slot) => slot.label === timeSlot)?.code ??
@@ -362,6 +365,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         Boolean(pendingRequest.current.packageId),
         Number(pendingRequest.current.rewardPoints ?? 0),
       );
+      notifyCustomerUpdate();
       setCreated(data.booking);
       setRewardPoints(0);
       setRewardRuleVersion(undefined);
@@ -565,7 +569,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                         type="button"
                         aria-label="Add one AC unit"
                         onClick={() =>
-                          setUnitsCount(Math.min(10, unitsCount + 1))
+                          setUnitsCount(Math.min(20, unitsCount + 1))
                         }
                         className="w-12 h-full bg-ac-surface-container-low hover:bg-ac-surface-container font-bold text-ac-primary text-lg cursor-pointer border-none transition-colors flex items-center justify-center"
                       >

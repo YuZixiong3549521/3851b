@@ -122,6 +122,7 @@ export async function awardCompletedBookingRewards(c, rawBookingId) {
       note = `Reserved reward reduced from ${requestedPoints} to ${redeemedPoints} points at completion because the available balance or service value changed.`;
       await appendPoints(c, account, bookingId, 0, 'Adjusted', note);
     }
+    await c.execute("INSERT INTO reward_activity(booking_id,loyalty_account_id,kind,available_delta,points,description) VALUES (?,?,'Settled',?,?,?)",[bookingId,account.loyalty_account_id,requestedPoints-redeemedPoints,redeemedPoints,'Reserved points settled at completion. No second deduction from available points.']);
     if (redeemedPoints) await appendPoints(c, account, bookingId, -redeemedPoints, 'Redeemed', 'Reserved reward applied when the service was completed.');
     await c.execute('UPDATE reward_reservation SET points=?,discount_amount=?,status=?,reason=? WHERE booking_id=?', [redeemedPoints, discount / 100, redeemedPoints ? 'Redeemed' : 'Released', note || 'Reward applied when the service was completed.', bookingId]);
   }
@@ -185,6 +186,10 @@ async function validateRewardSelection(c, account, quoteCents, points, bookingId
 }
 
 async function saveRewardReservation(c, bookingId, account, selected, reason) {
+  const [[old]]=await c.execute('SELECT points,status FROM reward_reservation WHERE booking_id=? FOR UPDATE',[bookingId]);
+  const before=old?.status==='Reserved'?Number(old.points):0;
+  const delta=Number(selected.points)-before;
+  if(delta) await c.execute("INSERT INTO reward_activity(booking_id,loyalty_account_id,kind,available_delta,points,description) VALUES (?,?,?,?,?,?)",[bookingId,account.loyalty_account_id,delta>0?'Reserved':'Returned',-delta,Math.abs(delta),reason]);
   await c.execute(`INSERT INTO reward_reservation(booking_id,loyalty_account_id,points,discount_amount,rule_version,status,reason,redemption_points,redemption_value)
     VALUES (?,?,?,?,?,'Reserved',?,?,?) ON DUPLICATE KEY UPDATE points=VALUES(points),discount_amount=VALUES(discount_amount),rule_version=VALUES(rule_version),status='Reserved',reason=VALUES(reason),redemption_points=VALUES(redemption_points),redemption_value=VALUES(redemption_value)`,
   [bookingId, account.loyalty_account_id, selected.points, selected.discount, selected.ruleVersion, reason, selected.redemptionPoints, selected.redemptionValue]);
@@ -218,7 +223,11 @@ export async function releaseBookingRewardReservation(c, bookingId, reason = 'Bo
   // operation locks the wallet and then all active reservation rows.
   const [[account]] = await c.execute('SELECT loyalty_account_id FROM loyalty_account WHERE customer_id=? FOR UPDATE', [b.customer_id]);
   if (!account) return;
-  await c.execute("UPDATE reward_reservation SET status='Released',reason=? WHERE booking_id=? AND status='Reserved'", [reason.slice(0, 255), bookingId]);
+  const [[reservation]]=await c.execute("SELECT points FROM reward_reservation WHERE booking_id=? AND status='Reserved' FOR UPDATE",[bookingId]);
+  if(reservation) {
+    await c.execute("UPDATE reward_reservation SET status='Released',reason=? WHERE booking_id=? AND status='Reserved'", [reason.slice(0, 255), bookingId]);
+    await c.execute("INSERT INTO reward_activity(booking_id,loyalty_account_id,kind,available_delta,points,description) VALUES (?,?,'Returned',?,?,?)",[bookingId,account.loyalty_account_id,reservation.points,reservation.points,reason.slice(0,255)]);
+  }
 }
 export async function adjustReward(pool, actorId, customerId, raw) {
   customerId = idSchema.parse(customerId);
@@ -276,9 +285,13 @@ export async function rewardsSummary(pool, customerId) {
   const [history] = account ? await pool.execute(`SELECT t.loyalty_transaction_id AS id,t.booking_id AS bookingId,b.created_at AS bookingCreatedAt,t.transaction_type AS type,t.points,t.description,UNIX_TIMESTAMP(t.created_at) AS createdAt,u.full_name AS adjustedBy
     FROM loyalty_transaction t LEFT JOIN booking b ON b.booking_id=t.booking_id LEFT JOIN reward_adjustment_audit a ON a.loyalty_transaction_id=t.loyalty_transaction_id LEFT JOIN user_account u ON u.user_id=a.actor_user_id
     WHERE t.loyalty_account_id=? ORDER BY t.loyalty_transaction_id DESC LIMIT 200`, [account.id]) : [[]];
+  const [activity]=account?await pool.execute(`SELECT CONCAT('activity:',a.activity_id) AS id,a.booking_id AS bookingId,b.created_at AS bookingCreatedAt,
+    a.kind AS type,a.available_delta AS points,a.available_delta AS availableDelta,a.points AS reservedPoints,a.description,UNIX_TIMESTAMP(a.created_at) AS createdAt
+    FROM reward_activity a JOIN booking b ON b.booking_id=a.booking_id WHERE a.loyalty_account_id=? ORDER BY a.created_at DESC,a.activity_id DESC LIMIT 200`,[account.id]):[[]];
+  const merged=[...history.map(r=>({...r,availableDelta:r.type==='Redeemed'?0:r.points,settledPoints:r.type==='Redeemed'?Math.abs(r.points):undefined})),...activity].sort((a,b)=>Number(b.createdAt)-Number(a.createdAt)||String(b.id).localeCompare(String(a.id))).slice(0,200);
   const balance = number(account?.balance), reserved = number(account?.reserved);
   const bookings = await listRewardBookings(pool, customerId);
-  return { rules: config, balance, reserved, available: Math.max(0, balance - reserved), debt: Math.max(0, -balance), history: history.map(row => ({ ...withBookingReference(row), createdAt: instant(row.createdAt) })), bookings };
+  return { rules: config, balance, reserved, available: Math.max(0, balance - reserved), debt: Math.max(0, -balance), history: merged.map(row => ({ ...withBookingReference(row), createdAt: instant(row.createdAt) })), bookings };
 }
 
 export const reportFilterSchema = z.object({ from: date, to: date, serviceId: idSchema.optional(), serviceGroup: z.enum(['annual']).optional(), technicianId: idSchema.optional(), groupBy: z.enum(['day', 'quarter', 'year']).default('day') }).strict()

@@ -199,7 +199,7 @@ test('assistant review validates contact phone and calendar rules without creati
     assert.equal(result.status,409);assert.equal(result.data.code,'SCHEDULE_CONFLICT');
     assert.equal(result.data.details.conflicts[0].preferredDate,preferredDate);
   }
-  for(const numberOfUnits of [0,11,2.5])assert.equal((await client.request(`${prefix}/draft`,'PUT',{
+  for(const numberOfUnits of [0,21,2.5])assert.equal((await client.request(`${prefix}/draft`,'PUT',{
     ...identity(client.user,state),draft:{...state.draft,numberOfUnits},
   })).status,400);
   state=await save(client,{...state.draft,preferredDate:futureDate()},state);

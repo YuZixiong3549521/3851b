@@ -170,11 +170,14 @@ type Review = {
   timeSlot: string;
   travelBufferMinutes: number;
   technicianId: number;
+  technicianIds:number[];
+  estimatedDurationMinutes:number|null;
 };
 type Confirmation = {
   requestId: string;
   mode: 'automatic' | 'manual';
   technicianId?: number;
+  technicianIds?:number[];leadTechnicianId?:number;slotEnd?:string|null;
   review: Review;
   technicianName: string;
 };
@@ -182,12 +185,14 @@ export function DispatchReviewButton({
   booking,
   mode,
   technicianId,
+  technicianIds=[],
   disabled,
   onReload,
 }: {
   booking: AdminBookingDetail;
   mode: 'automatic' | 'manual';
   technicianId: number | null;
+  technicianIds?:number[];
   disabled: boolean;
   onReload: () => void;
 }) {
@@ -206,7 +211,7 @@ export function DispatchReviewButton({
     setConfirmation(null);
     try {
       const options = await api<DispatchOptions>(
-        `/admin/bookings/${booking.bookingId}/dispatch-options`,
+        `/admin/bookings/${booking.bookingId}/dispatch-options${mode==='manual'?'?teamSize='+technicianIds.length:''}`,
       );
       const tech =
         mode === 'manual'
@@ -214,6 +219,8 @@ export function DispatchReviewButton({
               (t) => t.technicianId === technicianId && t.eligible,
             )
           : options.technicians.find((t) => t.eligible);
+      const members=mode==='manual'?technicianIds.map(id=>options.technicians.find(t=>t.technicianId===id&&t.eligible)).filter((t):t is NonNullable<typeof t>=>Boolean(t)):options.technicians.filter(t=>t.eligible).slice(0,options.requiredTechnicians);
+      if(members.length!==(mode==='manual'?technicianIds.length:options.requiredTechnicians))throw new Error('Not enough eligible technicians for this team and duration. Change the appointment or team.');
       if (!tech)
         throw new Error(
           'No eligible technician is available. Refresh the booking and select another time or use the waiting queue.',
@@ -230,14 +237,17 @@ export function DispatchReviewButton({
       setConfirmation({
         requestId: crypto.randomUUID(),
         mode,
-        ...(mode === 'manual' ? { technicianId: tech.technicianId } : {}),
-        technicianName: tech.fullName,
+        ...(mode === 'manual' ? { technicianIds: members.map(t=>t.technicianId),leadTechnicianId:tech.technicianId } : {}),
+        slotEnd:options.slotEnd,
+        technicianName: members.map(t=>t.fullName+(t.technicianId===tech.technicianId?' (Lead)':'')).join(', '),
         review: {
           status: options.status as Review['status'],
           date: options.preferredDate,
           timeSlot: options.timeSlot,
           travelBufferMinutes: options.travelBufferMinutes,
           technicianId: tech.technicianId,
+          technicianIds:members.map(t=>t.technicianId),
+          estimatedDurationMinutes:options.estimatedDurationMinutes??null,
         },
       });
     } catch (cause) {
@@ -251,7 +261,7 @@ export function DispatchReviewButton({
     if (!confirmation || busy) return;
     setBusy(true);
     setError('');
-    const { technicianName, ...payload } = confirmation;
+    const { technicianName, slotEnd, ...payload } = confirmation;
     try {
       await api(
         `/admin/bookings/${booking.bookingId}/${redispatch ? 'redispatch' : 'dispatch'}`,
@@ -318,14 +328,14 @@ export function DispatchReviewButton({
                 <dd>
                   {dayLabel(confirmation.review.date)} ·{' '}
                   {formatTimeSlot(
-                    booking.slotStart && booking.slotEnd
-                      ? `${booking.slotStart.slice(0, 5)} - ${booking.slotEnd.slice(0, 5)}`
+                    booking.slotStart && confirmation.slotEnd
+                      ? `${booking.slotStart.slice(0, 5)} - ${confirmation.slotEnd.slice(0, 5)}`
                       : confirmation.review.timeSlot,
                   )}
                 </dd>
               </div>
               <div>
-                <dt className="muted">Technician</dt>
+                <dt className="muted">Technician team</dt>
                 <dd>
                   {confirmation.technicianName} ·{' '}
                   {confirmation.mode === 'automatic'
@@ -334,8 +344,8 @@ export function DispatchReviewButton({
                 </dd>
               </div>
               <div>
-                <dt className="muted">Travel allowance</dt>
-                <dd>{confirmation.review.travelBufferMinutes} minutes</dd>
+                <dt className="muted">Estimated duration / travel allowance</dt>
+                <dd>{confirmation.review.estimatedDurationMinutes ?? 'Not recorded'} minutes service · {confirmation.review.travelBufferMinutes} minutes travel</dd>
               </div>
             </dl>
           )}

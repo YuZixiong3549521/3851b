@@ -669,5 +669,8 @@ test('profile leave changes reject active work, reserved return visits and insuf
  await insert('09:00:00','10:00:00');const second=await insert('09:15:00','09:45:00');
  await assert.rejects(saveProfile(db,a.userId,input),e=>e.status===409&&/reserved customer time slots/.test(e.message));
  await c.execute("UPDATE booking SET slot_start='10:00:00',slot_end='11:00:00' WHERE booking_id=?",[second]);
+ await assert.rejects(saveProfile(db,a.userId,input),e=>e.status===409&&/reserved customer time slots/.test(e.message));
+ // The next visit also reserves its travel buffer before service starts.
+ await c.execute("UPDATE booking SET slot_start='10:30:00',slot_end='11:30:00' WHERE booking_id=?",[second]);
  assert.equal((await saveProfile(db,a.userId,input)).availability,'On Leave');
 }));

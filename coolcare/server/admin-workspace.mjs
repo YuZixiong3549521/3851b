@@ -1,3 +1,4 @@
+import {memberSql} from './teams.mjs';
 import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
 import { assertAdminOrderEditable } from './admin-order-policy.mjs';
 import { z } from 'zod';
@@ -196,6 +197,8 @@ export async function getBookingPlanner(pool, bookingId, query) {
   const dates = Array.from({ length: 7 }, (_, i) => addCalendarDays(start, i));
   const capacity = await getTeamSlotAvailability(pool, dates, {
     durationMinutes: booking.estimated_duration_minutes,
+    technicians:booking.required_technicians,
+    travelBufferMinutes:booking.travel_buffer_minutes,
     excludeBookingId: bookingId,
   });
   const includesCleaning = await bookingIncludesCleaning(pool, bookingId);
@@ -342,7 +345,7 @@ export async function getOperationsOverview(pool) {
   const [workload] = await pool.execute(
     `SELECT t.technician_id AS technicianId,u.full_name AS name,u.status AS accountStatus,t.availability_status AS availability,
     (SELECT COUNT(DISTINCT w.job_id) FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id LEFT JOIN service_progress p ON p.job_id=w.job_id
-    WHERE a.technician_id=t.technician_id AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status<>'Cancelled'
+    WHERE ${memberSql('a','t.technician_id')} AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status<>'Cancelled'
     AND (DATE(w.appointment_date)=? OR (p.follow_up_date=? AND p.follow_up_status IN ('Scheduled','In Progress')))) AS visitsToday
     FROM technician t JOIN user_account u ON u.user_id=t.user_id ORDER BY u.status='Active' DESC,u.full_name,t.technician_id`,
     [today, today],

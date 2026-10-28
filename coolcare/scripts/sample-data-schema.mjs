@@ -1,4 +1,5 @@
 export const sampleDataTables = [
+  'reward_activity', 'assignment_member', 'visit_member',
   'performance_operation', 'performance_feedback', 'performance_quality', 'performance_visit',
   'annual_renewal_bonus', 'annual_plan_notice', 'annual_plan_renewal', 'commerce_payment', 'commerce_operation',
   'reward_adjustment_audit', 'reward_reservation', 'reward_booking_earning', 'booking_completion_reward',
@@ -14,8 +15,10 @@ export const sampleDataTables = [
   'aircon_unit', 'service_address', 'chatbot_message', 'chatbot_conversation', 'web_legacy_import',
 ];
 
+export const optionalSampleDataTables = ['booking_customer_edit'];
 export function sampleDataDeletionOrder(edges) {
   const pending = new Set(sampleDataTables);
+  for(const table of optionalSampleDataTables)if(edges.some(edge=>edge.child===table))pending.add(table);
   for (const edge of edges) {
     if (pending.has(edge.parent) && !pending.has(edge.child)) {
       throw new Error(`A retained table references replaced business data: ${edge.child}. Review before replacing.`);

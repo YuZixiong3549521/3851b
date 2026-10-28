@@ -177,7 +177,7 @@ function ReportEditor({ row, onClose, onSaved }) {
                     setSignatureReset(n => n + 1);
                   }}/>
                 </fieldset>
-                <ServicePhotos key={data.report?.reportId} reportId={data.report?.reportId} jobId={row.jobId} disabled={saving||uncertain} onLockedChange={setPhotosLocked}/>
+                <ServicePhotos key={data.report?.reportId} reportId={data.report?.reportId} jobId={row.jobId} disabled={!data.isLead||saving||uncertain} onLockedChange={setPhotosLocked}/>
                 <fieldset disabled={locked}>
                   {contentChanged &&
                     (data.report?.customerSignatureUrl ||
@@ -258,7 +258,7 @@ function ReportEditor({ row, onClose, onSaved }) {
                       <p className="whitespace-pre-wrap">{data.report?.[key] || 'Not recorded'}</p>
                     </section>
                   ))}
-                  <ServicePhotos key={data.report?.reportId} reportId={data.report?.reportId} jobId={row.jobId} disabled={saving||uncertain} onLockedChange={setPhotosLocked}/>
+                  <ServicePhotos key={data.report?.reportId} reportId={data.report?.reportId} jobId={row.jobId} disabled={!data.isLead||saving||uncertain} onLockedChange={setPhotosLocked}/>
                   {['customer', 'technician'].map((who) => (
                     <section key={who}>
                       <h3>
@@ -276,7 +276,7 @@ function ReportEditor({ row, onClose, onSaved }) {
                     </section>
                   ))}
                 </div>
-                {data.canEdit && <Button onClick={() => setEdit(true)}>Edit report</Button>}
+                {data.team?.length>0 && <p>Team: {data.team.map(t=>t.fullName+(t.isLead?' (Lead)':'')).join(', ')}</p>}{data.isLead===false && <p>Read only — the lead technician submits this report.</p>}{data.canEdit && <Button onClick={() => setEdit(true)}>Edit report</Button>}
               </>
             )}
             {data.history.length > 0 && (

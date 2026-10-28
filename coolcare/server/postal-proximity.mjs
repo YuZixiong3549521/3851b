@@ -1,3 +1,4 @@
+import {memberSql} from './teams.mjs';
 export function postalProximity(destination, origin) {
   const valid = (value) => /^\d{6}$/.test(String(value ?? '').trim());
   if (!valid(destination) || !valid(origin))
@@ -30,7 +31,7 @@ export async function addDispatchProximity(connection, booking, technicians) {
       `SELECT sa.postal_code AS postalCode,b.booking_id AS bookingId
       FROM assignment a JOIN work_order w ON w.assignment_id=a.assignment_id
       JOIN booking b ON b.booking_id=w.booking_id JOIN service_address sa ON sa.address_id=b.address_id
-      WHERE a.technician_id=? AND b.preferred_service_date=? AND b.slot_end<=? AND b.booking_id<>?
+      WHERE EXISTS(SELECT 1 FROM technician member_tech WHERE member_tech.technician_id=? AND ${memberSql('a','member_tech.technician_id')}) AND b.preferred_service_date=? AND b.slot_end<=? AND b.booking_id<>?
       AND a.assignment_status NOT IN ('Declined','Reassigned','Cancelled') AND w.current_status<>'Cancelled'
       ORDER BY b.slot_end DESC,b.booking_id DESC LIMIT 1`,
       [technician.technicianId, date, booking.slot_start, booking.booking_id],

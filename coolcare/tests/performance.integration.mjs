@@ -348,10 +348,12 @@ test('reassignment and return visit never move a previous report score onto a ne
       'SELECT * FROM performance_visit WHERE report_id=?',
       [a.reportId],
     );
-    await c.execute(
-      'UPDATE assignment SET technician_id=? WHERE assignment_id=?',
-      [other.id, a.assignmentId],
-    );
+    // A new visit gets a new assignment, as in the production return workflow.
+    // The previous assignment's immutable team remains attached to its old visit.
+    const [nextAssignment]=await c.execute(`INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status)
+      SELECT booking_id,?,assigned_by_admin_id,'Assigned' FROM assignment WHERE assignment_id=?`,[other.id,a.assignmentId]);
+    await c.execute("UPDATE assignment SET assignment_status='Reassigned' WHERE assignment_id=?",[a.assignmentId]);
+    await c.execute('UPDATE work_order SET assignment_id=? WHERE job_id=?',[nextAssignment.insertId,a.jobId]);
     await c.execute(
       "UPDATE work_order SET current_status='Return visit',appointment_time='15:00:00' WHERE job_id=?",
       [a.jobId],

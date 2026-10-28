@@ -413,7 +413,8 @@ test('concurrent reservations and completions serialize wallets without overspen
         await d.execute('DELETE p FROM commerce_payment p JOIN booking b ON b.booking_id=p.booking_id WHERE b.customer_id=?', [customer.customerId]);
         await d.execute('DELETE e FROM reward_booking_earning e JOIN booking b ON b.booking_id=e.booking_id WHERE b.customer_id=?', [customer.customerId]);
         await d.execute('DELETE e FROM booking_completion_reward e JOIN booking b ON b.booking_id=e.booking_id WHERE b.customer_id=?', [customer.customerId]);
-        await d.execute('DELETE r FROM reward_reservation r JOIN booking b ON b.booking_id=r.booking_id WHERE b.customer_id=?', [customer.customerId]);
+        await d.execute('DELETE activity FROM reward_activity activity JOIN booking b ON b.booking_id=activity.booking_id WHERE b.customer_id=?',[customer.customerId]);
+      await d.execute('DELETE r FROM reward_reservation r JOIN booking b ON b.booking_id=r.booking_id WHERE b.customer_id=?', [customer.customerId]);
         await d.execute('DELETE FROM loyalty_account WHERE customer_id=?', [customer.customerId]);
         await d.execute('DELETE FROM booking WHERE customer_id=?', [customer.customerId]);
         await d.execute('DELETE FROM service_address WHERE customer_id=?', [customer.customerId]);

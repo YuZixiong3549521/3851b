@@ -82,13 +82,14 @@ export async function getBookingSlotAvailability(pool,untrustedDates,query={},us
   const dates=String(untrustedDates??'').split(',').map(value=>value.trim()).filter(Boolean);
   if(!dates.length||dates.length>4||dates.some(value=>!isCalendarDate(value)))throw new HttpError(400,'Choose between one and four valid service dates.');
   const options={};
+  if(query.numberOfUnits!==undefined)options.technicians=Math.ceil(z.coerce.number().int().min(1).max(20).parse(query.numberOfUnits)/4);
   if(query.durationMinutes!==undefined)options.durationMinutes=z.coerce.number().int().min(1).max(540).parse(query.durationMinutes);
   if(query.excludeBookingId!==undefined) {
     const id=z.coerce.number().int().positive().parse(query.excludeBookingId);
     const customer=await getDemoCustomer(pool,userId);
-    const [[booking]]=await pool.execute('SELECT estimated_duration_minutes FROM booking WHERE booking_id=? AND customer_id=?',[id,customer.customerId]);
+    const [[booking]]=await pool.execute('SELECT estimated_duration_minutes,required_technicians,travel_buffer_minutes FROM booking WHERE booking_id=? AND customer_id=?',[id,customer.customerId]);
     if(!booking)throw new HttpError(404,'Booking not found.');
-    options.excludeBookingId=id;options.durationMinutes=booking.estimated_duration_minutes;
+    options.excludeBookingId=id;options.durationMinutes=booking.estimated_duration_minutes;options.technicians=booking.required_technicians;options.travelBufferMinutes=booking.travel_buffer_minutes;
   }
   return getTeamSlotAvailability(pool,dates,options);
 }

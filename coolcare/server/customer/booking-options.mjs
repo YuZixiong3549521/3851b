@@ -1,3 +1,4 @@
+import { recommendedTeamSize,teamDuration } from '../teams.mjs';
 import { HttpError } from './errors.mjs';
 import { attachAnnualBundles } from './annual-bookings.mjs';
 import {addCalendarDays} from './booking-schedule.mjs';
@@ -133,8 +134,11 @@ export async function resolveBookingSelection(connection, customerId, input, num
     service.lineTotal = index === services.length - 1 ? Number((totalAmount - allocated).toFixed(2)) : Number((fullTotal ? service.lineTotal / fullTotal * totalAmount : 0).toFixed(2));
     allocated += service.lineTotal;
   });
-  const estimatedDurationMinutes=services.reduce((sum,service)=>sum+Number(service.durationMinutes||60)*(service.code==='cleaning'?numberOfUnits:1),0);
-  return { services, totalAmount, estimatedDurationMinutes,durationMinutes:estimatedDurationMinutes,includesCleaning:services.some(service=>service.code==='cleaning'),package: selectedPackage, annual:Boolean(selectedPackage), serviceName: services.map(s => s.name).join(' + ') };
+  const requiredTechnicians=recommendedTeamSize(numberOfUnits);
+  const cleaningMinutesPerUnit=services.filter(s=>s.code==='cleaning').reduce((n,s)=>n+Number(s.durationMinutes||45),0);
+  const diagnosticMinutes=services.filter(s=>s.code!=='cleaning').reduce((n,s)=>n+Number(s.durationMinutes||60),0);
+  const estimatedDurationMinutes=teamDuration(numberOfUnits,requiredTechnicians,cleaningMinutesPerUnit,diagnosticMinutes);
+  return { services, totalAmount, requiredTechnicians, cleaningMinutesPerUnit, diagnosticMinutes, estimatedDurationMinutes,durationMinutes:estimatedDurationMinutes,includesCleaning:services.some(service=>service.code==='cleaning'),package: selectedPackage, annual:Boolean(selectedPackage), serviceName: services.map(s => s.name).join(' + ') };
 }
 
 export async function saveBookingSelection(connection, bookingId, selection) {

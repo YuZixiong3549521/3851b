@@ -33,7 +33,7 @@ test('public registration, sessions, booking, retry, cross-portal reads, ownersh
   const oldPortal=await (await req('/api/customer/bookings')).json();assert.equal(oldPortal.bookings.length,1);assert.equal(oldPortal.bookings[0].bookingId,created.booking.id);
   const [[persisted]]=await c.execute('SELECT COUNT(*) AS count FROM booking WHERE booking_id=?',[created.booking.id]);assert.equal(persisted.count,1);
   assert.equal((await req('/api/public/bookings','POST',{...input,requestId:randomUUID(),preferredDate:'2027-02-30'})).status,400);
-  assert.equal((await req('/api/public/bookings','POST',{...input,requestId:randomUUID(),numberOfUnits:11})).status,400);
+  assert.equal((await req('/api/public/bookings','POST',{...input,requestId:randomUUID(),numberOfUnits:21})).status,400);
   assert.equal((await req('/api/public/bookings/user/1')).status,403);
   assert.equal((await req('/api/public/bookings/1/status','PATCH',{status:'Cancelled'})).status,404);
   assert.equal((await req(`/api/public/bookings/${created.booking.id}/reschedule`,'PATCH',{preferredDate:'2027-02-30',timeWindow:input.timeWindow})).status,400);
