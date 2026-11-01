@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { NativeSelect } from '@/components/ui/native-select';
-import { api, ApiError, errorText, useResource } from '@/lib/inventory-client';
+import { api, ApiError, errorText, useInventory, useResource } from '@/lib/inventory-client';
+import { planFiltersUrl, readPlanFilters } from '@/lib/admin-navigation.mjs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import type { AnnualPlan } from '@/lib/customer-plans-api';
@@ -17,10 +18,13 @@ import { Feedback, Metric } from './commerce-shared';
 import { matchesPlanAttention } from '@/lib/admin-plan-filters.mjs';
 import { singaporeToday } from '@/lib/booking-schedule';
 
-export function AdminPlans() {
+export function AdminPlans({ params }: { params: URLSearchParams }) {
+  const { go } = useInventory();
   const { data, error, loading, reload } = useResource<{ plans: AnnualPlan[] }>('/commerce/admin/plans');
-  const [search, setSearch] = useState(''), [status, setStatus] = useState('');
-  const [attention, setAttention] = useState('all');
+  const { search, status, attention } = readPlanFilters(params);
+  const setSearch = (q: string) => go(planFiltersUrl(params, { q }), false, true);
+  const setStatus = (status: string) => go(planFiltersUrl(params, { status }));
+  const setAttention = (attention: string) => go(planFiltersUrl(params, { attention }));
   const [contactPlan, setContactPlan] = useState<AnnualPlan | null>(null);
   const [channel, setChannel] = useState('Phone'), [note, setNote] = useState('');
   const [saving, setSaving] = useState(false), [saveError, setSaveError] = useState('');
@@ -48,12 +52,13 @@ export function AdminPlans() {
     {loading && !data && <p role="status">Loading annual plans…</p>}
     {data && <>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><Metric title="Annual plans" value={plans.length} /><Metric title="Active plans" value={plans.filter(plan => plan.status === 'Active').length} /><Metric title="Completed quarterly visits" value={plans.reduce((sum, plan) => sum + plan.completedVisits, 0)} /><Metric title="Open quarterly visits" value={plans.reduce((sum, plan) => sum + plan.remainingVisits, 0)} /></div>
-      <div className="flex flex-wrap gap-3"><label className="grid min-w-0 flex-1 gap-2 text-sm">Find a package<Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Customer, email, address or plan ID" /></label><label className="grid gap-2 text-sm">Plan status<NativeSelect value={status} onChange={event => setStatus(event.target.value)}><option value="">All statuses</option>{['Active', 'Completed', 'Expired', 'Cancelled'].map(value => <option key={value}>{value}</option>)}</NativeSelect></label></div>
+      <div className="flex flex-wrap gap-3"><label className="grid min-w-0 flex-1 gap-2 text-sm">Find a package<Input value={search} maxLength={120} onChange={event => setSearch(event.target.value)} placeholder="Customer, email, address or plan ID" /></label><label className="grid gap-2 text-sm">Plan status<NativeSelect value={status} onChange={event => setStatus(event.target.value)}><option value="">All statuses</option>{['Active', 'Completed', 'Expired', 'Cancelled'].map(value => <option key={value}>{value}</option>)}</NativeSelect></label></div>
       <p className="text-sm text-muted-foreground">Showing {visible.length} of {plans.length} plans. Values describe agreed service prices, not payments received.</p>
       <label htmlFor="admin-plan-attention" className="grid gap-2 text-sm sm:max-w-sm">Renewal attention<NativeSelect id="admin-plan-attention" value={attention} onChange={e => setAttention(e.target.value)}>
         <option value="all">All packages</option><option value="unrenewed">Not renewed</option><option value="renewable">Ready for renewal</option>
         <option value="expiring">Plan expires within 30 days</option><option value="bonus">Eligible for early renewal points</option><option value="bonus-soon">Points offer ends within 14 days</option>
         <option value="reminder-due">Renewal contact due within 14 days or overdue</option><option value="contacted">Contact recorded for current dates</option>
+        <option value="reminder-overdue">Renewal contact overdue</option>
       </NativeSelect></label>
       <p className="text-sm text-muted-foreground">Renewal opens 60 days before the final scheduled visit. Renew before that visit starts to qualify for the displayed bonus; points are credited after the new plan’s first service completes.</p>
       {!visible.length && <p className="rounded-2xl border bg-card p-6">No yearly packages match these filters.</p>}

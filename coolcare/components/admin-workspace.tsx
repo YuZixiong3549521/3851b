@@ -387,6 +387,7 @@ export function DispatchReviewButton({
 
 type Planner = {
   week: string;
+  requiredTechnicians: number;
   days: Array<{
     date: string;
     closed: boolean;
@@ -403,10 +404,12 @@ type Planner = {
 export function AdminPlanner({
   booking,
   disabled,
+  selection,
   onSelect,
 }: {
   booking: AdminBookingDetail;
   disabled: boolean;
+  selection: { date: string; timeSlot: string } | null;
   onSelect: (date: string, slot: string) => void;
 }) {
   const { version } = useInventory();
@@ -424,7 +427,7 @@ export function AdminPlanner({
       : null,
     version,
   );
-  const [selected, setSelected] = useState('');
+  const selected = selection ? selection.date + selection.timeSlot : '';
   return (
     <section className="mt-5 rounded-xl border p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -432,7 +435,8 @@ export function AdminPlanner({
           <h3 className="font-semibold">Find an alternative appointment</h3>
           <p className="text-sm muted">
             A full week, with available business-hour starts. Selecting a time
-            fills the appointment form for review.
+            fills the appointment form for review. Saving checks availability again.
+            {booking.status === 'Assigned' && ' Changing this appointment releases the current team and returns the order to waiting dispatch after final confirmation.'}
           </p>
         </div>
         <Button
@@ -509,7 +513,7 @@ export function AdminPlanner({
                             {day.closed
                               ? 'Closed — weekend'
                               : slot.available
-                                ? `${slot.eligibleCount} eligible technician(s)`
+                                ? `${slot.eligibleCount} eligible · ${resource.data?.requiredTechnicians ?? 1} required`
                                 : slot.reason}
                           </p>
                           <Button
@@ -519,7 +523,6 @@ export function AdminPlanner({
                             disabled={disabled || !slot.available || day.closed}
                             aria-pressed={selected === day.date + slot.code}
                             onClick={() => {
-                              setSelected(day.date + slot.code);
                               onSelect(day.date, slot.code);
                             }}
                           >
@@ -726,6 +729,8 @@ export function AdminOverviewPage() {
     ['review', 'Awaiting review', '/admin/orders'],
     ['overdueReview', 'Unconfirmed for 24 hours', '/admin/orders?queue=overdue-review'],
     ['waiting', 'Waiting dispatch', '/admin/dispatch'],
+    ['renewalContactsDue', 'Renewal contact due', '/admin/plans?attention=reminder-due'],
+    ['renewalContactsOverdue', 'Renewal contact overdue', '/admin/plans?attention=reminder-overdue'],
     [
       'dueSoon',
       'Confirmation due within 12 hours',
@@ -778,6 +783,7 @@ export function AdminOverviewPage() {
               </section>
             ))}
           </div>
+          <p className="mt-3 text-sm muted">Renewal contact due includes uncontacted plans due within 14 days and overdue plans. Overdue is the subset whose deadline has already passed.</p>
           <section className="panel mt-6">
             <h2>Technician workload today</h2>
             <p className="muted text-sm">

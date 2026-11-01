@@ -18,6 +18,9 @@ test('renewal contact is due at the Singapore 14-day boundary and remains due wh
   assert.equal(changed.contacted, false);
   assert.equal(changed.due, true);
   assert.equal(matchesPlanAttention({ reminder: changed }, 'reminder-due', '2027-01-01'), true);
+  assert.equal(matchesPlanAttention({ reminder: { due: true, dueDate: '2026-12-31' } }, 'reminder-overdue', '2027-01-01'), true);
+  assert.equal(matchesPlanAttention({ reminder: { due: true, dueDate: '2027-01-01' } }, 'reminder-overdue', '2027-01-01'), false);
+  assert.equal(matchesPlanAttention({ reminder: { due: false, dueDate: '2026-12-31' } }, 'reminder-overdue', '2027-01-01'), false);
 });
 
 test('overview queue bounds include the whole Monday-to-Sunday week across years', () => {

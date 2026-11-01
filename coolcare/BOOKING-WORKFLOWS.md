@@ -176,6 +176,20 @@ Migrations 19 through 22 introduce the new policy, property-price snapshots, con
 
 # Admin operations workspace
 
+Order searches remain within their queue/status unless Admin explicitly selects
+All orders (`scope=all`). The browser URL retains the queue for clearing the search;
+pagination preserves the selected scope. Annual Packages stores search, status and
+renewal attention in URL parameters for refresh, browser history and direct links.
+Overview's renewal-contact due and overdue cards open those exact package filters;
+overdue pending contacts are included in the due count.
+
+Assigned orders that have not begun travel/service/inventory activity can preview
+alternative dates in the seven-day planner. Suggestions exclude the old reservation,
+use the saved team size/service duration and require enough eligible technicians
+free throughout the service and travel interval. Selecting a slot changes only the
+form. The existing final-confirmation reschedule transaction revalidates capacity
+and work state before releasing the old team and returning the order to dispatch.
+
 Admin can reschedule an Assigned visit before travel or work begins, with a final
 review of the old/new date and team release plus a required reason. Requests include
 `assignmentReview: { assignmentId, preferredDate, timeSlot, reason }`, where date/time

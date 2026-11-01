@@ -222,7 +222,7 @@ export type Options = {
 export const AppContext = createContext<{
   user: User;
   url: string;
-  go: (url: string, force?: boolean) => void;
+  go: (url: string, force?: boolean, replace?: boolean) => void;
   setDirty: (v: boolean) => void;
   notify: (text: string) => void;
   version: number;

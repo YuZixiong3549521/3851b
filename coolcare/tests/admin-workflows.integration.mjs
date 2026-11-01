@@ -1,6 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { adminOrderSearch } from '../lib/admin-navigation.mjs';
 import mysql from 'mysql2/promise';
 import {
   approveBooking,
@@ -49,6 +50,64 @@ test('overview links select the exact today, active and completed-week queues ac
   assert.equal((await listAdminBookings(db, { queue: 'completed-week', q: String(id) })).rows[0].bookingId, id);
 }));
 after(() => pool.end());
+
+test('browser search scope composes with real queue filters while explicit all-order search finds outside orders', () => fixture(async ({ c, db, create }) => {
+  const id = await create('Confirmed');
+  const params = new URLSearchParams({ queue: 'overdue-review', q: String(id) });
+  const list = mode => listAdminBookings(db, Object.fromEntries(adminOrderSearch(mode, params).query));
+  assert.equal((await list('review')).total, 0);
+  params.set('scope', 'all');
+  assert.equal((await list('review')).rows[0].bookingId, id);
+  params.delete('scope'); params.delete('queue');
+  assert.equal((await list('dispatch')).rows[0].bookingId, id);
+  const submitted = await create();
+  await c.execute('UPDATE booking SET created_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 25 HOUR) WHERE booking_id=?', [submitted]);
+  params.set('queue', 'overdue-review'); params.set('q', String(submitted));
+  assert.equal((await list('review')).rows[0].bookingId, submitted);
+}));
+
+test('assigned planner excludes the released visit but requires enough technicians free for the full duration', () => fixture(async ({ c, db, actor, create }) => {
+  const [technicians] = await c.execute("SELECT t.technician_id AS id FROM technician t JOIN user_account u ON u.user_id=t.user_id WHERE u.status='Active' ORDER BY t.technician_id LIMIT 3");
+  assert.equal(technicians.length, 3);
+  await c.execute("UPDATE technician SET availability_status='On Leave'");
+  await c.query("UPDATE technician SET availability_status='Available' WHERE technician_id IN (?)", [technicians.map(t => t.id)]);
+  async function assign(bookingId, technicianId, date, start, end) {
+    await c.execute('UPDATE booking SET booking_status=\'Assigned\',preferred_service_date=?,slot_start=?,slot_end=? WHERE booking_id=?', [date, start, end, bookingId]);
+    const [a] = await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Assigned')", [bookingId, technicianId, actor.userId]);
+    const [w] = await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status) VALUES (?,?,?,?,'Assigned')", [bookingId, a.insertId, `${date} ${start}`, start]);
+    return { assignmentId: a.insertId, jobId: w.insertId };
+  }
+  const target = await create('Assigned');
+  await c.execute('UPDATE booking SET required_technicians=2,estimated_duration_minutes=180 WHERE booking_id=?', [target]);
+  const team = await assign(target, technicians[0].id, '2091-01-08', '09:00:00', '12:00:00');
+  await c.execute('INSERT INTO assignment_member(assignment_id,technician_id) VALUES (?,?),(?,?)', [team.assignmentId, technicians[0].id, team.assignmentId, technicians[1].id]);
+  async function blocker(technicianId, start, end) {
+    const id = await create();
+    const [address] = await c.execute("INSERT INTO service_address(customer_id,address_line,postal_code) SELECT customer_id,?,'238839' FROM booking WHERE booking_id=?", [`Planner other address ${randomUUID()}`, id]);
+    await c.execute('UPDATE booking SET address_id=? WHERE booking_id=?', [address.insertId, id]);
+    await assign(id, technicianId, '2091-01-09', start, end);
+  }
+  await blocker(technicians[0].id, '09:00:00', '10:00:00');
+  await blocker(technicians[1].id, '11:00:00', '12:00:00');
+  const before = await getAdminBooking(db, target);
+  const plan = await getBookingPlanner(db, target, { week: '2091-01-08' });
+  assert.equal(plan.days.length, 7); assert.equal(plan.requiredTechnicians, 2);
+  const original = plan.days.find(day => day.date === '2091-01-08').slots.find(slot => slot.start === '09:00:00');
+  assert.equal(original.available, true, 'the original team can be considered after release');
+  assert.equal(original.eligibleCount, 3, 'original reservation does not block its own planner');
+  const nextDay = plan.days.find(day => day.date === '2091-01-09');
+  const morning = nextDay.slots.find(slot => slot.start === '09:00:00');
+  assert.equal(morning.end, '12:00:00'); assert.equal(morning.eligibleCount, 1); assert.equal(morning.available, false);
+  assert.match(morning.reason, /2 required/);
+  assert.equal(nextDay.slots.find(slot => slot.start === '14:00:00').available, true);
+  assert.equal(nextDay.slots.find(slot => slot.code === '16:00 - 18:00').available, false);
+  assert.ok(plan.days.filter(day => day.closed).every(day => day.slots.every(slot => !slot.available)));
+  const after = await getAdminBooking(db, target);
+  assert.equal(after.preferredDate, before.preferredDate); assert.deepEqual(after.assignments, before.assignments);
+  assert.equal((await listBookingEmails(db, target)).rows.length, 0);
+  await c.execute("UPDATE work_order SET current_status='On The Way' WHERE job_id=?", [team.jobId]);
+  await assert.rejects(getBookingPlanner(db, target, { week: '2091-01-08' }), e => e.status === 409);
+}));
 
 test('24-hour review reminders include waiting requests, exclude recent/expired/confirmed orders and match counts', () => fixture(async ({ c, db, actor, create }) => {
   const old = await create(), waiting = await create(), recent = await create(), expired = await create('Submitted', '2000-01-01 00:00:00'), confirmed = await create('Confirmed');

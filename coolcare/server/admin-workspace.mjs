@@ -1,6 +1,7 @@
 import {memberSql} from './teams.mjs';
 import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
-import { assertAdminOrderEditable } from './admin-order-policy.mjs';
+import { assertAdminOrderEditable, assignedRescheduleCondition } from './admin-order-policy.mjs';
+import { listAdminAnnualPlans } from './customer/plans.mjs';
 import { reviewOverdueCondition } from './admin-queue-filters.mjs';
 import { z } from 'zod';
 import { AppError, idSchema } from './inventory.mjs';
@@ -186,19 +187,20 @@ export async function getBookingPlanner(pool, bookingId, query) {
     -(new Date(`${week}T00:00:00Z`).getUTCDay() + 6) % 7,
   );
   const [[booking]] = await pool.execute(
-    `SELECT b.*,sa.address_line FROM booking b JOIN service_address sa ON sa.address_id=b.address_id WHERE b.booking_id=?`,
+    `SELECT b.*,sa.address_line,${assignedRescheduleCondition()} AS canRescheduleAssigned FROM booking b JOIN service_address sa ON sa.address_id=b.address_id WHERE b.booking_id=?`,
     [bookingId],
   );
   if (!booking) throw new AppError('Booking not found.', 404);
-  if (!['Submitted', 'Confirmed'].includes(booking.booking_status))
+  if (!['Submitted', 'Confirmed'].includes(booking.booking_status) && !booking.canRescheduleAssigned)
     throw new AppError(
-      'Only unassigned bookings can use alternative-time planning.',
+      'Alternative-time planning is available only before travel, service or inventory activity begins.',
       409,
     );
   const dates = Array.from({ length: 7 }, (_, i) => addCalendarDays(start, i));
+  const requiredTechnicians = Number(booking.required_technicians || 1);
   const capacity = await getTeamSlotAvailability(pool, dates, {
     durationMinutes: booking.estimated_duration_minutes,
-    technicians:booking.required_technicians,
+    technicians:requiredTechnicians,
     travelBufferMinutes:booking.travel_buffer_minutes,
     excludeBookingId: bookingId,
   });
@@ -246,18 +248,19 @@ export async function getBookingPlanner(pool, bookingId, query) {
         const options = await listDispatchOptions(pool, bookingId, {
           date: day.date,
           timeSlot: slot.code,
-        });
+          slot: { code: slot.code, start: slot.start, end: slot.end },
+        }, { teamSize: requiredTechnicians });
         eligibleCount = options.technicians.filter(
           (row) => row.eligible,
         ).length;
-        if (!eligibleCount)
-          reason = 'No technician is free, including the travel allowance.';
+        if (eligibleCount < requiredTechnicians)
+          reason = `Only ${eligibleCount} technician(s) are free for the complete service and travel time; ${requiredTechnicians} required.`;
       }
       slots.push({ ...slot, available: !reason, reason, eligibleCount });
     }
     days.push({ date: day.date, closed: !isWeekday(day.date), slots });
   }
-  return { week: start, days };
+  return { week: start, days, requiredTechnicians };
 }
 
 const auditQuery = z.object({
@@ -355,11 +358,14 @@ export async function getOperationsOverview(pool) {
   const [failures] =
     await pool.execute(`SELECT email_id AS emailId,booking_id AS bookingId,(SELECT b.created_at FROM booking b WHERE b.booking_id=booking_email_outbox.booking_id) AS bookingCreatedAt,recipient,last_error AS lastError,next_attempt_at AS nextAttemptAt FROM booking_email_outbox
     WHERE event_type='booking.assigned' AND status='Pending' AND last_error IS NOT NULL ORDER BY next_attempt_at,email_id LIMIT 10`);
+  const { plans } = await listAdminAnnualPlans(pool);
+  const renewalContactsDue = plans.filter(plan => plan.reminder.due).length;
+  const renewalContactsOverdue = plans.filter(plan => plan.reminder.due && plan.reminder.dueDate < today).length;
   return {
     today,
     week,
     counts: Object.fromEntries(
-      Object.entries({ ...counts, ...mail, ...returns }).map(([key, value]) => [
+      Object.entries({ ...counts, ...mail, ...returns, renewalContactsDue, renewalContactsOverdue }).map(([key, value]) => [
         key,
         Number(value || 0),
       ]),

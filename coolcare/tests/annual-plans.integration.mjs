@@ -12,12 +12,29 @@ import { openPrivilegedFixtureConnection } from './privileged-fixture.mjs';
 import { bookingReference } from '../server/booking-reference.mjs';
 import { recordPlanReminder } from '../server/admin-plan-reminders.mjs';
 import { rescheduleAdminBooking } from '../server/admin-operations.mjs';
+import { getOperationsOverview } from '../server/admin-workspace.mjs';
+import { matchesPlanAttention } from '../lib/admin-plan-filters.mjs';
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: process.env.DB_USER,
   password: process.env.DB_PASSWORD, database: process.env.DB_NAME, dateStrings: true, decimalNumbers: true, connectionLimit: 5,
 });
 after(() => pool.end());
+
+test('overview renewal links count the same due and overdue plans as the package filters and contact closes both', async () => fixture(async ({ c, db, seriesId }) => {
+  const [[admin]] = await c.execute("SELECT user_id AS id,'Admin' AS role FROM admin_profile LIMIT 1");
+  const today = singaporeToday();
+  await c.execute('UPDATE booking b JOIN annual_booking_visit v ON v.booking_id=b.booking_id SET b.preferred_service_date=DATE_SUB(?,INTERVAL 1 DAY) WHERE v.series_id=? AND v.visit_number=4', [today, seriesId]);
+  const { plans } = await listAdminAnnualPlans(db);
+  const plan = plans.find(plan => plan.seriesId === seriesId);
+  const overview = await getOperationsOverview(db);
+  for (const [filter, key] of [['reminder-due', 'renewalContactsDue'], ['reminder-overdue', 'renewalContactsOverdue']]) assert.equal(overview.counts[key], plans.filter(plan => matchesPlanAttention(plan, filter, today)).length);
+  assert.equal(matchesPlanAttention(plan, 'reminder-overdue', today), true);
+  await recordPlanReminder(db, admin, seriesId, { requestId: randomUUID(), reminderKey: plan.reminder.key, channel: 'Phone', note: 'Discussed renewal following the final visit.' });
+  const after = await getOperationsOverview(db);
+  assert.equal(after.counts.renewalContactsDue, overview.counts.renewalContactsDue - 1);
+  assert.equal(after.counts.renewalContactsOverdue, overview.counts.renewalContactsOverdue - 1);
+}));
 
 test('admin renewal contacts are private, durable, idempotent and invalidated by changed deadlines', async () => fixture(async ({ c, db, userId, seriesId }) => {
   const [[admin]] = await c.execute("SELECT u.user_id AS id,'Admin' AS role FROM user_account u JOIN admin_profile a ON a.user_id=u.user_id WHERE u.status='Active' LIMIT 1");

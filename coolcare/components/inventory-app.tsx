@@ -127,25 +127,26 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
     void loadActionSummary();
   }, [loadActionSummary]);
   const notify = useCallback((text: string) => setMessage(text), []);
-  const navigate = useCallback((target: string) => {
+  const navigate = useCallback((target: string, replace = false) => {
     if (!target.startsWith('/admin/')) {
       window.location.assign(target);
       return;
     }
     routeRef.current = target;
-    window.history.pushState({}, '', target);
+    if (replace) window.history.replaceState({}, '', target);
+    else window.history.pushState({}, '', target);
     setUrl(target);
-    window.scrollTo({ top: 0 });
+    if (!replace) window.scrollTo({ top: 0 });
   }, []);
   const go = useCallback(
-    (target: string, force = false) => {
+    (target: string, force = false, replace = false) => {
       if (!target.startsWith(ADMIN_ROOT)) return;
       if (dirtyRef.current && !force) {
         setPending(target);
         return;
       }
       if (force) setDirty(false);
-      navigate(target);
+      navigate(target, replace);
     },
     [navigate, setDirty],
   );
@@ -420,7 +421,7 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
               {pathname === '/admin/overview' ? (
                 <AdminOverviewPage />
               ) : pathname === '/admin/plans' ? (
-                <AdminPlans />
+                <AdminPlans params={params} />
               ) : pathname === '/admin/reports' ? (
                 <CommerceReportsPage />
               ) : pathname === '/admin/rewards' ? (

@@ -11,6 +11,7 @@ import { ServicePhotoGallery } from '@/components/service-photo-gallery';
 import { SignatureImage } from '@/components/signature-image';
 
 import { useEffect, useRef, useState } from 'react';
+import { adminOrderSearch } from '@/lib/admin-navigation.mjs';
 import {
   CalendarDays,
   ChevronLeft,
@@ -157,34 +158,8 @@ export function OrdersPage({
   params: URLSearchParams;
 }) {
   const { go, version, refresh, actionSummary } = useInventory(),
-    specialQueue = mode === 'review' && ['reports', 'expiring', 'returns', 'today', 'active', 'completed-week', 'overdue-review'].includes(params.get('queue') || '') ? params.get('queue')! : '',
-    reportsQueue = mode === 'review' && params.get('queue') === 'reports',
-    status =
-      specialQueue ? '' : mode === 'review'
-        ? ['Submitted', 'Rejected', 'Expired'].includes(
-            params.get('status') || '',
-          )
-          ? params.get('status')!
-          : 'Submitted'
-        : 'Confirmed';
-  const page = Math.max(1, Number(params.get('page') || 1)),
-    query = new URLSearchParams({
-      status,
-      page: String(page),
-      pageSize: '20',
-      sort: specialQueue === 'expiring' || params.get('sort') === 'deadline' ? 'deadline' : 'placed',
-      ...(specialQueue ? { queue: specialQueue } : mode === 'dispatch'
-        ? { queue: 'waiting' }
-        : status === 'Submitted' && params.get('sort') !== 'deadline'
-          ? { queue: 'review' }
-          : {}),
-    });
-  const search = params.get('q')?.trim() || '';
-  if (search) {
-    query.set('q', search);
-    query.delete('status');
-    query.delete('queue');
-  }
+    { specialQueue, status, search, allOrders, query } = adminOrderSearch(mode, params),
+    reportsQueue = specialQueue === 'reports';
   const resource = useResource<List<AdminBooking>>(
     `/admin/bookings?${query}`,
     version,
@@ -196,7 +171,7 @@ export function OrdersPage({
         eyebrow={search ? 'ORDERS / SEARCH' : mode === 'review' ? 'ORDERS / REVIEW' : 'ORDERS / DISPATCH'}
         title={search ? 'Booking search' : specialQueue === 'overdue-review' ? 'Unconfirmed for 24 hours' : specialQueue === 'today' ? 'Bookings scheduled today' : specialQueue === 'active' ? 'Active service / return visits' : specialQueue === 'completed-week' ? 'Completed bookings scheduled this week' : reportsQueue ? 'Pending service reports' : specialQueue === 'expiring' ? 'Confirmation due within 12 hours' : specialQueue === 'returns' ? 'Return visits needing Admin' : mode === 'review' ? 'Booking review' : 'Dispatch queue'}
         description={
-          search ? 'Find an order by booking reference, customer name or email across all statuses.' : specialQueue === 'overdue-review' ? 'Active requests submitted at least 24 hours ago and still unconfirmed, including requests in waiting dispatch. Closed and expired requests are excluded.' : ['today', 'active', 'completed-week'].includes(specialQueue) ? 'Matching orders from Operations overview. Dates use Singapore time; open an order to view its details.' : reportsQueue
+          search ? allOrders ? 'Search all order statuses by booking reference, customer name or email.' : 'Search within the current queue or order status. Choose All orders to search across statuses.' : specialQueue === 'overdue-review' ? 'Active requests submitted at least 24 hours ago and still unconfirmed, including requests in waiting dispatch. Closed and expired requests are excluded.' : ['today', 'active', 'completed-week'].includes(specialQueue) ? 'Matching orders from Operations overview. Dates use Singapore time; open an order to view its details.' : reportsQueue
             ? 'Follow up with the responsible technician until each finished or paused visit has a submitted report.'
             : specialQueue === 'expiring' ? 'Open a booking before its confirmation deadline to review availability and dispatch.'
             : specialQueue === 'returns' ? 'Open the original order to review the return request and its service reports.'
@@ -218,8 +193,9 @@ export function OrdersPage({
           const next = new URLSearchParams(params);
           const value = String(new FormData(event.currentTarget).get('q') || '').trim();
           if (value) next.set('q', value); else next.delete('q');
+          if (new FormData(event.currentTarget).get('scope') === 'all') next.set('scope', 'all'); else next.delete('scope');
           next.delete('page');
-          go(`/admin/orders?${next}`);
+          go(`/${mode === 'review' ? 'admin/orders' : 'admin/dispatch'}?${next}`);
         }}
       >
         <label htmlFor="booking-reference-search" className="min-w-0 basis-full flex-1 text-sm font-semibold sm:basis-0">
@@ -227,13 +203,14 @@ export function OrdersPage({
           <Input id="booking-reference-search" name="q" key={search} defaultValue={search}
             maxLength={100} placeholder="Booking reference, customer name or email" className="mt-1" />
         </label>
+        <label className="grid gap-2 text-sm font-semibold">Search scope<NativeSelect name="scope" key={params.get('scope') || 'current'} defaultValue={params.get('scope') === 'all' ? 'all' : 'current'}><option value="current">Current queue / status</option><option value="all">All orders</option></NativeSelect></label>
         <Button type="submit" variant="outline">Search</Button>
         {search && <Button type="button" variant="ghost" onClick={() => {
           const next = new URLSearchParams(params);
           next.delete('q'); next.delete('page');
-          go(`/admin/orders?${next}`);
+          go(`/${mode === 'review' ? 'admin/orders' : 'admin/dispatch'}?${next}`);
         }}>Clear search</Button>}
-        {search && <p className="basis-full text-sm muted">Search results include all order statuses.</p>}
+        {search && <p className="basis-full text-sm muted">{allOrders ? 'Searching all order statuses. Clear search to return to your queue.' : 'Searching within the current queue or order status.'}</p>}
       </form>
       {mode === 'review' && (
         <section className="mb-6" aria-labelledby="admin-action-centre-title">
@@ -1719,10 +1696,11 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
               )}
             </section>
           </div>
-          {canEditSchedule && booking.status !== 'Assigned' && (
+          {canEditSchedule && (
             <AdminPlanner
               key={bookingId}
               booking={booking}
+              selection={scheduleDirty ? { date: schedule.preferredDate, timeSlot: schedule.timeSlot } : null}
               disabled={Boolean(busy) || travelDirty}
               onSelect={(preferredDate, timeSlot) => {
                 setScheduleDraft({ bookingId, preferredDate, timeSlot });

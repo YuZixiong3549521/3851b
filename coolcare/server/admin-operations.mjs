@@ -1,7 +1,7 @@
 import {visitTeamNameSql,assignmentTeamNameSql} from './teams.mjs';
 import {assignmentTeam,bookingTeam,memberSql,staffingBooking,teamDispatchOptions,selectDispatchTeam,saveAssignmentTeam} from './teams.mjs';
 import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
-import { assertAdminOrderEditable } from './admin-order-policy.mjs';
+import { assertAdminOrderEditable, assignedRescheduleCondition } from './admin-order-policy.mjs';
 import { operationsQueueFilter, reviewOverdueCondition } from './admin-queue-filters.mjs';
 import { registerReturnRoutes } from './return-visits.mjs';
 import { registerAdminWorkspaceRoutes } from './admin-workspace.mjs';
@@ -456,7 +456,7 @@ export async function getAdminActionSummary(pool) {
 export async function listDispatchOptions(pool, bookingId, candidate=null, query={}) {
   const booking=await staffingBooking(pool,bookingId);
   if(!['Submitted','Confirmed','Assigned'].includes(booking.booking_status))throw new AppError('This booking is not awaiting dispatch.',409);
-  if(candidate){booking.preferred_service_date=candidate.date;booking.preferred_time_slot=candidate.timeSlot;}
+  if(candidate){booking.preferred_service_date=candidate.date;booking.preferred_time_slot=candidate.timeSlot;if(candidate.slot) booking.overrideSlot=candidate.slot;}
   const count=query.teamSize===undefined?undefined:z.coerce.number().int().min(1).max(1000).parse(query.teamSize);
   return teamDispatchOptions(pool,booking,count);
 }
@@ -950,11 +950,7 @@ export async function getAdminBooking(pool, bookingId) {
     b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.problem_description AS problemDescription,b.total_amount AS totalAmount,b.created_at AS createdAt,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,b.rejection_reason AS rejectionReason,b.rejection_version AS rejectionVersion,
     (${reviewOverdueCondition()}) AS reviewOverdue,${pendingReportColumns},
     b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,
-    (b.booking_status='Assigned' AND EXISTS(SELECT 1 FROM work_order aw JOIN assignment aa ON aa.assignment_id=aw.assignment_id
-      WHERE aw.booking_id=b.booking_id AND aw.current_status='Assigned' AND aa.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed'))
-      AND NOT EXISTS(SELECT 1 FROM work_order rw LEFT JOIN service_report rr ON rr.job_id=rw.job_id
-      WHERE rw.booking_id=b.booking_id AND (rw.current_status NOT IN ('Assigned','Cancelled') OR rr.started_at IS NOT NULL OR rr.completed_at IS NOT NULL OR rr.submitted_time IS NOT NULL
-        OR EXISTS(SELECT 1 FROM inventory_transaction it WHERE it.job_id=rw.job_id)))) AS canRescheduleAssigned,
+    ${assignedRescheduleCondition()} AS canRescheduleAssigned,
     (SELECT details.special_notes FROM web_booking_details details WHERE details.booking_id=b.booking_id) AS otherRemarks,
     u.full_name AS customerName,u.email,u.phone,sa.address_line AS addressLine,sa.postal_code AS postalCode,
     COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,

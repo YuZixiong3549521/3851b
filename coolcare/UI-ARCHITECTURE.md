@@ -2,6 +2,24 @@
 
 ## Admin follow-up and reporting improvements
 
+Order search defaults to the current queue/status. Explicit `scope=all` searches
+across statuses without removing the original queue from the browser URL; clearing
+the search returns to that queue. Pagination retains both search text and scope.
+Yearly packages reads `q`, `status`, and `attention` from its URL. Search typing
+replaces the current history entry without scrolling; status/attention selections
+create entries, so refresh, browser Back/Forward and shared links restore filters.
+
+Assigned orders eligible for rescheduling can open the existing seven-day planner.
+Its read-only policy matches the appointment editor. Recommendations exclude the
+order's old reservation, use its saved duration/team size and include travel,
+quarterly windows, address limits and the number of technicians free for the entire
+service. Aggregate capacity alone cannot make a fragmented team available. Selection
+only fills the form; existing transactional final confirmation remains mandatory.
+Overview adds due/overdue renewal-contact cards linking to
+`/admin/plans?attention=reminder-due|reminder-overdue`. Counts derive from the same
+Admin plan reminders; overdue means a pending contact deadline before today in
+Singapore and is a subset of due. No schema migration or new notification is added.
+
 The Admin-only follow-up update adds a separate `queue=overdue-review` for active
 Submitted requests waiting at least 24 hours, including waiting-dispatch requests.
 Overview, Action centre, list badges and detail warnings share this predicate;
