@@ -724,6 +724,7 @@ export function AdminOverviewPage() {
     resource = useResource<Overview>('/admin/operations-overview', version);
   const cards = [
     ['review', 'Awaiting review', '/admin/orders'],
+    ['overdueReview', 'Unconfirmed for 24 hours', '/admin/orders?queue=overdue-review'],
     ['waiting', 'Waiting dispatch', '/admin/dispatch'],
     [
       'dueSoon',

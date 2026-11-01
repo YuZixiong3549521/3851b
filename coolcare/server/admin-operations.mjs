@@ -2,7 +2,7 @@ import {visitTeamNameSql,assignmentTeamNameSql} from './teams.mjs';
 import {assignmentTeam,bookingTeam,memberSql,staffingBooking,teamDispatchOptions,selectDispatchTeam,saveAssignmentTeam} from './teams.mjs';
 import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
 import { assertAdminOrderEditable } from './admin-order-policy.mjs';
-import { operationsQueueFilter } from './admin-queue-filters.mjs';
+import { operationsQueueFilter, reviewOverdueCondition } from './admin-queue-filters.mjs';
 import { registerReturnRoutes } from './return-visits.mjs';
 import { registerAdminWorkspaceRoutes } from './admin-workspace.mjs';
 import { getServiceProgress } from './service-progress.mjs';
@@ -68,6 +68,10 @@ const rescheduleSchema = requestSchema
       .string()
       .refine(isCalendarDate, 'Choose a valid service date.'),
     timeSlot: z.string().trim().min(1).max(50),
+    assignmentReview: z.object({
+      assignmentId: idSchema, preferredDate: z.string().refine(isCalendarDate),
+      timeSlot: z.string().trim().min(1).max(50), reason: z.string().trim().min(5).max(500),
+    }).strict().optional(),
   })
   .strict();
 const travelPlanSchema = requestSchema
@@ -105,7 +109,7 @@ const pageSchema = z.object({
     ])
     .default(''),
   q: z.string().trim().max(120).default(''),
-  queue: z.enum(['', 'waiting', 'review', 'reports', 'expiring', 'returns', 'today', 'active', 'completed-week']).default(''),
+  queue: z.enum(['', 'waiting', 'review', 'reports', 'expiring', 'returns', 'today', 'active', 'completed-week', 'overdue-review']).default(''),
   sort: z.enum(['placed', 'deadline']).default('placed'),
   page: z.coerce.number().int().min(1).max(1000000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
@@ -127,8 +131,8 @@ const pendingReportColumns = `
     JOIN user_account tech_user ON tech_user.user_id=tech_owner.user_id
     WHERE w.booking_id=b.booking_id AND ${reportPendingCondition} ORDER BY w.job_id DESC LIMIT 1) AS pendingReportTechnicianName`;
 const timestampIso = seconds => seconds == null ? null : new Date(Number(seconds) * 1000).toISOString();
-const describeAdminBooking = ({ createdAtEpoch, reportPending, ...row }) => ({
-  ...withBookingReference(row), createdAt: timestampIso(createdAtEpoch), reportPending: Boolean(reportPending),
+const describeAdminBooking = ({ createdAtEpoch, reportPending, reviewOverdue, ...row }) => ({
+  ...withBookingReference(row), createdAt: timestampIso(createdAtEpoch), reportPending: Boolean(reportPending), reviewOverdue: Boolean(reviewOverdue),
 });
 
 const canonicalPayload = (value) =>
@@ -405,8 +409,9 @@ export async function getAdminActionSummary(pool) {
     `SELECT
       SUM(booking_status='Submitted' AND admin_waiting_since IS NULL AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())) AS submitted,
       SUM(booking_status='Submitted' AND expires_at>UTC_TIMESTAMP() AND expires_at<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 12 HOUR)) AS expiringSoon,
+      SUM(${reviewOverdueCondition()}) AS overdueReview,
       SUM(booking_status='Confirmed' OR (booking_status='Submitted' AND admin_waiting_since IS NOT NULL AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()))) AS awaitingDispatch
-    FROM booking`,
+    FROM booking b`,
   );
   const [[returns]] = await pool.execute(
     `SELECT COUNT(*) AS awaitingAdmin FROM service_progress
@@ -422,6 +427,7 @@ export async function getAdminActionSummary(pool) {
   const itemConditions = {
     submitted: "b.booking_status='Submitted' AND b.admin_waiting_since IS NULL AND (b.expires_at IS NULL OR b.expires_at>UTC_TIMESTAMP())",
     expiringSoon: "b.booking_status='Submitted' AND b.expires_at>UTC_TIMESTAMP() AND b.expires_at<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 12 HOUR)",
+    overdueReview: reviewOverdueCondition(),
     awaitingDispatch: "b.booking_status='Confirmed' OR (b.booking_status='Submitted' AND b.admin_waiting_since IS NOT NULL AND (b.expires_at IS NULL OR b.expires_at>UTC_TIMESTAMP()))",
     returnVisits: "EXISTS(SELECT 1 FROM work_order w JOIN service_progress p ON p.job_id=w.job_id WHERE w.booking_id=b.booking_id AND p.follow_up_status IN ('Required','Awaiting confirmation'))",
     pendingReports: pendingReportBookingCondition,
@@ -438,6 +444,7 @@ export async function getAdminActionSummary(pool) {
     items,
     submitted,
     expiringSoon: Number(bookings.expiringSoon || 0),
+    overdueReview: Number(bookings.overdueReview || 0),
     returnVisits,
     awaitingDispatch,
     pendingReports,
@@ -618,13 +625,14 @@ export async function dispatchBooking(
         note,
       ],
     );
+    const [[priorAssignment]] = await connection.execute('SELECT EXISTS(SELECT 1 FROM assignment WHERE booking_id=? AND assignment_id<>?) AS present', [bookingId, created.assignmentId]);
     await enqueueBookingLifecycleEmail(
       connection,
       bookingId,
       'booking.assigned',
       {
         technicianName: members.map(t=>t.fullName+(t.technicianId===technician.technicianId?' (Lead)':'')).join(', '),
-        eventKey: redispatch
+        eventKey: redispatch || priorAssignment.present
           ? `booking.reassigned:${bookingId}:${created.assignmentId}`
           : undefined,
       },
@@ -690,20 +698,26 @@ export async function rescheduleAdminBooking(pool, actor, bookingId, raw) {
         409,
       );
     await assertBookingNotExpired(connection, booking);
-    if (!['Submitted', 'Confirmed'].includes(booking.booking_status))
+    if (!['Submitted', 'Confirmed', 'Assigned'].includes(booking.booking_status))
       throw new AppError(
-        'Only unassigned bookings awaiting review or dispatch can be rescheduled.',
+        'Only bookings awaiting service and not yet travelling can be rescheduled.',
         409,
       );
-    const [[assignment]] = await connection.execute(
-      "SELECT COUNT(*) AS count FROM assignment WHERE booking_id=? AND assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed')",
+    const [assignments] = await connection.execute(
+      "SELECT assignment_id AS assignmentId FROM assignment WHERE booking_id=? AND assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed') ORDER BY assignment_id FOR UPDATE",
       [bookingId],
     );
-    if (Number(assignment.count) > 0)
-      throw new AppError(
-        'This booking already has an assignment and its schedule is locked.',
-        409,
-      );
+    const wasAssigned = booking.booking_status === 'Assigned';
+    if (wasAssigned) {
+      const review = data.assignmentReview;
+      if (!review || assignments.length !== 1 || assignments[0].assignmentId !== review.assignmentId ||
+        String(booking.preferred_service_date).slice(0, 10) !== review.preferredDate || booking.preferred_time_slot !== review.timeSlot)
+        throw new AppError('The assignment or appointment changed. Reload and review the reschedule before confirming.', 409);
+      if (data.preferredDate === review.preferredDate && normalizeBookingSlot(data.timeSlot).code === normalizeBookingSlot(review.timeSlot).code)
+        throw new AppError('Choose a different appointment before releasing the assignment.', 409);
+    } else if (assignments.length || data.assignmentReview) {
+      throw new AppError('The booking assignment changed. Reload before changing the appointment.', 409);
+    }
     assertBookableDate(data.preferredDate);
     await assertAnnualRescheduleWindow(
       connection,
@@ -757,11 +771,28 @@ export async function rescheduleAdminBooking(pool, actor, bookingId, raw) {
       ],
       { excludeBookingId: bookingId },
     );
+    // The booking lock also serializes technician start/travel and stock writes.
+    // Inspect every work order so stale booking status cannot hide actual work.
+    const [work] = await connection.execute(`SELECT w.job_id,w.assignment_id,w.current_status,r.started_at,r.completed_at,r.submitted_time,
+      EXISTS(SELECT 1 FROM inventory_transaction it WHERE it.job_id=w.job_id) AS hasInventory
+      FROM work_order w LEFT JOIN service_report r ON r.job_id=w.job_id WHERE w.booking_id=? ORDER BY w.job_id FOR UPDATE`, [bookingId]);
+    if (work.some(w => w.started_at || w.completed_at || w.submitted_time || ['On The Way','In Progress','Completed','Return visit','Awaiting return arrangement'].includes(w.current_status)))
+      throw new AppError('The technician has departed or service work has already started. This appointment cannot be changed.', 409);
+    if (work.some(w => w.hasInventory)) throw new AppError('Inventory activity is recorded for this order. Resolve the parts before arranging changes.', 409);
+    const assignedWork = work.filter(w => w.current_status === 'Assigned');
+    if (wasAssigned ? assignedWork.length !== 1 || assignedWork[0].assignment_id !== assignments[0].assignmentId : assignedWork.length > 0)
+      throw new AppError('The assigned work order changed. Reload before rescheduling.', 409);
+    if (wasAssigned) {
+      await connection.execute("UPDATE assignment SET assignment_status='Cancelled' WHERE assignment_id=?", [assignments[0].assignmentId]);
+      await connection.execute("UPDATE work_order SET current_status='Cancelled' WHERE booking_id=? AND current_status='Assigned'", [bookingId]);
+      await connection.execute("UPDATE booking SET booking_status='Confirmed',expires_at=NULL,admin_waiting_since=UTC_TIMESTAMP(),admin_waiting_reason=? WHERE booking_id=?", [data.assignmentReview.reason, bookingId]);
+    }
     await connection.execute(
       `UPDATE booking SET preferred_service_date=?,preferred_time_slot=?,slot_start=?,slot_end=?
       WHERE booking_id=?`,
       [data.preferredDate, slot.code, slot.start, slot.end, bookingId],
     );
+    await connection.execute('UPDATE annual_booking_visit SET scheduled_date=? WHERE booking_id=?', [data.preferredDate, bookingId]);
     await connection.execute(
       `INSERT INTO booking_change_request
       (booking_id,request_type,requested_service_date,requested_time_slot,reason,request_status)
@@ -770,7 +801,7 @@ export async function rescheduleAdminBooking(pool, actor, bookingId, raw) {
         bookingId,
         data.preferredDate,
         slot.code,
-        'Appointment adjusted by an administrator before dispatch.',
+        wasAssigned ? data.assignmentReview.reason : 'Appointment adjusted by an administrator before dispatch.',
       ],
     );
     await connection.execute(
@@ -780,14 +811,15 @@ export async function rescheduleAdminBooking(pool, actor, bookingId, raw) {
       [
         bookingId,
         booking.booking_status,
-        booking.booking_status,
+        wasAssigned ? 'Confirmed' : booking.booking_status,
         actor.userId,
-        `Appointment changed from ${oldDate} ${oldTimeSlot} to ${data.preferredDate} ${slot.code} before dispatch.`,
+        `Appointment changed from ${oldDate} ${oldTimeSlot} to ${data.preferredDate} ${slot.code}.${wasAssigned ? ` Previous assignment released; awaiting dispatch. Reason: ${data.assignmentReview.reason}` : ' Before dispatch.'}`,
       ],
     );
     const result = {
       bookingId,
-      status: booking.booking_status,
+      status: wasAssigned ? 'Confirmed' : booking.booking_status,
+      queued: wasAssigned,
       preferredDate: data.preferredDate,
       timeSlot: slot.code,
     };
@@ -859,7 +891,7 @@ export async function listAdminBookings(pool, query) {
   const [rows] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS preferredDate,
     b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.total_amount AS totalAmount,b.created_at AS createdAt,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,u.full_name AS customerName,u.email,
-    ${pendingReportColumns},
+    (${reviewOverdueCondition()}) AS reviewOverdue,${pendingReportColumns},
     sa.address_line AS addressLine,COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,
     (SELECT COUNT(*) FROM booking_aircon_unit bu WHERE bu.booking_id=b.booking_id) AS numberOfUnits,
     (SELECT ${assignmentTeamNameSql('latest_assignment','technician_user.full_name')} FROM assignment latest_assignment JOIN technician latest_technician ON latest_technician.technician_id=latest_assignment.technician_id
@@ -916,8 +948,13 @@ export async function getAdminBooking(pool, bookingId) {
   const [[booking]] = await pool.execute(
     `SELECT b.booking_id AS bookingId,b.booking_status AS status,b.preferred_service_date AS preferredDate,
     b.preferred_time_slot AS timeSlot,b.slot_start AS slotStart,b.slot_end AS slotEnd,b.estimated_duration_minutes AS estimatedDurationMinutes,b.travel_buffer_minutes AS travelBufferMinutes,b.traffic_note AS trafficNote,b.problem_description AS problemDescription,b.total_amount AS totalAmount,b.created_at AS createdAt,UNIX_TIMESTAMP(b.created_at) AS createdAtEpoch,b.expires_at AS expiresAt,b.rejection_reason AS rejectionReason,b.rejection_version AS rejectionVersion,
-    ${pendingReportColumns},
+    (${reviewOverdueCondition()}) AS reviewOverdue,${pendingReportColumns},
     b.admin_waiting_since AS waitingSince,b.admin_waiting_reason AS waitingReason,
+    (b.booking_status='Assigned' AND EXISTS(SELECT 1 FROM work_order aw JOIN assignment aa ON aa.assignment_id=aw.assignment_id
+      WHERE aw.booking_id=b.booking_id AND aw.current_status='Assigned' AND aa.assignment_status NOT IN ('Declined','Reassigned','Cancelled','Completed'))
+      AND NOT EXISTS(SELECT 1 FROM work_order rw LEFT JOIN service_report rr ON rr.job_id=rw.job_id
+      WHERE rw.booking_id=b.booking_id AND (rw.current_status NOT IN ('Assigned','Cancelled') OR rr.started_at IS NOT NULL OR rr.completed_at IS NOT NULL OR rr.submitted_time IS NOT NULL
+        OR EXISTS(SELECT 1 FROM inventory_transaction it WHERE it.job_id=rw.job_id)))) AS canRescheduleAssigned,
     (SELECT details.special_notes FROM web_booking_details details WHERE details.booking_id=b.booking_id) AS otherRemarks,
     u.full_name AS customerName,u.email,u.phone,sa.address_line AS addressLine,sa.postal_code AS postalCode,
     COALESCE(GROUP_CONCAT(DISTINCT bs.service_name ORDER BY bs.service_id SEPARATOR ', '),sc.service_name) AS serviceName,

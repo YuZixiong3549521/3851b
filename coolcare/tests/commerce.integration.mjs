@@ -348,10 +348,12 @@ test('commerce HTTP enforces role, CSRF and customer booking ownership', () => f
   }
   try {
     assert.equal((await call('/api/commerce/customer/rewards')).status, 401);
+    assert.equal((await call('/api/commerce/admin/plans/1/reminders', 'POST', {}, false)).status, 403);
     csrf = (await call('/api/session')).data.csrf;
     const login = await call('/api/public/login', 'POST', { email: f.email, password: f.password });
     assert.equal(login.status, 200); csrf = (await call('/api/session')).data.csrf;
     assert.equal((await call('/api/commerce/admin/payments')).status, 403);
+    assert.equal((await call('/api/commerce/admin/plans/1/reminders', 'POST', {})).status, 403);
     assert.equal((await call('/api/commerce/customer/rewards')).status, 200);
     assert.equal((await call(`/api/commerce/customer/rewards/${f.bookings[0]}`, 'POST', { requestId: randomUUID(), points: 0 }, false)).status, 403);
     const [[other]] = await c.execute('SELECT booking_id FROM booking WHERE customer_id<>? LIMIT 1', [f.customerId]);
@@ -364,6 +366,8 @@ test('commerce HTTP enforces role, CSRF and customer booking ownership', () => f
     assert.equal((await call('/api/commerce/admin/payments')).status, 410);
     assert.equal((await call(`/api/commerce/admin/payments/${f.bookings[0]}`, 'POST', {})).status, 410);
     assert.equal((await call('/api/commerce/admin/rewards')).status, 200);
+    assert.equal((await call('/api/commerce/admin/plans/1/reminders', 'POST', {}, false)).status, 403);
+    assert.equal((await call('/api/commerce/admin/plans/1/reminders', 'POST', {})).status, 400, 'admin requests still require a valid reviewed contact payload');
     const csv = await fetch(`${origin}/api/commerce/admin/reports.csv?from=${today()}&to=${today()}&groupBy=quarter`, { headers: { Cookie: cookie } });
     assert.equal(csv.status, 200);
     const text = await csv.text();

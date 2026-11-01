@@ -50,6 +50,96 @@ test('overview links select the exact today, active and completed-week queues ac
 }));
 after(() => pool.end());
 
+test('24-hour review reminders include waiting requests, exclude recent/expired/confirmed orders and match counts', () => fixture(async ({ c, db, actor, create }) => {
+  const old = await create(), waiting = await create(), recent = await create(), expired = await create('Submitted', '2000-01-01 00:00:00'), confirmed = await create('Confirmed');
+  for (const id of [old, waiting, expired, confirmed]) await c.execute('UPDATE booking SET created_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 24 HOUR) WHERE booking_id=?', [id]);
+  await c.execute('UPDATE booking SET created_at=DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1439 MINUTE) WHERE booking_id=?', [recent]);
+  await queueBooking(db, actor, waiting, { requestId: randomUUID(), reason: 'Awaiting technician capacity' });
+  for (const id of [old, waiting]) {
+    assert.equal((await listAdminBookings(db, { queue: 'overdue-review', q: String(id) })).total, 1);
+    assert.equal((await getAdminBooking(db, id)).reviewOverdue, true);
+  }
+  for (const id of [recent, expired, confirmed]) assert.equal((await listAdminBookings(db, { queue: 'overdue-review', q: String(id) })).total, 0);
+  const summary = await getAdminActionSummary(db), overview = await getOperationsOverview(db), queue = await listAdminBookings(db, { queue: 'overdue-review', pageSize: 1 });
+  assert.equal(summary.overdueReview, queue.total);
+  assert.equal(overview.counts.overdueReview, queue.total);
+  assert.equal(summary.totalRequiringAction, summary.submitted + summary.returnVisits + summary.awaitingDispatch + summary.pendingReports);
+  const [[session]] = await c.query('SELECT @@session.time_zone AS zone');
+  try {
+    for (const zone of ['+08:00', '-05:00']) {
+      await c.query('SET SESSION time_zone=?', [zone]);
+      assert.equal((await getAdminBooking(db, old)).reviewOverdue, true);
+      assert.equal((await getAdminBooking(db, recent)).reviewOverdue, false);
+      assert.equal((await getAdminActionSummary(db)).overdueReview, queue.total);
+    }
+  } finally { await c.query('SET SESSION time_zone=?', [session.zone]); }
+}));
+
+test('assigned reschedule releases work atomically, queues dispatch and replays without sending another email', () => fixture(async ({ c, db, actor, create }) => {
+  const id = await create('Confirmed');
+  await dispatchBooking(db, actor, id, { requestId: randomUUID() });
+  const before = await getAdminBooking(db, id), assignment = before.assignments[0];
+  assert.ok(before.canRescheduleAssigned);
+  const data = { requestId: randomUUID(), preferredDate: '2091-01-09', timeSlot: '09:00 - 11:00', assignmentReview: { assignmentId: assignment.assignmentId, preferredDate: before.preferredDate, timeSlot: before.timeSlot, reason: 'Customer requested a different service date.' } };
+  const result = await rescheduleAdminBooking(db, actor, id, data);
+  assert.equal(result.status, 'Confirmed'); assert.equal(result.queued, true);
+  assert.equal((await rescheduleAdminBooking(db, actor, id, data)).replayed, true);
+  await assert.rejects(rescheduleAdminBooking(db, actor, id, { ...data, preferredDate: '2091-01-10' }), e => e.status === 409);
+  const after = await getAdminBooking(db, id);
+  assert.equal(after.preferredDate, '2091-01-09'); assert.ok(after.waitingSince);
+  assert.equal(after.assignments[0].status, 'Cancelled'); assert.equal(after.assignments[0].workStatus, 'Cancelled');
+  assert.equal(after.timeline.length, before.timeline.length + 1);
+  assert.equal((await listBookingEmails(db, id)).rows.length, 1);
+  assert.equal((await listAdminBookings(db, { queue: 'waiting', q: String(id) })).total, 1);
+  await dispatchBooking(db, actor, id, { requestId: randomUUID() });
+  assert.equal((await listBookingEmails(db, id)).rows.length, 2, 'only the new successful dispatch adds a notification');
+}));
+
+test('stale review, unavailable capacity and travel prevent assigned reschedule without releasing the old team', () => fixture(async ({ c, db, actor, create }) => {
+  const id = await create('Confirmed');
+  await dispatchBooking(db, actor, id, { requestId: randomUUID() });
+  const before = await getAdminBooking(db, id), assignment = before.assignments[0];
+  const data = { requestId: randomUUID(), preferredDate: '2091-01-09', timeSlot: '09:00 - 11:00', assignmentReview: { assignmentId: assignment.assignmentId, preferredDate: before.preferredDate, timeSlot: before.timeSlot, reason: 'Customer requested a different service date.' } };
+  await assert.rejects(rescheduleAdminBooking(db, actor, id, { ...data, assignmentReview: { ...data.assignmentReview, assignmentId: assignment.assignmentId + 999999 } }), e => e.status === 409);
+  await c.execute("UPDATE technician SET availability_status='On Leave'");
+  await assert.rejects(rescheduleAdminBooking(db, actor, id, data), e => e.status === 409);
+  await c.execute("UPDATE technician SET availability_status='Available'");
+  await c.execute("UPDATE work_order SET current_status='On The Way' WHERE job_id=?", [assignment.jobId]);
+  await assert.rejects(rescheduleAdminBooking(db, actor, id, data), e => e.status === 409);
+  const after = await getAdminBooking(db, id);
+  assert.equal(after.status, 'Assigned'); assert.equal(after.preferredDate, before.preferredDate);
+  assert.equal(after.assignments[0].status, 'Assigned'); assert.equal(after.canRescheduleAssigned, 0);
+  assert.equal(after.timeline.length, before.timeline.length);
+  assert.equal((await listBookingEmails(db, id)).rows.length, 1);
+}));
+
+test('inventory and started reports block reschedule; a failed audit write rolls back team release and appointment together', () => fixture(async ({ c, db, actor, create }) => {
+  const id = await create('Confirmed');
+  await dispatchBooking(db, actor, id, { requestId: randomUUID() });
+  const before = await getAdminBooking(db, id), assignment = before.assignments[0];
+  const data = { requestId: randomUUID(), preferredDate: '2091-01-09', timeSlot: '09:00 - 11:00', assignmentReview: { assignmentId: assignment.assignmentId, preferredDate: before.preferredDate, timeSlot: before.timeSlot, reason: 'Customer requested a different service date.' } };
+  const failing = { ...db, getConnection: async () => {
+    const connection = await db.getConnection();
+    return { ...connection, execute: (sql, params) => {
+      if (sql.includes('INSERT INTO booking_change_request')) throw new Error('Injected audit write failure');
+      return connection.execute(sql, params);
+    } };
+  } };
+  await assert.rejects(rescheduleAdminBooking(failing, actor, id, data), /Injected audit write failure/);
+  let after = await getAdminBooking(db, id);
+  assert.equal(after.preferredDate, before.preferredDate); assert.equal(after.status, 'Assigned');
+  assert.equal(after.assignments[0].status, 'Assigned'); assert.equal(after.assignments[0].workStatus, 'Assigned');
+  assert.equal(after.timeline.length, before.timeline.length); assert.equal(after.waitingSince, null);
+  const [[part]] = await c.execute('SELECT part_id FROM part ORDER BY part_id LIMIT 1');
+  await c.execute("INSERT INTO inventory_transaction(job_id,part_id,transaction_type,quantity) VALUES (?,?,'Stock Out',1)", [assignment.jobId, part.part_id]);
+  await assert.rejects(rescheduleAdminBooking(db, actor, id, data), e => e.status === 409 && /Inventory/.test(e.message));
+  after = await getAdminBooking(db, id); assert.equal(after.canRescheduleAssigned, 0);
+  assert.equal(after.assignments[0].status, 'Assigned');
+  await c.execute("INSERT INTO service_report(job_id,work_performed,started_at,submitted_time) VALUES (?,'Service started before status update',UTC_TIMESTAMP(),NULL)", [assignment.jobId]);
+  await assert.rejects(rescheduleAdminBooking(db, actor, id, data), e => e.status === 409 && /started/.test(e.message));
+  assert.equal((await listBookingEmails(db, id)).rows.length, 1);
+}));
+
 test('waiting dispatch preserves deadlines and customer status, is idempotent, and clears on dispatch', () =>
   fixture(async ({ c, db, actor, create }) => {
     const id = await create('Submitted', '2090-01-01 00:00:00');

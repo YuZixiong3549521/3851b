@@ -99,6 +99,7 @@ function AdminPortal({ sessionUser }: { sessionUser: PortalUser }) {
   const [actionSummary, setActionSummary] = useState<AdminActionSummary>({
     submitted: 0,
     expiringSoon: 0,
+    overdueReview: 0,
     returnVisits: 0,
     pendingReports: 0,
     awaitingDispatch: 0,

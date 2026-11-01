@@ -10,12 +10,71 @@ import { annualVisitSchedule, addCalendarMonths } from '../server/customer/annua
 import { nextWeekday, addCalendarDays, singaporeToday } from '../server/customer/booking-schedule.mjs';
 import { openPrivilegedFixtureConnection } from './privileged-fixture.mjs';
 import { bookingReference } from '../server/booking-reference.mjs';
+import { recordPlanReminder } from '../server/admin-plan-reminders.mjs';
+import { rescheduleAdminBooking } from '../server/admin-operations.mjs';
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: process.env.DB_USER,
   password: process.env.DB_PASSWORD, database: process.env.DB_NAME, dateStrings: true, decimalNumbers: true, connectionLimit: 5,
 });
 after(() => pool.end());
+
+test('admin renewal contacts are private, durable, idempotent and invalidated by changed deadlines', async () => fixture(async ({ c, db, userId, seriesId }) => {
+  const [[admin]] = await c.execute("SELECT u.user_id AS id,'Admin' AS role FROM user_account u JOIN admin_profile a ON a.user_id=u.user_id WHERE u.status='Active' LIMIT 1");
+  let plan = (await listAdminAnnualPlans(db)).plans.find(plan => plan.seriesId === seriesId);
+  const input = { requestId: randomUUID(), reminderKey: plan.reminder.key, channel: 'Phone', note: 'Discussed the final visit and renewal deadline with the customer.' };
+  await assert.rejects(recordPlanReminder(db, { id: userId, role: 'Customer' }, seriesId, input), e => e.status === 403);
+  await assert.rejects(recordPlanReminder(db, admin, seriesId, { ...input, reminderKey: 'obsolete-deadline' }), e => e.status === 409);
+  const result = await recordPlanReminder(db, admin, seriesId, input);
+  assert.equal((await recordPlanReminder(db, admin, seriesId, input)).reminderId, result.reminderId);
+  assert.equal((await recordPlanReminder(db, admin, seriesId, input)).replayed, true);
+  await assert.rejects(recordPlanReminder(db, admin, seriesId, { ...input, note: 'Different contact details' }), e => e.status === 409);
+  plan = (await listAdminAnnualPlans(db)).plans.find(plan => plan.seriesId === seriesId);
+  assert.equal(plan.reminder.contacted, true); assert.equal(plan.reminder.history.length, 1); assert.equal(plan.reminder.history[0].channel, 'Phone');
+  const createdAt = plan.reminder.history[0].createdAt;
+  const [[session]] = await c.query('SELECT @@session.time_zone AS zone');
+  try {
+    await c.query("SET SESSION time_zone='+08:00'");
+    assert.equal((await listAdminAnnualPlans(db)).plans.find(plan => plan.seriesId === seriesId).reminder.history[0].createdAt, createdAt);
+  } finally { await c.query('SET SESSION time_zone=?', [session.zone]); }
+  assert.equal((await listAnnualPlans(db, userId)).plans[0].reminder, undefined, 'internal notes stay out of customer responses');
+  const last = plan.visits.find(visit => visit.visitNumber === 4);
+  await c.execute('UPDATE booking SET preferred_service_date=DATE_ADD(preferred_service_date,INTERVAL 1 DAY) WHERE booking_id=?', [last.bookingId]);
+  plan = (await listAdminAnnualPlans(db)).plans.find(plan => plan.seriesId === seriesId);
+  assert.equal(plan.reminder.contacted, false); assert.equal(plan.reminder.history.length, 1);
+  await assert.rejects(recordPlanReminder(db, admin, seriesId, { ...input, requestId: randomUUID() }), e => e.status === 409);
+  const [[emails]] = await c.execute('SELECT COUNT(*) AS n FROM booking_email_outbox e JOIN annual_booking_visit v ON v.booking_id=e.booking_id WHERE v.series_id=?', [seriesId]);
+  assert.equal(emails.n, 0);
+  await c.execute("UPDATE booking b JOIN annual_booking_visit v ON v.booking_id=b.booking_id SET b.booking_status='Cancelled' WHERE v.series_id=?", [seriesId]);
+  await assert.rejects(recordPlanReminder(db, admin, seriesId, { ...input, requestId: randomUUID(), reminderKey: plan.reminder.key }), e => e.status === 409);
+  assert.equal((await recordPlanReminder(db, admin, seriesId, input)).replayed, true, 'a saved receipt still replays after the plan closes');
+}));
+
+test('concurrent admin contact retries create a single durable record', async () => fixture(async ({ db, c, seriesId }) => {
+  const [[admin]] = await c.execute("SELECT u.user_id AS id,'Admin' AS role FROM user_account u JOIN admin_profile a ON a.user_id=u.user_id WHERE u.status='Active' LIMIT 1");
+  const plan = (await listAdminAnnualPlans(db)).plans.find(plan => plan.seriesId === seriesId);
+  const input = { requestId: randomUUID(), reminderKey: plan.reminder.key, channel: 'Phone', note: 'Concurrent test contact recorded once.' };
+  const results = await Promise.all([recordPlanReminder(db, admin, seriesId, input), recordPlanReminder(db, admin, seriesId, input)]);
+  assert.equal(results[0].reminderId, results[1].reminderId);
+  assert.equal(results.filter(item => item.replayed).length, 1);
+  const updated = (await listAdminAnnualPlans(db)).plans.find(plan => plan.seriesId === seriesId);
+  assert.equal(updated.reminder.history.length, 1); assert.equal(updated.reminder.contacted, true);
+  for (let i = 0; i < 11; i++) await c.execute('INSERT INTO admin_plan_reminder(request_id,series_id,actor_user_id,reminder_key,channel,note,payload_hash) VALUES (?,?,?,?,?,?,?)', [randomUUID(), seriesId, admin.id, `historical-deadline-${i}`, 'Phone', 'Contact for historical plan dates.', 'a'.repeat(64)]);
+  const bounded = (await listAdminAnnualPlans(db)).plans.find(plan => plan.seriesId === seriesId);
+  assert.equal(bounded.reminder.history.length, 10);
+  assert.equal(bounded.reminder.contacted, true, 'truncated history does not erase a valid current-date contact');
+}, { committed: true }));
+
+test('Admin annual reschedule keeps the stored visit date and booking date synchronized', async () => fixture(async ({ db, c, seriesId }) => {
+  const [[actor]] = await c.execute("SELECT user_id AS userId FROM admin_profile LIMIT 1");
+  const plan = (await listAdminAnnualPlans(db)).plans.find(plan => plan.seriesId === seriesId);
+  const final = plan.visits.find(visit => visit.visitNumber === 4);
+  await c.execute("UPDATE booking SET booking_status='Confirmed' WHERE booking_id=?", [final.bookingId]);
+  const target = nextWeekday(addCalendarDays(singaporeToday(), 15));
+  await rescheduleAdminBooking(db, actor, final.bookingId, { requestId: randomUUID(), preferredDate: target, timeSlot: '09:00 - 11:00' });
+  const [[visit]] = await c.execute('SELECT v.scheduled_date,b.preferred_service_date FROM annual_booking_visit v JOIN booking b ON b.booking_id=v.booking_id WHERE b.booking_id=?', [final.bookingId]);
+  assert.equal(visit.scheduled_date, target); assert.equal(visit.preferred_service_date, target);
+}));
 
 async function fixture(work, { committed = false } = {}) {
   const c = await pool.getConnection();

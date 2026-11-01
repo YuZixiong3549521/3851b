@@ -369,7 +369,7 @@ test('confirmation and automatic dispatch are atomic, rotate conflict-free techn
         preferredDate: nextWeekday(addCalendarDays(rescheduledDate, 1)),
         timeSlot: '16:00 - 18:00',
       }),
-      (error) => error.status === 409 && /unassigned/i.test(error.message),
+      (error) => error.status === 409 && /review the reschedule/i.test(error.message),
     );
 
     const second = await create();

@@ -2,6 +2,23 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { operationsQueueFilter } from '../server/admin-queue-filters.mjs';
 import { matchesPlanAttention } from '../lib/admin-plan-filters.mjs';
+import { describePlanReminder, planReminderKey } from '../lib/admin-plan-reminders.mjs';
+
+test('renewal contact is due at the Singapore 14-day boundary and remains due when overdue', () => {
+  const now = new Date('2026-12-31T16:01:00Z'); // Singapore 1 January
+  const plan = { status: 'Active', validUntil: '2027-03-01', earlyRenewalDeadline: '2027-01-14T16:30:00Z' };
+  assert.equal(describePlanReminder(plan, [], now).due, true);
+  assert.equal(describePlanReminder({ ...plan, earlyRenewalDeadline: '2027-01-15T16:30:00Z' }, [], now).due, false);
+  assert.equal(describePlanReminder({ ...plan, status: 'Expired', validUntil: '2026-12-31' }, [], now).due, true);
+  for (const changed of [{ status: 'Cancelled' }, { existingRenewalSeriesId: 20 }]) assert.equal(describePlanReminder({ ...plan, ...changed }, [], now).due, false);
+  const history = [{ reminderKey: planReminderKey(plan) }];
+  assert.equal(describePlanReminder(plan, history, now).contacted, true);
+  assert.equal(describePlanReminder(plan, history, now).due, false);
+  const changed = describePlanReminder({ ...plan, earlyRenewalDeadline: '2027-01-13T16:30:00Z' }, history, now);
+  assert.equal(changed.contacted, false);
+  assert.equal(changed.due, true);
+  assert.equal(matchesPlanAttention({ reminder: changed }, 'reminder-due', '2027-01-01'), true);
+});
 
 test('overview queue bounds include the whole Monday-to-Sunday week across years', () => {
   assert.deepEqual(operationsQueueFilter('completed-week', '2027-01-03').values, ['2026-12-28', '2027-01-03']);

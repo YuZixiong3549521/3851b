@@ -1,6 +1,7 @@
 import {memberSql} from './teams.mjs';
 import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
 import { assertAdminOrderEditable } from './admin-order-policy.mjs';
+import { reviewOverdueCondition } from './admin-queue-filters.mjs';
 import { z } from 'zod';
 import { AppError, idSchema } from './inventory.mjs';
 import {
@@ -330,10 +331,11 @@ export async function getOperationsOverview(pool) {
     SUM(booking_status='Submitted' AND admin_waiting_since IS NULL AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP())) AS review,
     SUM(booking_status='Confirmed' OR (booking_status='Submitted' AND admin_waiting_since IS NOT NULL AND (expires_at IS NULL OR expires_at>UTC_TIMESTAMP()))) AS waiting,
     SUM(booking_status='Submitted' AND expires_at>UTC_TIMESTAMP() AND expires_at<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 12 HOUR)) AS dueSoon,
+    SUM(${reviewOverdueCondition()}) AS overdueReview,
     SUM(preferred_service_date=? AND booking_status NOT IN ('Cancelled','Expired','Rejected')) AS visitsToday,
     SUM(booking_status IN ('On The Way','In Progress','Return visit')) AS inProgress,
     SUM(booking_status='Completed' AND preferred_service_date BETWEEN ? AND ?) AS completedWeek
-    FROM booking`,
+    FROM booking b`,
     [today, week, addCalendarDays(week, 6)],
   );
   const [[mail]] =

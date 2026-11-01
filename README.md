@@ -28,6 +28,8 @@ npm start
 My Rewards 在预订时立即记录 Points reserved，在取消、拒绝、过期或主动释放时记录 Points returned，并同步其他客户标签页。预订冻结可用积分，完成结算时不重复扣分。运行 `npm run db:up` 应用 `35-reward-activity-and-teams.sql`，保留现有业务数据。详细规则见 `coolcare/BOOKING-WORKFLOWS.md` 和 `coolcare/COMMERCE-REWARDS.md`。
 ## 页面与账号
 
+本次 Admin 更新增加“提交满 24 小时仍未确认”提醒；未出发且没有服务或库存活动的已派单订单可在最终确认后改期，原团队释放并进入等待派单。Yearly packages 可筛选两周内到期或已逾期的续约联系任务，并记录联系渠道、备注、管理员和时间。联系记录不发送邮件；客户通知仍只在成功派单后产生。组员拉取后运行 `npm run db:up` 应用新增的 `37-admin-plan-reminders.sql`，保留原数据。
+
 | 页面 | 地址 |
 | --- | --- |
 | CoolCare 主页 | `/` |

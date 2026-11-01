@@ -6,6 +6,7 @@ import { isCalendarDate } from './customer/booking-schedule.mjs';
 import { readBookingAmounts } from './booking-amounts.mjs';
 import { buildReportAnalytics, classifyReportService, groupServicePeriods } from './report-periods.mjs';
 import { listAdminAnnualPlans } from './customer/plans.mjs';
+import { recordPlanReminder } from './admin-plan-reminders.mjs';
 
 const terminal = new Set(['Cancelled', 'Rejected', 'Expired']);
 const money = z.coerce.number().finite().positive().max(9999999.99).refine(v => Math.abs(v * 100 - Math.round(v * 100)) < 0.000001, 'Use at most two decimal places.');
@@ -409,6 +410,7 @@ export function registerCommerceRoutes(app, pool) {
   app.use('/api/commerce/customer', auth('Customer'));
   app.use('/api/commerce/admin', auth('Admin'));
   app.get('/api/commerce/admin/plans', async (_req, res) => res.json(await listAdminAnnualPlans(pool)));
+  app.post('/api/commerce/admin/plans/:id/reminders', async (req, res) => res.json(await recordPlanReminder(pool, req.commerceUser, req.params.id, req.body)));
   app.get('/api/commerce/customer/rewards', async (req, res) => res.json(await rewardsSummary(pool, req.commerceUser.customerId)));
   app.post('/api/commerce/customer/rewards/:bookingId', async (req, res) => res.json(await reserveReward(pool, req.commerceUser.id, req.commerceUser.customerId, req.params.bookingId, req.body)));
   app.all(['/api/commerce/admin/payments','/api/commerce/admin/payments/:bookingId'], (_req, res) => res.status(410).json({ error: 'Payment management has been removed. Rewards are awarded when the booking is completed.' }));

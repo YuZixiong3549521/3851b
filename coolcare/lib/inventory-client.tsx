@@ -46,6 +46,7 @@ export type User = {
   access_level: 'Owner' | 'Admin';
 };
 export type AdminBooking = {
+  reviewOverdue?: boolean;
   amounts?: BookingAmounts;
   bookingId: number;
   bookingReference: string;
@@ -74,6 +75,7 @@ export type AdminBooking = {
   pendingReportTechnicianName?: string | null;
 };
 export type AdminBookingDetail = AdminBooking & {
+  canRescheduleAssigned?: boolean | number;
   team?:{technicianId:number;fullName:string;isLead:boolean}[];
   reports?: Array<{
     photos?: Array<{
@@ -201,11 +203,12 @@ export type StaffMember = {
   hourlyLaborCost?: number | null;
 };
 export type AdminActionSummary = {
-  items?: Partial<Record<'submitted' | 'expiringSoon' | 'returnVisits' | 'awaitingDispatch' | 'pendingReports', {
+  items?: Partial<Record<'submitted' | 'expiringSoon' | 'returnVisits' | 'awaitingDispatch' | 'pendingReports' | 'overdueReview', {
     bookingId: number; bookingReference: string; customerName: string; preferredDate: string; expiresAt: string | null;
   }[]>>;
   submitted: number;
   expiringSoon: number;
+  overdueReview: number;
   returnVisits: number;
   awaitingDispatch: number;
   pendingReports: number;

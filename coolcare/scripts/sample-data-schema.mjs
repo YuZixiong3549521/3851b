@@ -1,4 +1,5 @@
 export const sampleDataTables = [
+  'admin_plan_reminder',
   'admin_review_follow_up_event', 'admin_review_follow_up',
   'reward_activity', 'assignment_member', 'visit_member',
   'performance_operation', 'performance_feedback', 'performance_quality', 'performance_visit',

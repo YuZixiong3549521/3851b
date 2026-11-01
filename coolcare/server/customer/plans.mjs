@@ -3,6 +3,7 @@ import { asyncRoute, HttpError } from './errors.mjs';
 import { addCalendarDays, appointmentInstant, minimumBookingDate, nextWeekday, singaporeToday } from './booking-schedule.mjs';
 import { addCalendarMonths } from './annual-bookings.mjs';
 import { getBookingOptions } from './booking-options.mjs';
+import { describePlanReminder, planReminderKey } from '../../lib/admin-plan-reminders.mjs';
 
 const inactiveStatuses = new Set(['Cancelled', 'Rejected', 'Expired']);
 const preServiceStatuses = new Set(['Submitted', 'Confirmed', 'Assigned', 'On The Way']);
@@ -156,7 +157,26 @@ export async function listAnnualPlans(executor, userId, now = new Date()) {
 
 // Only called by the existing administrator-authenticated commerce route.
 export async function listAdminAnnualPlans(executor, now = new Date()) {
-  return { plans: await readPlans(executor, null, { now }) };
+  const plans = await readPlans(executor, null, { now });
+  if (!plans.length) return { plans };
+  const [events] = await executor.execute(`SELECT reminderId,seriesId,reminderKey,channel,note,createdAtEpoch,actorName FROM (
+    SELECT r.reminder_id AS reminderId,r.series_id AS seriesId,r.reminder_key AS reminderKey,r.channel,r.note,
+    UNIX_TIMESTAMP(r.created_at) AS createdAtEpoch,u.full_name AS actorName,
+    ROW_NUMBER() OVER(PARTITION BY r.series_id ORDER BY r.reminder_id DESC) AS position
+    FROM admin_plan_reminder r JOIN user_account u ON u.user_id=r.actor_user_id
+    WHERE r.series_id IN (${plans.map(() => '?').join(',')})) contacts WHERE position<=10 ORDER BY reminderId DESC`, plans.map(plan => plan.seriesId));
+  const [contacts] = await executor.execute(`SELECT DISTINCT series_id AS seriesId,reminder_key AS reminderKey FROM admin_plan_reminder
+    WHERE ${plans.map(() => '(series_id=? AND reminder_key=?)').join(' OR ')}`, plans.flatMap(plan => [plan.seriesId, planReminderKey(plan)]));
+  return { plans: plans.map(plan => ({ ...plan, reminder: {
+    ...describePlanReminder(plan, contacts.filter(event => event.seriesId === plan.seriesId), now),
+    history: events.filter(event => event.seriesId === plan.seriesId).map(({ createdAtEpoch, ...event }) => ({ ...event, createdAt: new Date(Number(createdAtEpoch) * 1000).toISOString() })),
+  } })) };
+}
+
+export async function getAdminAnnualPlan(executor, seriesId, now = new Date()) {
+  const [plan] = await readPlans(executor, null, { seriesId, now });
+  if (!plan) throw new HttpError(404, 'Annual plan not found.');
+  return plan;
 }
 
 export async function getAnnualPlanRenewal(executor, userId, seriesId, now = new Date()) {

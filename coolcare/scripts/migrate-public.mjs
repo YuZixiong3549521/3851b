@@ -13,6 +13,8 @@ for (const migration of ['06-booking-packages.sql','07-inventory-audit.sql','08-
 sql += '\n' + readFileSync(resolve(root, 'database/34-early-renewal-rewards.sql'), 'utf8') + '\n';
 sql += '\n' + readFileSync(resolve(root, 'database/35-reward-activity-and-teams.sql'), 'utf8') + '\n';
 sql += '\n' + readFileSync(resolve(root, 'database/36-admin-review-follow-up.sql'), 'utf8') + '\n';
+sql += '\n' + readFileSync(resolve(root, 'database/37-admin-plan-reminders.sql'), 'utf8') + '\n';
+sql += `GRANT INSERT ON coolcare_service_app.admin_plan_reminder TO '${user}'@'%';\n`;
 sql += `GRANT INSERT, UPDATE ON coolcare_service_app.admin_review_follow_up TO '${user}'@'%';\n`;
 sql += `GRANT INSERT ON coolcare_service_app.admin_review_follow_up_event TO '${user}'@'%';\n`;
 for(const table of ['reward_activity','assignment_member','visit_member']) sql += `GRANT INSERT ON coolcare_service_app.${table} TO '${user}'@'%';\n`;

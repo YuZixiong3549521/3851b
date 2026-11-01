@@ -2,6 +2,30 @@
 
 ## Admin follow-up and reporting improvements
 
+The Admin-only follow-up update adds a separate `queue=overdue-review` for active
+Submitted requests waiting at least 24 hours, including waiting-dispatch requests.
+Overview, Action centre, list badges and detail warnings share this predicate;
+it does not duplicate action totals or replace the 12-hour expiry warning.
+
+Assigned appointments can be changed only before travel, service or inventory
+activity. The final dialog shows the old/new appointment, team release and required
+reason. `PATCH /api/admin/bookings/:id/reschedule` requires `assignmentReview`
+(`assignmentId`, original `preferredDate`, original `timeSlot`, `reason`) for Assigned
+orders. Under existing customer/booking/capacity locks it rechecks the snapshot and
+target capacity, cancels old assigned work, updates any annual visit date and returns
+the order to Confirmed waiting dispatch atomically. Failure preserves the old work.
+Unassigned clients keep their existing payload. Rescheduling sends no email;
+dispatch after release creates a new assignment-specific customer outbox event.
+
+Migration 37 adds append-only Admin renewal-contact records. Yearly packages marks
+unrenewed plans due within 14 Singapore calendar days of the earlier final visit or
+term expiry, retains overdue plans, and provides due/contacted filters. Admin records
+contact already made via `POST /api/commerce/admin/plans/:id/reminders` with
+`requestId`, reviewed `reminderKey`, `channel` (Phone/Email/Other), and required `note`.
+Customer/visit locks reject changed dates or renewed/cancelled plans; identical
+retries replay once. Date changes reopen the reminder. The latest ten records show
+actor/time/channel/notes only in Admin; saving sends no email or other message.
+
 Overview's today, active-service and completed-this-week cards open exact, paginated
 order queues (`queue=today|active|completed-week`), using Singapore dates and the
 same definitions as their counts. Search and pagination preserve the selected queue.

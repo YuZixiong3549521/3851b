@@ -157,7 +157,7 @@ export function OrdersPage({
   params: URLSearchParams;
 }) {
   const { go, version, refresh, actionSummary } = useInventory(),
-    specialQueue = mode === 'review' && ['reports', 'expiring', 'returns', 'today', 'active', 'completed-week'].includes(params.get('queue') || '') ? params.get('queue')! : '',
+    specialQueue = mode === 'review' && ['reports', 'expiring', 'returns', 'today', 'active', 'completed-week', 'overdue-review'].includes(params.get('queue') || '') ? params.get('queue')! : '',
     reportsQueue = mode === 'review' && params.get('queue') === 'reports',
     status =
       specialQueue ? '' : mode === 'review'
@@ -194,9 +194,9 @@ export function OrdersPage({
     <>
       <Heading
         eyebrow={search ? 'ORDERS / SEARCH' : mode === 'review' ? 'ORDERS / REVIEW' : 'ORDERS / DISPATCH'}
-        title={search ? 'Booking search' : specialQueue === 'today' ? 'Bookings scheduled today' : specialQueue === 'active' ? 'Active service / return visits' : specialQueue === 'completed-week' ? 'Completed bookings scheduled this week' : reportsQueue ? 'Pending service reports' : specialQueue === 'expiring' ? 'Confirmation due within 12 hours' : specialQueue === 'returns' ? 'Return visits needing Admin' : mode === 'review' ? 'Booking review' : 'Dispatch queue'}
+        title={search ? 'Booking search' : specialQueue === 'overdue-review' ? 'Unconfirmed for 24 hours' : specialQueue === 'today' ? 'Bookings scheduled today' : specialQueue === 'active' ? 'Active service / return visits' : specialQueue === 'completed-week' ? 'Completed bookings scheduled this week' : reportsQueue ? 'Pending service reports' : specialQueue === 'expiring' ? 'Confirmation due within 12 hours' : specialQueue === 'returns' ? 'Return visits needing Admin' : mode === 'review' ? 'Booking review' : 'Dispatch queue'}
         description={
-          search ? 'Find an order by booking reference, customer name or email across all statuses.' : ['today', 'active', 'completed-week'].includes(specialQueue) ? 'Matching orders from Operations overview. Dates use Singapore time; open an order to view its details.' : reportsQueue
+          search ? 'Find an order by booking reference, customer name or email across all statuses.' : specialQueue === 'overdue-review' ? 'Active requests submitted at least 24 hours ago and still unconfirmed, including requests in waiting dispatch. Closed and expired requests are excluded.' : ['today', 'active', 'completed-week'].includes(specialQueue) ? 'Matching orders from Operations overview. Dates use Singapore time; open an order to view its details.' : reportsQueue
             ? 'Follow up with the responsible technician until each finished or paused visit has a submitted report.'
             : specialQueue === 'expiring' ? 'Open a booking before its confirmation deadline to review availability and dispatch.'
             : specialQueue === 'returns' ? 'Open the original order to review the return request and its service reports.'
@@ -253,11 +253,12 @@ export function OrdersPage({
               {actionSummary.totalRequiringAction} total
             </strong>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {([
               ['submitted', 'Awaiting confirmation', '/admin/orders?status=Submitted'],
               ['pendingReports', 'Reports awaiting submission', '/admin/orders?queue=reports'],
               ['expiringSoon', 'Due within 12 hours', '/admin/orders?queue=expiring&sort=deadline'],
+              ['overdueReview', 'Unconfirmed for 24 hours', '/admin/orders?queue=overdue-review'],
               ['returnVisits', 'Return visits needing Admin', '/admin/orders?queue=returns'],
               ['awaitingDispatch', 'Awaiting dispatch', '/admin/dispatch'],
             ] as const).map(([key, label, href]) => <div key={key} className={`min-w-0 rounded-xl border p-4 shadow-sm ${key === 'expiringSoon' ? 'border-orange-200 bg-orange-50' : 'bg-white'}`}>
@@ -289,7 +290,7 @@ export function OrdersPage({
               className="mt-1"
               value={specialQueue || status}
               onChange={(event) =>
-                go(['reports', 'expiring', 'returns', 'today', 'active', 'completed-week'].includes(event.target.value) ? '/admin/orders?queue=' + event.target.value : '/admin/orders?status=' + event.target.value)
+                go(['reports', 'expiring', 'returns', 'today', 'active', 'completed-week', 'overdue-review'].includes(event.target.value) ? '/admin/orders?queue=' + event.target.value : '/admin/orders?status=' + event.target.value)
               }
             >
               <option value="Submitted">Awaiting confirmation</option>
@@ -297,6 +298,7 @@ export function OrdersPage({
               <option value="Expired">Expired</option>
               <option value="reports">Reports awaiting submission</option>
               <option value="expiring">Due within 12 hours</option>
+              <option value="overdue-review">Unconfirmed for 24 hours</option>
               <option value="returns">Return visits needing Admin</option>
               <option value="today">Bookings scheduled today</option>
               <option value="active">Active service / return visits</option>
@@ -381,6 +383,7 @@ export function OrdersPage({
                     </TableCell>
                     <TableCell data-label="Status">
                       <BookingStatus status={row.status} />
+                      {row.reviewOverdue && <span className="mt-2 block w-fit rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-950">Waiting 24+ hours</span>}
                       {row.status === 'Submitted' && (
                         <small className="mt-1 block font-medium text-red-700">
                           {row.expiresAt
@@ -732,6 +735,8 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
     booking = resource.data?.booking;
   const orderReadOnly = ['In Progress', 'Completed'].includes(booking?.status ?? '') || Boolean(booking?.assignments.some((item) => item.workStatus === 'In Progress'));
   const [rejectConfirmation, setRejectConfirmation] = useState(false);
+  const [rescheduleConfirmation, setRescheduleConfirmation] = useState(false);
+  const [rescheduleReason, setRescheduleReason] = useState('');
   const [reason, setReason] = useState(''),
     [reasonDraft, setReasonDraft] = useState<string | null>(null),
     [scheduleDraft, setScheduleDraft] = useState<{
@@ -765,7 +770,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
             }
           : { bookingId, preferredDate: '', timeSlot: '' },
     canEditSchedule = Boolean(
-      booking && !orderReadOnly && ['Submitted', 'Confirmed'].includes(booking.status),
+      booking && !orderReadOnly && (['Submitted', 'Confirmed'].includes(booking.status) || Boolean(booking.canRescheduleAssigned)),
     ),
     scheduleDirty = Boolean(
       booking &&
@@ -932,13 +937,25 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       setBusy('');
     }
   }
-  async function saveSchedule() {
+  async function saveSchedule(confirmed = false) {
     if (!canEditSchedule || !scheduleDirty) return;
     if (scheduleError) {
       setError(scheduleError);
       return;
     }
-    const requestType = `reschedule:${schedule.preferredDate}:${schedule.timeSlot}`;
+    if (booking?.status === 'Assigned' && !confirmed) {
+      setRescheduleConfirmation(true);
+      return;
+    }
+    const currentAssignment = booking?.assignments.find(item => !['Cancelled', 'Completed', 'Reassigned', 'Declined'].includes(item.status));
+    const assignmentReview = booking?.status === 'Assigned' && currentAssignment ? {
+      assignmentId: currentAssignment.assignmentId,
+      preferredDate: calendarDate(booking.preferredDate),
+      timeSlot: booking.timeSlot,
+      reason: rescheduleReason.trim(),
+    } : undefined;
+    if (booking?.status === 'Assigned' && (!assignmentReview || rescheduleReason.trim().length < 5)) return;
+    const requestType = JSON.stringify({ preferredDate: schedule.preferredDate, timeSlot: schedule.timeSlot, assignmentReview });
     setBusy('reschedule');
     setError('');
     if (pending.current?.type !== requestType)
@@ -948,11 +965,14 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
         requestId: pending.current.requestId,
         preferredDate: schedule.preferredDate,
         timeSlot: schedule.timeSlot,
+        ...(assignmentReview ? { assignmentReview } : {}),
       });
       pending.current = null;
       setScheduleDraft(null);
+      setRescheduleConfirmation(false);
+      setRescheduleReason('');
       setDirty(false);
-      notify('Appointment updated. No customer email was sent.');
+      notify(assignmentReview ? 'Appointment updated. Previous work released; the order is waiting for dispatch.' : 'Appointment updated. No customer email was sent.');
       refresh();
     } catch (cause) {
       setError(errorText(cause));
@@ -1012,6 +1032,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
             actions={<BookingStatus status={booking.status} />}
           />
           {orderReadOnly && <p role="status" className="notice mb-5">{booking.status === 'Completed' ? 'Service is completed. This order is read-only for administrators.' : 'Service is in progress. This order is read-only for administrators; the assigned technician manages the active visit.'}</p>}
+          {booking.reviewOverdue && <p className="mb-5 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">This request has been unconfirmed for at least 24 hours. Review it or resolve the waiting-dispatch request.</p>}
           <ReturnVisitsPanel viewerRole="admin" bookingId={bookingId} />
           {booking.reportPending && <div role="status" className="mb-5 flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">
             <AlertCircle className="mt-0.5 size-5 shrink-0" />
@@ -1101,8 +1122,8 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                   <h3 className="font-semibold">Appointment schedule</h3>
                   <p className="mt-1 text-sm muted">
                     {canEditSchedule
-                      ? 'Adjust the date or service time before dispatch. The customer is emailed only after a technician is assigned.'
-                      : 'The appointment is locked after dispatch.'}
+                      ? booking.status === 'Assigned' ? 'Changing this appointment releases the current assignment and returns the order to waiting dispatch. Review and confirm before saving.' : 'Adjust the date or service time before dispatch. The customer is emailed only after a technician is assigned.'
+                      : 'This appointment cannot be changed after travel, service or inventory activity has started.'}
                   </p>
                 </div>
                 <div className="admin-schedule-fields">
@@ -1178,7 +1199,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                         !scheduleDirty ||
                         Boolean(scheduleError)
                       }
-                      onClick={saveSchedule}
+                      onClick={() => void saveSchedule()}
                     >
                       <CalendarDays />
                       {busy === 'reschedule'
@@ -1698,7 +1719,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
               )}
             </section>
           </div>
-          {canEditSchedule && (
+          {canEditSchedule && booking.status !== 'Assigned' && (
             <AdminPlanner
               key={bookingId}
               booking={booking}
@@ -1709,6 +1730,19 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
               }}
             />
           )}
+          <Dialog open={rescheduleConfirmation} onOpenChange={open => { if (!busy) setRescheduleConfirmation(open); }}>
+            <DialogContent>
+              <DialogTitle>Confirm appointment change</DialogTitle>
+              <DialogDescription>Review the change for {booking.bookingReference}. The existing team and work order will be released, and this order will wait for a new dispatch.</DialogDescription>
+              <p className="text-sm">Current: {displayDate(booking.preferredDate)} · {displayServiceTime(booking)}</p>
+              <p className="text-sm">Team released: {booking.team?.map(member => member.fullName).join(', ') || booking.technicianName || 'Current assigned technician'}</p>
+              <p className="text-sm font-semibold">New: {displayDate(schedule.preferredDate)} · {formatServiceWindow(schedule.timeSlot, booking.estimatedDurationMinutes ?? undefined)}</p>
+              <label className="grid gap-2 text-sm">Reason for changing the appointment<Textarea value={rescheduleReason} maxLength={500} disabled={Boolean(busy)} onChange={e => setRescheduleReason(e.target.value)} /></label>
+              <p className="text-sm muted">No email is sent now. A customer notification is created only after the new dispatch succeeds.</p>
+              {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+              <DialogFooter><Button variant="outline" disabled={Boolean(busy)} onClick={() => setRescheduleConfirmation(false)}>Go back</Button><Button disabled={Boolean(busy) || !canEditSchedule || !scheduleDirty || rescheduleReason.trim().length < 5} onClick={() => void saveSchedule(true)}>{busy ? 'Saving…' : 'Confirm change and release team'}</Button></DialogFooter>
+            </DialogContent>
+          </Dialog>
           <Dialog open={rejectConfirmation} onOpenChange={setRejectConfirmation}>
             <DialogContent>
               <DialogTitle>Confirm booking rejection</DialogTitle>

@@ -15,6 +15,10 @@ export type AnnualPlanVisit = {
 };
 
 export type AnnualPlan = {
+  reminder?: {
+    key: string; dueDate: string; available: boolean; contacted: boolean; due: boolean;
+    history: Array<{ reminderId: number; seriesId: number; reminderKey: string; channel: string; note: string; createdAt: string; actorName: string }>;
+  };
   seriesId: number;
   name: string;
   status: 'Active' | 'Completed' | 'Expired' | 'Cancelled';

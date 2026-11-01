@@ -1,5 +1,7 @@
 export function matchesPlanAttention(plan, filter, today) {
   if (!filter || filter === 'all') return true;
+  if (filter === 'reminder-due') return Boolean(plan.reminder?.due);
+  if (filter === 'contacted') return Boolean(plan.reminder?.contacted);
   const unrenewed = !plan.existingRenewalSeriesId && plan.status !== 'Cancelled';
   if (filter === 'unrenewed') return unrenewed;
   if (filter === 'renewable') return unrenewed && plan.canRenew;

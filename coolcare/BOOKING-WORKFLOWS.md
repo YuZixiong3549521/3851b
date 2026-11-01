@@ -176,6 +176,28 @@ Migrations 19 through 22 introduce the new policy, property-price snapshots, con
 
 # Admin operations workspace
 
+Admin can reschedule an Assigned visit before travel or work begins, with a final
+review of the old/new date and team release plus a required reason. Requests include
+`assignmentReview: { assignmentId, preferredDate, timeSlot, reason }`, where date/time
+are the original reviewed appointment. The transaction verifies that snapshot and
+capacity, rejects report/inventory activity, cancels old assigned work and returns
+the booking to Confirmed waiting dispatch. Annual visit dates stay synchronized.
+Failed writes roll back the entire change; request IDs bind the reviewed payload.
+The old work cannot start after cancellation. A subsequent successful dispatch gets
+its own customer email event; the reschedule itself sends none.
+
+`queue=overdue-review` and `reviewOverdue` identify unexpired Submitted requests
+created at least 24 hours ago, including queued requests. Overview and Action centre
+offer exact links without counting the same order twice in overall action totals.
+
+Migration 37 adds Admin renewal contact history under Yearly packages. Contact is
+due from 14 Singapore calendar days before the final visit or plan expiry (whichever
+comes first), remains overdue until recorded, and reopens if those dates change.
+Renewed/cancelled plans close the reminder. `POST /api/commerce/admin/plans/:id/reminders`
+accepts `{ requestId, reminderKey, channel, note }` to record contact already made;
+it is Admin-only, CSRF-protected, replay-safe and never sends a message. Customer
+and technician APIs do not expose the internal contact notes.
+
 Migration `26-admin-operations-workspace.sql` adds waiting-dispatch metadata to existing bookings and extends the operation log. Run `npm run db:up`; existing orders are preserved. The earlier operation-enum migrations retain the full set of operation values so repeated migration runs do not narrow populated enums.
 
 - Admin can move an unassigned Submitted/Confirmed request into waiting dispatch with a reason. This does not confirm the booking, extend its deadline, create an assignment or send email. The Dispatch queue includes all queued active requests and historical Confirmed bookings, across all dates. Successful dispatch clears queue membership; rejected, expired, cancelled and assigned bookings are excluded. Oldest placement is the default, with an explicit deadline sort.
