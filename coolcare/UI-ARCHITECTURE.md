@@ -1,5 +1,38 @@
 # Shared UI and application architecture
 
+## Admin follow-up and reporting improvements
+
+Overview's today, active-service and completed-this-week cards open exact, paginated
+order queues (`queue=today|active|completed-week`), using Singapore dates and the
+same definitions as their counts. Search and pagination preserve the selected queue.
+In-progress and completed booking mutations are rejected inside the order transaction;
+customer email retry remains a separate communication recovery action. Rejection
+uses a final confirmation preview and returns the actual released points in the
+idempotent result, without sending an additional email.
+
+Migration 36 adds administrator-only review follow-up state and an append-only event
+history. `/api/performance/admin/visits/:reportId/follow-up` accepts a PUT with
+`requestId`, `expectedVersion`, `feedbackVersion`, `status` (Open, In progress,
+Resolved), and a required internal `note`. Writes serialize on the customer review,
+reject stale versions and retain idempotent receipts. Admin performance shows low
+ratings (1–2 stars), unresolved low reviews, and the latest ten internal events.
+Changed customer feedback requires renewed review before resolving it. Internal notes
+and events are absent from customer and technician responses; their existing review
+submission/read behavior is preserved.
+
+Yearly packages includes unrenewed, renewal-ready, expiring-within-30-days and
+bonus-deadline-within-14-days filters. These use Singapore dates and the existing
+100-point offer and final-visit deadline; selecting a filter sends no notification.
+
+Reports accept additive `dateBasis=scheduled|completed` (scheduled by default).
+Actual-completion mode includes only Completed orders with a reliable recorded
+completion date, converted to Singapore time. It uses the completion snapshot timestamp
+or the final recorded Completed visit, never a requested appointment as a substitute.
+Undated historical completions are counted separately across all dates for the selected
+service/technician filters. Charts, annual-plan usage and CSV use the same basis;
+parts retain their independent stock-movement date. CSV includes the applied basis,
+scheduled date and actual completion date. These are service values, not receipts.
+
 ## Team staffing and immediate reward activity
 
 Migration 35 adds assignment_member for current assignment participants, visit_member for immutable report participation, and reward_activity for availability movements that do not alter the balance ledger. server/teams.mjs centralizes membership, complete-team selection, durations, schedule conflicts and team names. The legacy assignment owner remains the lead; one work order/report continues to identify the visit. All technician mutation endpoints keep lead-only checks, while reads permit participants.

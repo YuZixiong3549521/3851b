@@ -1,5 +1,20 @@
 # Completion rewards and service-value reports
 
+## Report date basis
+
+Report JSON and CSV requests accept `dateBasis=scheduled|completed`, defaulting to
+scheduled for compatibility. Completed mode includes only Completed orders in the
+selected range, using the saved completion timestamp in Singapore or, when absent,
+the final recorded Completed service visit. It never substitutes a requested date.
+`summary.unknownCompletionDates` counts matching completed historical orders across
+all dates with no reliable completion date; these remain excluded from period totals.
+The UI shows both requested and actual dates. Charts, plan usage and CSV use the same
+date basis, while parts continue to use their own stock-movement date independently.
+Technician filters and amount snapshots retain their existing whole-order semantics.
+
+Admin rejection now returns additive `returnedPoints` from the actual reservation
+release, including the same value on idempotent replay. No extra email is generated.
+
 The Admin **Reports & Analytics** and **Customer Rewards** pages use real MySQL
 records. Customers access **My Rewards** from customer navigation. The website
 has no payment, collection or refund workflow. Completing an order awards

@@ -2,6 +2,7 @@ import {visitTeamNameSql,assignmentTeamNameSql} from './teams.mjs';
 import {assignmentTeam,bookingTeam,memberSql,staffingBooking,teamDispatchOptions,selectDispatchTeam,saveAssignmentTeam} from './teams.mjs';
 import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
 import { assertAdminOrderEditable } from './admin-order-policy.mjs';
+import { operationsQueueFilter } from './admin-queue-filters.mjs';
 import { registerReturnRoutes } from './return-visits.mjs';
 import { registerAdminWorkspaceRoutes } from './admin-workspace.mjs';
 import { getServiceProgress } from './service-progress.mjs';
@@ -104,7 +105,7 @@ const pageSchema = z.object({
     ])
     .default(''),
   q: z.string().trim().max(120).default(''),
-  queue: z.enum(['', 'waiting', 'review', 'reports', 'expiring', 'returns']).default(''),
+  queue: z.enum(['', 'waiting', 'review', 'reports', 'expiring', 'returns', 'today', 'active', 'completed-week']).default(''),
   sort: z.enum(['placed', 'deadline']).default('placed'),
   page: z.coerce.number().int().min(1).max(1000000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
@@ -247,13 +248,13 @@ export async function rejectBooking(pool, actor, bookingId, raw) {
       "UPDATE booking SET booking_status='Rejected',rejection_reason=?,rejection_version=rejection_version+1 WHERE booking_id=?",
       [data.reason, bookingId],
     );
-    await releaseBookingRewardReservation(connection, bookingId, 'Administrator rejected the booking.');
+    const returnedPoints = await releaseBookingRewardReservation(connection, bookingId, 'Administrator rejected the booking.');
     await connection.execute(
       `INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)
       VALUES (?,'Submitted','Rejected',?,?)`,
       [bookingId, actor.userId, data.reason],
     );
-    const result = { bookingId, status: 'Rejected', reason: data.reason };
+    const result = { bookingId, status: 'Rejected', reason: data.reason, returnedPoints: returnedPoints || 0 };
     await finishOperation(connection, {
       requestId: data.requestId,
       bookingId,
@@ -812,7 +813,11 @@ export async function listAdminBookings(pool, query) {
   const data = pageSchema.parse(query),
     where = [],
     values = [];
-  if (data.queue === 'reports') {
+  const operationsFilter = operationsQueueFilter(data.queue);
+  if (operationsFilter) {
+    where.push(operationsFilter.sql);
+    values.push(...operationsFilter.values);
+  } else if (data.queue === 'reports') {
     where.push(pendingReportBookingCondition);
   } else if (data.queue === 'expiring') {
     where.push("b.booking_status='Submitted' AND b.expires_at>UTC_TIMESTAMP() AND b.expires_at<=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 12 HOUR)");

@@ -7,8 +7,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { NativeSelect } from '@/components/ui/native-select';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { englishCalendarDate } from '@/lib/english-date';
+import { formatInstantDateTime } from '@/lib/sg-time';
 
 type Visit = {
+  followUp?: { status: string; note: string; version: number; feedbackVersion: number; updatedBy: string; updatedAt: string; history: { requestId: string; status: string; note: string; actor: string; createdAt: string }[] } | null;
   teamReview?:boolean;isLead?:boolean;
   reportId: number;
   jobId: number;
@@ -238,7 +240,7 @@ function PerformanceWorkspace({
       if (role === 'customer')
         window.dispatchEvent(new Event('coolcare:bookings-updated'));
       setNotice(
-        'Thank you for your review. Your technician and our service team can now see your feedback.',
+        role === 'admin' ? 'Internal review follow-up saved.' : 'Thank you for your review. Your technician and our service team can now see your feedback.',
       );
       await load(query());
     } catch (e) {
@@ -253,9 +255,12 @@ function PerformanceWorkspace({
     data?.visits.filter(
       (visit) =>
         reviewFilter === 'all' ||
+        (reviewFilter === 'low' && visit.stars !== null && visit.stars <= 2) ||
+        (reviewFilter === 'follow-up' && visit.stars !== null && visit.stars <= 2 &&
+          (visit.followUp?.status !== 'Resolved' || visit.followUp.feedbackVersion !== visit.feedbackVersion)) ||
         (reviewFilter === 'reviewed'
           ? visit.stars !== null
-          : visit.outcome === 'Completed' && visit.stars === null),
+          : reviewFilter === 'pending' && visit.outcome === 'Completed' && visit.stars === null),
     ) ?? [];
   return (
     <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
@@ -452,6 +457,7 @@ function PerformanceWorkspace({
                   onChange={(e) => setReviewFilter(e.target.value)}
                 >
                   <option value="all">All visits</option>
+                  {role === 'admin' && <><option value="low">Low ratings (1–2 stars)</option><option value="follow-up">Low ratings needing follow-up</option></>}
                   <option value="reviewed">
                     Customer reviews (
                     {data.visits.filter((v) => v.stars !== null).length})
@@ -479,7 +485,7 @@ function PerformanceWorkspace({
             ) : (
               visibleVisits.map((v) => (
                 <VisitCard
-                  key={`${v.reportId}-${v.technicianId}-${v.feedbackVersion}`}
+                  key={`${v.reportId}-${v.technicianId}-${v.feedbackVersion}-${v.followUp?.version ?? 0}`}
                   visit={v}
                   role={role}
                   mutate={mutate}
@@ -493,6 +499,31 @@ function PerformanceWorkspace({
     </div>
   );
 }
+function AdminReviewFollowUp({ visit, mutate, busy }: { visit: Visit; mutate: Mutation; busy: boolean }) {
+  const [status, setStatus] = useState(visit.followUp?.status ?? 'Open');
+  const [note, setNote] = useState(visit.followUp?.note ?? '');
+  const id = useId();
+  const changedReview = Boolean(visit.followUp && visit.followUp.feedbackVersion !== visit.feedbackVersion);
+  return <form className="space-y-3 rounded-xl border p-3" onSubmit={e => {
+    e.preventDefault();
+    void mutate(`/admin/visits/${visit.reportId}/follow-up`, {
+      expectedVersion: visit.followUp?.version ?? 0, feedbackVersion: visit.feedbackVersion, status, note,
+    }).catch(() => {});
+  }}>
+    <p className="text-sm font-semibold">Admin follow-up · {changedReview ? 'Review changed — check again' : visit.followUp?.status ?? 'Not yet recorded'}</p>
+    {visit.stars !== null && visit.stars <= 2 && <p className="text-sm text-amber-800">Low rating (1–2 stars). Record the action taken and resolve after follow-up.</p>}
+    <label htmlFor={`${id}-status`} className="block text-sm">Follow-up status</label>
+    <NativeSelect id={`${id}-status`} value={status} onChange={e => setStatus(e.target.value)} disabled={busy}>
+      <option>Open</option><option>In progress</option><option>Resolved</option>
+    </NativeSelect>
+    <label htmlFor={`${id}-note`} className="block text-sm">Internal note (Admin only)</label>
+    <Textarea id={`${id}-note`} value={note} onChange={e => setNote(e.target.value)} minLength={5} maxLength={1500} required disabled={busy} placeholder="Record contact, investigation or resolution details." />
+    <p className="text-xs text-muted-foreground">Notes are visible only to administrators. Saving records the action; it does not send a message.</p>
+    {visit.followUp && <details className="text-sm"><summary className="cursor-pointer font-medium">Internal follow-up history (latest 10)</summary><ul className="mt-2 space-y-3">{visit.followUp.history.map(event => <li key={event.requestId} className="rounded-lg bg-muted p-3"><p>{event.status} · {event.actor} · {formatInstantDateTime(event.createdAt)}</p><p className="mt-1 whitespace-pre-wrap">{event.note}</p></li>)}</ul></details>}
+    <Button type="submit" size="sm" disabled={busy || note.trim().length < 5}>{busy ? 'Saving…' : 'Save follow-up'}</Button>
+  </form>;
+}
+
 function VisitCard({
   visit: v,
   role,
@@ -649,6 +680,10 @@ function VisitCard({
           </div>
         </div>
       )}
+      {role === 'admin' && <div className="mt-4 space-y-3 border-t pt-4">
+        <a className="text-sm font-medium text-primary underline" href={`/admin/orders/${v.bookingId}`}>Open order {v.bookingReference}</a>
+        {v.stars !== null && <details open={v.stars <= 2}><summary className="cursor-pointer text-sm font-semibold">Admin follow-up · {v.followUp?.status ?? 'Not yet recorded'}</summary><div className="mt-3"><AdminReviewFollowUp visit={v} mutate={mutate} busy={busy} /></div></details>}
+      </div>}
     </article>
   );
 }

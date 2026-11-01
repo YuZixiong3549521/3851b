@@ -68,6 +68,29 @@ async function setRule(db, c, actor, patch = {}) {
   return updateRewardRule(db, actor, { requestId: randomUUID(), expectedVersion: r.version, pointsPerDollar: 1, redemptionPoints: 100, redemptionValue: 5, reason: 'Isolated rule configuration for validation.', ...patch });
 }
 
+test('actual completion reports use Singapore completion date across quarters and exclude undated historical orders', () => fixture(async (db, c, f) => {
+  const id = f.bookings[0];
+  await c.execute("UPDATE booking SET preferred_service_date='2026-03-31' WHERE booking_id=?", [id]);
+  await complete(db, id);
+  await c.execute('UPDATE booking_completion_reward SET completed_at=FROM_UNIXTIME(?) WHERE booking_id=?', [Date.parse('2026-03-31T16:10:00Z') / 1000, id]);
+  await c.execute("UPDATE booking SET booking_status='Completed' WHERE booking_id=?", [f.bookings[1]]);
+  for (const zone of ['+00:00', '-05:00']) {
+    await c.query('SET time_zone=?', [zone]);
+    const scheduled = await commerceReport(db, { from: '2026-03-31', to: '2026-03-31' });
+    assert.ok(scheduled.orders.some(o => o.bookingId === id));
+    const march = await commerceReport(db, { from: '2026-03-31', to: '2026-03-31', dateBasis: 'completed' });
+    assert.ok(!march.orders.some(o => o.bookingId === id));
+    const april = await commerceReport(db, { from: '2026-04-01', to: '2026-04-01', dateBasis: 'completed', groupBy: 'quarter' });
+    const order = april.orders.find(o => o.bookingId === id);
+    assert.equal(order.completedDate, '2026-04-01');
+    assert.equal(order.scheduledDate, '2026-03-31');
+    assert.equal(april.analytics.periods[0].period, '2026-Q2');
+    assert.ok(april.summary.unknownCompletionDates >= 1);
+    assert.ok(!april.orders.some(o => o.bookingId === f.bookings[1]));
+  }
+  await c.query("SET time_zone='+00:00'");
+}));
+
 test('End service and report submission award once without payments, including repair extras', () => fixture(async (db, c, f) => {
   await setRule(db, c, f.adminId);
   const first = await makeJob(c, f, f.bookings[0]), second = await makeJob(c, f, f.bookings[1]);
@@ -177,7 +200,10 @@ test('actual customer cancellation, admin rejection and expiry atomically releas
   }
   await changePublicBooking(db, { id: f.userId, customerId: f.customerId }, f.bookings[0], 'cancel', { status: 'Cancelled' });
   assert.equal((await rewardsSummary(db, f.customerId)).available, 100);
-  await rejectBooking(db, { userId: f.adminId }, f.bookings[1], { requestId: randomUUID(), reason: 'Isolated rejected request for release test.' });
+  const rejectInput = { requestId: randomUUID(), reason: 'Isolated rejected request for release test.' };
+  const rejectResult = await rejectBooking(db, { userId: f.adminId }, f.bookings[1], rejectInput);
+  assert.equal(rejectResult.returnedPoints, 100);
+  assert.equal((await rejectBooking(db, { userId: f.adminId }, f.bookings[1], rejectInput)).returnedPoints, 100);
   const notices = await listBookingNotices(db, f.userId);
   const rejection = notices.find(row => row.bookingId === f.bookings[1]);
   assert.equal(rejection.rewardStatus, 'Released');

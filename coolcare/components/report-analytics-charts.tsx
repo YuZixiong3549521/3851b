@@ -45,7 +45,7 @@ function DataTable({ title, periods, groupBy, columns }: {
     </summary>
     <div className="mt-3 max-h-80 overflow-auto rounded-xl border" tabIndex={0} role="region" aria-label={`${title} data`}>
       <table className="w-full min-w-[560px] text-left text-sm">
-        <caption className="sr-only">{title}. Figures use scheduled service dates. Partial periods contain only the dates shown.</caption>
+        <caption className="sr-only">{title}. Figures use the applied date basis. Partial periods contain only the dates shown.</caption>
         <thead className="sticky top-0 bg-muted"><tr>
           <th scope="col" className="px-3 py-3 font-medium">Period</th>
           {columns.map(column => <th key={column.label} scope="col" className="px-3 py-3 text-right font-medium">{column.label}</th>)}
@@ -154,7 +154,7 @@ export function ReportAnalyticsCharts({ periods, groupBy }: ReportAnalyticsChart
   const annualTitle = `Annual bundle visits by ${grouping}`;
 
   return <div className="space-y-4">
-    <p className="text-sm text-muted-foreground">All charts use the same applied filters and scheduled service dates. Empty periods remain in the data. {periods.some(period => period.partial) && '* marks a partial period; only the selected dates are included.'}</p>
+    <p className="text-sm text-muted-foreground">All charts use the same applied filters and date basis shown above. Empty periods remain in the data. {periods.some(period => period.partial) && '* marks a partial period; only the selected dates are included.'}</p>
     <div className="grid min-w-0 gap-6 xl:grid-cols-2">
       <div className="min-w-0 [&>section]:h-full"><Section title={financialTitle}>
         <p className="text-sm leading-relaxed text-muted-foreground xl:min-h-20">Each bar is the completed service amount: after-reward value plus points discounts. Amounts are in SGD and do not represent payments collected.</p>
@@ -172,7 +172,7 @@ export function ReportAnalyticsCharts({ periods, groupBy }: ReportAnalyticsChart
         ]} />
       </Section></div>
       <div className="min-w-0 [&>section]:h-full"><Section title={ordersTitle}>
-        <p className="text-sm leading-relaxed text-muted-foreground xl:min-h-20">Compare the current status of orders scheduled in each period. Active includes requests awaiting confirmation and service in progress; closed includes cancelled, rejected and expired orders.</p>
+        <p className="text-sm leading-relaxed text-muted-foreground xl:min-h-20">Compare the current status of orders included in each period. Actual completion mode includes completed orders only. Active includes requests awaiting confirmation and service in progress; closed includes cancelled, rejected and expired orders.</p>
         {hasOrders ? <StackedChart title={ordersTitle} rows={orderRows} series={statusSeries} groupBy={groupBy} /> : <EmptyChart>No orders match these filters. The data table retains all selected periods with zero orders.</EmptyChart>}
         <DataTable title={ordersTitle} periods={periods} groupBy={groupBy} columns={[
           { label: 'Orders', value: period => count.format(period.orders) },
@@ -183,14 +183,14 @@ export function ReportAnalyticsCharts({ periods, groupBy }: ReportAnalyticsChart
         ]} />
       </Section></div>
       <div className="min-w-0 [&>section]:h-full"><Section title={servicesTitle}>
-        <p className="text-sm leading-relaxed text-muted-foreground xl:min-h-20">See which services were booked, across all statuses. Combined Cleaning &amp; Repair and annual bundle visits each count once, without duplicating their cleaning service.</p>
+        <p className="text-sm leading-relaxed text-muted-foreground xl:min-h-20">See the services in the selected orders. Combined Cleaning &amp; Repair and annual bundle visits each count once, without duplicating their cleaning service.</p>
         {hasOrders ? <StackedChart title={servicesTitle} rows={serviceRows} series={serviceSeries} groupBy={groupBy} /> : <EmptyChart>No services were booked in the selected range.</EmptyChart>}
         <DataTable title={servicesTitle} periods={periods} groupBy={groupBy} columns={serviceSeries.map(item => ({
           label: item.label, value: period => count.format(period.services[item.key as keyof AnalyticsPeriod['services']]),
         }))} />
       </Section></div>
       <div className="min-w-0 [&>section]:h-full"><Section title={annualTitle}>
-        <p className="text-sm leading-relaxed text-muted-foreground xl:min-h-20">Track scheduled quarterly entitlements, not the number of plans sold. Return visits stay with the original appointment and do not consume another entitlement.</p>
+        <p className="text-sm leading-relaxed text-muted-foreground xl:min-h-20">Track quarterly entitlements included in this report, rather than plans sold. Return visits stay with the original appointment and do not consume another entitlement.</p>
         {hasAnnual ? <StackedChart title={annualTitle} rows={annualRows} series={[
           { key: 'completed', label: 'Completed', colour: colours.teal },
           { key: 'active', label: 'Awaiting service', colour: colours.blue },
@@ -198,7 +198,7 @@ export function ReportAnalyticsCharts({ periods, groupBy }: ReportAnalyticsChart
           ...(hasOtherAnnual ? [{ key: 'other', label: 'Other status', colour: colours.muted }] : []),
         ]} groupBy={groupBy} /> : <EmptyChart>No annual bundle visits match these filters. Choose All services or Annual Cleaning Bundle to include package appointments.</EmptyChart>}
         <DataTable title={annualTitle} periods={periods} groupBy={groupBy} columns={[
-          { label: 'Scheduled visits', value: period => count.format(period.annual.visits) },
+          { label: 'Quarterly visits', value: period => count.format(period.annual.visits) },
           { label: 'Completed', value: period => count.format(period.annual.completed) },
           { label: 'Awaiting service', value: period => count.format(period.annual.active) },
           { label: 'Closed without completion', value: period => count.format(period.annual.closed) },

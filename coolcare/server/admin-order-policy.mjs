@@ -3,6 +3,8 @@ import { AppError } from './inventory.mjs';
 // Call inside the transaction after locking the booking, before changing it.
 // Checking work orders also protects older rows whose booking status is stale.
 export async function assertAdminOrderEditable(connection, booking) {
+  if (booking.booking_status === 'Completed')
+    throw new AppError('This service is completed. Administrators can view the order but cannot change it.', 409);
   if (booking.booking_status === 'In Progress')
     throw new AppError('This service is in progress. Administrators can view the order but cannot change it.', 409);
   const [active] = await connection.execute(

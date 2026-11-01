@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { NativeSelect } from '@/components/ui/native-select';
+import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import {
   Table,
   TableBody,
@@ -156,7 +157,7 @@ export function OrdersPage({
   params: URLSearchParams;
 }) {
   const { go, version, refresh, actionSummary } = useInventory(),
-    specialQueue = mode === 'review' && ['reports', 'expiring', 'returns'].includes(params.get('queue') || '') ? params.get('queue')! : '',
+    specialQueue = mode === 'review' && ['reports', 'expiring', 'returns', 'today', 'active', 'completed-week'].includes(params.get('queue') || '') ? params.get('queue')! : '',
     reportsQueue = mode === 'review' && params.get('queue') === 'reports',
     status =
       specialQueue ? '' : mode === 'review'
@@ -193,9 +194,9 @@ export function OrdersPage({
     <>
       <Heading
         eyebrow={search ? 'ORDERS / SEARCH' : mode === 'review' ? 'ORDERS / REVIEW' : 'ORDERS / DISPATCH'}
-        title={search ? 'Booking search' : reportsQueue ? 'Pending service reports' : specialQueue === 'expiring' ? 'Confirmation due within 12 hours' : specialQueue === 'returns' ? 'Return visits needing Admin' : mode === 'review' ? 'Booking review' : 'Dispatch queue'}
+        title={search ? 'Booking search' : specialQueue === 'today' ? 'Bookings scheduled today' : specialQueue === 'active' ? 'Active service / return visits' : specialQueue === 'completed-week' ? 'Completed bookings scheduled this week' : reportsQueue ? 'Pending service reports' : specialQueue === 'expiring' ? 'Confirmation due within 12 hours' : specialQueue === 'returns' ? 'Return visits needing Admin' : mode === 'review' ? 'Booking review' : 'Dispatch queue'}
         description={
-          search ? 'Find an order by booking reference, customer name or email across all statuses.' : reportsQueue
+          search ? 'Find an order by booking reference, customer name or email across all statuses.' : ['today', 'active', 'completed-week'].includes(specialQueue) ? 'Matching orders from Operations overview. Dates use Singapore time; open an order to view its details.' : reportsQueue
             ? 'Follow up with the responsible technician until each finished or paused visit has a submitted report.'
             : specialQueue === 'expiring' ? 'Open a booking before its confirmation deadline to review availability and dispatch.'
             : specialQueue === 'returns' ? 'Open the original order to review the return request and its service reports.'
@@ -288,7 +289,7 @@ export function OrdersPage({
               className="mt-1"
               value={specialQueue || status}
               onChange={(event) =>
-                go(['reports', 'expiring', 'returns'].includes(event.target.value) ? '/admin/orders?queue=' + event.target.value : '/admin/orders?status=' + event.target.value)
+                go(['reports', 'expiring', 'returns', 'today', 'active', 'completed-week'].includes(event.target.value) ? '/admin/orders?queue=' + event.target.value : '/admin/orders?status=' + event.target.value)
               }
             >
               <option value="Submitted">Awaiting confirmation</option>
@@ -297,6 +298,9 @@ export function OrdersPage({
               <option value="reports">Reports awaiting submission</option>
               <option value="expiring">Due within 12 hours</option>
               <option value="returns">Return visits needing Admin</option>
+              <option value="today">Bookings scheduled today</option>
+              <option value="active">Active service / return visits</option>
+              <option value="completed-week">Completed bookings scheduled this week</option>
             </NativeSelect>
           </label>
           {!specialQueue && <label htmlFor="review-order-sort" className="text-sm font-semibold">
@@ -726,7 +730,8 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       version,
     ),
     booking = resource.data?.booking;
-  const orderReadOnly = booking?.status === 'In Progress' || Boolean(booking?.assignments.some((item) => item.workStatus === 'In Progress'));
+  const orderReadOnly = ['In Progress', 'Completed'].includes(booking?.status ?? '') || Boolean(booking?.assignments.some((item) => item.workStatus === 'In Progress'));
+  const [rejectConfirmation, setRejectConfirmation] = useState(false);
   const [reason, setReason] = useState(''),
     [reasonDraft, setReasonDraft] = useState<string | null>(null),
     [scheduleDraft, setScheduleDraft] = useState<{
@@ -858,7 +863,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
     if (pending.current?.type !== requestType)
       pending.current = { type: requestType, requestId: crypto.randomUUID() };
     try {
-      const result = await api<{ technician?: { fullName: string } }>(
+      const result = await api<{ technician?: { fullName: string }; returnedPoints?: number }>(
         `/admin/bookings/${bookingId}/${type}`,
         'POST',
         {
@@ -881,7 +886,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
       notify(
         type === 'dispatch' || type === 'redispatch'
           ? `${booking?.status === 'Submitted' ? 'Booking confirmed and assigned' : 'Assigned'} to ${result.technician?.fullName}. Customer email queued.`
-          : 'Booking rejected. No customer email was sent.',
+          : `Booking rejected.${result.returnedPoints ? ` ${result.returnedPoints} reserved loyalty points returned to the customer.` : ' No reserved loyalty points needed returning.'}`,
       );
       refresh();
     } catch (cause) {
@@ -1006,7 +1011,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
             description={`${displayDate(booking.preferredDate)} · ${displayServiceTime(booking)}`}
             actions={<BookingStatus status={booking.status} />}
           />
-          {orderReadOnly && <p role="status" className="notice mb-5">Service is in progress. This order is read-only for administrators; the assigned technician manages the active visit.</p>}
+          {orderReadOnly && <p role="status" className="notice mb-5">{booking.status === 'Completed' ? 'Service is completed. This order is read-only for administrators.' : 'Service is in progress. This order is read-only for administrators; the assigned technician manages the active visit.'}</p>}
           <ReturnVisitsPanel viewerRole="admin" bookingId={bookingId} />
           {booking.reportPending && <div role="status" className="mb-5 flex items-start gap-3 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm text-orange-900">
             <AlertCircle className="mt-0.5 size-5 shrink-0" />
@@ -1311,7 +1316,7 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
                       travelDirty ||
                       reason.trim().length < 3
                     }
-                    onClick={() => action('reject')}
+                    onClick={() => setRejectConfirmation(true)}
                   >
                     <XCircle />
                     {busy === 'reject' ? 'Rejecting…' : 'Reject booking'}
@@ -1704,6 +1709,16 @@ export function OrderDetails({ bookingId }: { bookingId: number }) {
               }}
             />
           )}
+          <Dialog open={rejectConfirmation} onOpenChange={setRejectConfirmation}>
+            <DialogContent>
+              <DialogTitle>Confirm booking rejection</DialogTitle>
+              <DialogDescription>Review the reason and loyalty points before rejecting {booking.bookingReference}.</DialogDescription>
+              <p className="whitespace-pre-wrap rounded-xl bg-muted p-3 text-sm">{reason}</p>
+              <p className="text-sm">{booking.amounts?.rewardStatus === 'Reserved' ? `${booking.amounts.rewardPoints} reserved loyalty points will be returned. The final result uses the current reservation.` : 'No active reserved loyalty points are recorded for this order.'}</p>
+              <p className="text-sm text-muted-foreground">The customer can see the rejection reason in their order. This action does not send an email.</p>
+              <DialogFooter><Button variant="outline" onClick={() => setRejectConfirmation(false)}>Go back</Button><Button variant="destructive" disabled={Boolean(busy) || orderReadOnly || booking.status !== 'Submitted'} onClick={() => { setRejectConfirmation(false); void action('reject'); }}>Confirm rejection</Button></DialogFooter>
+            </DialogContent>
+          </Dialog>
           <CustomerMailPanel bookingId={bookingId} />
         </>
       )}

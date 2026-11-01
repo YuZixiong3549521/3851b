@@ -228,6 +228,7 @@ export async function releaseBookingRewardReservation(c, bookingId, reason = 'Bo
     await c.execute("UPDATE reward_reservation SET status='Released',reason=? WHERE booking_id=? AND status='Reserved'", [reason.slice(0, 255), bookingId]);
     await c.execute("INSERT INTO reward_activity(booking_id,loyalty_account_id,kind,available_delta,points,description) VALUES (?,?,'Returned',?,?,?)",[bookingId,account.loyalty_account_id,reservation.points,reservation.points,reason.slice(0,255)]);
   }
+  return Number(reservation?.points || 0);
 }
 export async function adjustReward(pool, actorId, customerId, raw) {
   customerId = idSchema.parse(customerId);
@@ -294,7 +295,7 @@ export async function rewardsSummary(pool, customerId) {
   return { rules: config, balance, reserved, available: Math.max(0, balance - reserved), debt: Math.max(0, -balance), history: merged.map(row => ({ ...withBookingReference(row), createdAt: instant(row.createdAt) })), bookings };
 }
 
-export const reportFilterSchema = z.object({ from: date, to: date, serviceId: idSchema.optional(), serviceGroup: z.enum(['annual']).optional(), technicianId: idSchema.optional(), groupBy: z.enum(['day', 'quarter', 'year']).default('day') }).strict()
+export const reportFilterSchema = z.object({ from: date, to: date, dateBasis: z.enum(['scheduled', 'completed']).default('scheduled'), serviceId: idSchema.optional(), serviceGroup: z.enum(['annual']).optional(), technicianId: idSchema.optional(), groupBy: z.enum(['day', 'quarter', 'year']).default('day') }).strict()
   .refine(v => !(v.serviceId && v.serviceGroup), 'Choose a service or the annual bundle filter.')
   .refine(v => v.from <= v.to && (Date.parse(v.to) - Date.parse(v.from)) / 86400000 <= 1830, 'Choose a date range of at most five years.');
 function bookingFilter(filters, alias = 'b') {
@@ -310,7 +311,15 @@ function bookingFilter(filters, alias = 'b') {
 }
 export async function commerceReport(pool, raw) {
   const filters = reportFilterSchema.parse(raw), f = bookingFilter(filters);
-  const [orderRows] = await pool.execute(`SELECT b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,b.booking_status AS status,b.preferred_service_date AS serviceDate,
+  // Completion timestamps are instants; visit history stores Singapore wall time.
+  // Never substitute the scheduled date when actual completion is unknown.
+  const completedDate = `COALESCE(DATE(DATE_ADD('1970-01-01',INTERVAL (UNIX_TIMESTAMP(done.completed_at)+28800) SECOND)),
+    (SELECT DATE(MAX(v.ended_at)) FROM service_visit_record v JOIN work_order vw ON vw.job_id=v.job_id WHERE vw.booking_id=b.booking_id AND v.outcome='Completed'))`;
+  const reportDate = filters.dateBasis === 'completed' ? completedDate : 'b.preferred_service_date';
+  const completedOnly = filters.dateBasis === 'completed' ? " AND b.booking_status='Completed'" : '';
+  const [orderRows] = await pool.execute(`SELECT b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,b.booking_status AS status,${reportDate} AS serviceDate,
+    b.preferred_service_date AS scheduledDate,${completedDate} AS completedDate,
+    (SELECT av.series_id FROM annual_booking_visit av WHERE av.booking_id=b.booking_id) AS seriesId,
     EXISTS(SELECT 1 FROM annual_booking_visit av WHERE av.booking_id=b.booking_id) AS isAnnual,
     COALESCE((SELECT GROUP_CONCAT(DISTINCT COALESCE(sc.code,'other') ORDER BY COALESCE(sc.code,'other') SEPARATOR ',')
       FROM booking_service bs LEFT JOIN simple_service_catalog sc ON sc.service_id=bs.service_id WHERE bs.booking_id=b.booking_id),
@@ -326,15 +335,17 @@ export async function commerceReport(pool, raw) {
       WHERE w.booking_id=b.booking_id AND r.started_at IS NOT NULL${filters.technicianId ? ' AND pv.technician_id=?' : ''}) AS visits
     FROM booking b JOIN service_catalog s ON s.service_id=b.service_id LEFT JOIN booking_completion_reward done ON done.booking_id=b.booking_id
     LEFT JOIN reward_reservation r ON r.booking_id=b.booking_id
-    WHERE b.preferred_service_date BETWEEN ? AND ?${f.sql} ORDER BY b.preferred_service_date,b.booking_id`, [...(filters.technicianId ? [filters.technicianId, filters.technicianId] : []), filters.from, filters.to, ...f.values]);
+    WHERE ${reportDate} BETWEEN ? AND ?${completedOnly}${f.sql} ORDER BY serviceDate,b.booking_id`, [...(filters.technicianId ? [filters.technicianId, filters.technicianId] : []), filters.from, filters.to, ...f.values]);
   const orders = orderRows.map(withBookingReference);
   const [parts] = await pool.execute(`SELECT p.part_id AS partId,p.part_name AS name,p.stock_unit AS unit,
     SUM(IF(i.transaction_type='Stock Out',i.quantity,0)) AS issued,SUM(IF(i.transaction_type='Return',i.quantity,0)) AS returned
     FROM inventory_transaction i JOIN part p ON p.part_id=i.part_id JOIN work_order w ON w.job_id=i.job_id JOIN booking b ON b.booking_id=w.booking_id
     WHERE i.created_at >= FROM_UNIXTIME(?) AND i.created_at < FROM_UNIXTIME(?)
     AND i.transaction_type IN ('Stock Out','Return')${f.sql} GROUP BY p.part_id,p.part_name,p.stock_unit ORDER BY issued DESC,p.part_id`, [Date.parse(filters.from + 'T00:00:00+08:00') / 1000, Date.parse(filters.to + 'T00:00:00+08:00') / 1000 + 86400, ...f.values]);
-  const [[bundles]] = await pool.execute(`SELECT COUNT(*) AS scheduledVisits,COALESCE(SUM(b.booking_status='Completed'),0) AS completedVisits,COUNT(DISTINCT v.series_id) AS plans
-    FROM annual_booking_visit v JOIN booking b ON b.booking_id=v.booking_id WHERE b.preferred_service_date BETWEEN ? AND ?${f.sql}`, [filters.from, filters.to, ...f.values]);
+  const annualOrders = orders.filter(o => o.isAnnual);
+  const bundles = { scheduledVisits: annualOrders.length, completedVisits: annualOrders.filter(o => o.status === 'Completed').length, plans: new Set(annualOrders.map(o => o.seriesId)).size };
+  const [[missingDates]] = filters.dateBasis === 'completed' ? await pool.execute(`SELECT COUNT(*) AS count FROM booking b
+    LEFT JOIN booking_completion_reward done ON done.booking_id=b.booking_id WHERE b.booking_status='Completed' AND ${completedDate} IS NULL${f.sql}`, f.values) : [[{ count: 0 }]];
   const [serviceRows] = await pool.query(`SELECT s.service_id AS id,s.service_name AS name,
     EXISTS(SELECT 1 FROM simple_service_catalog catalogue WHERE catalogue.service_id=s.service_id) AS isCurrent
     FROM service_catalog s ORDER BY isCurrent DESC,s.service_name`);
@@ -361,7 +372,7 @@ export async function commerceReport(pool, raw) {
   }
   const dailyService = [...daily.values()].map(r => ({ ...r, serviceAmount: r.serviceAmount / 100, rewardDiscounts: r.rewardDiscounts / 100, netServiceAmount: r.netServiceAmount / 100 }));
   const completedRows = mapped.filter(o => o.status === 'Completed');
-  return { filters, summary: { orders: total, completed, cancelled, returnOrders, visits: orders.reduce((s, o) => s + number(o.visits), 0), completionRate: total ? Math.round(completed / total * 1000) / 10 : 0, cancellationRate: total ? Math.round(cancelled / total * 1000) / 10 : 0, returnRate: total ? Math.round(returnOrders / total * 1000) / 10 : 0,
+  return { filters, summary: { unknownCompletionDates: Number(missingDates.count), orders: total, completed, cancelled, returnOrders, visits: orders.reduce((s, o) => s + number(o.visits), 0), completionRate: total ? Math.round(completed / total * 1000) / 10 : 0, cancellationRate: total ? Math.round(cancelled / total * 1000) / 10 : 0, returnRate: total ? Math.round(returnOrders / total * 1000) / 10 : 0,
     completedServiceAmount: completedRows.reduce((sum, o) => sum + dollars(o.serviceAmount), 0) / 100,
     rewardDiscounts: completedRows.reduce((sum, o) => sum + dollars(o.rewardDiscount), 0) / 100,
     completedNetServiceAmount: completedRows.reduce((sum, o) => sum + dollars(o.netServiceAmount), 0) / 100,
@@ -374,8 +385,9 @@ function reportCsv(data) {
     ['Service filter', data.filters.serviceGroup === 'annual' ? 'Annual Cleaning Bundle' : data.services.find(s => s.id === data.filters.serviceId)?.name ?? 'All'],
     ['Technician filter', data.technicians.find(t => t.id === data.filters.technicianId)?.name ?? 'All'],
     ['Group values by', data.filters.groupBy],
-    [], ['Scheduled service period', 'Completed bookings', 'Service amount SGD', 'Reward discounts SGD', 'Net service amount SGD'], ...data.periodService.map(r => [r.period, r.completed, r.serviceAmount, r.rewardDiscounts, r.netServiceAmount]),
-    [], ['Booking', 'Service date', 'Service', 'Status', 'Started visits', 'Return requests', 'Service amount SGD', 'Reward discount SGD', 'Net service amount SGD'], ...data.orders.map(r => [r.bookingReference, r.serviceDate, r.serviceName, r.status, r.visits, r.returns, r.serviceAmount, r.rewardDiscount, r.netServiceAmount]),
+    ['Date basis', data.filters.dateBasis === 'completed' ? 'Actual completion date (Singapore)' : 'Scheduled service date (Singapore)'],
+    [], [data.filters.dateBasis === 'completed' ? 'Actual completion period' : 'Scheduled service period', 'Completed bookings', 'Service amount SGD', 'Reward discounts SGD', 'Net service amount SGD'], ...data.periodService.map(r => [r.period, r.completed, r.serviceAmount, r.rewardDiscounts, r.netServiceAmount]),
+    [], ['Booking', 'Report date', 'Scheduled date', 'Actual completion date', 'Service', 'Status', 'Started visits', 'Return requests', 'Service amount SGD', 'Reward discount SGD', 'Net service amount SGD'], ...data.orders.map(r => [r.bookingReference, r.serviceDate, r.scheduledDate, r.completedDate, r.serviceName, r.status, r.visits, r.returns, r.serviceAmount, r.rewardDiscount, r.netServiceAmount]),
     [], ['Part', 'Unit', 'Issued', 'Returned'], ...data.parts.map(r => [r.name, r.unit, r.issued, r.returned]),
     [], ['Order activity period', 'From', 'To', 'Partial period', 'Orders', 'Completed', 'Active', 'Closed without completion', 'Other status', 'Unknown completed prices', 'Service amount SGD', 'Reward discounts SGD', 'Net service amount SGD'],
     ...data.analytics.periods.map(r => [r.period, r.from, r.to, r.partial ? 'Yes' : 'No', r.orders, r.completed, r.active, r.closed, r.other, r.unknownCompletedPrices, r.serviceAmount, r.rewardDiscounts, r.netServiceAmount]),

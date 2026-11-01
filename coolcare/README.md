@@ -1,5 +1,15 @@
 # CoolCare 本机整合版
 
+## Admin 工作流完善
+
+运行 `npm run db:up` 应用新增的 `36-admin-review-follow-up.sql`，然后重启网站。
+Overview 的今日、进行中和本周完成卡片进入精确订单列表；进行中和已完成订单只读。
+拒绝订单前确认客户可见原因和积分预留，完成后显示真实返还积分。
+Technician Performance 可筛选 1–2 星评价并保存 Admin 专属跟进状态、内部备注和历史。
+Annual Packages 可筛选未续订、可续订、30 天内到期和 14 天内奖励截止套餐。
+Reports & Analytics 新增实际完成日期口径，图表与 CSV 使用相同筛选，并明确提示没有完成日期的历史订单。
+客户评价提交规则、技术员评价权限和客户邮件边界沿用现有行为。
+
 从仓库根目录运行 `npm run setup`、`npm run db:up`、`npm start`。
 
 首次运行可在启动前执行 `npm run db:sample`，生成相互关联的合成预约、报告和库存记录。已有数据必须先备份并明确使用 `--replace`；详见 [SAMPLE-DATA.md](SAMPLE-DATA.md)。日常迁移不会覆盖业务数据。

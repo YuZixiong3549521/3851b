@@ -1,4 +1,5 @@
 import {captureVisitTeam} from './teams.mjs';
+import { saveAdminReviewFollowUp } from './admin-review-follow-up.mjs';
 import { withBookingReference } from './booking-reference.mjs';
 import express from 'express';
 import { createHash } from 'node:crypto';
@@ -255,6 +256,25 @@ export async function listPerformance(pool, user, raw = {}) {
       filters: f,
     };
   const technicians = new Map();
+  if (user.role === 'Admin' && visits.length) {
+    const ids = [...new Set(visits.map(v => v.reportId))];
+    const [followUps] = await pool.execute(`SELECT f.report_id AS reportId,f.status,f.note,f.feedback_version AS feedbackVersion,f.version,u.full_name AS updatedBy,
+      DATE_FORMAT(f.updated_at,'%Y-%m-%d %H:%i:%s') AS updatedAt
+      FROM admin_review_follow_up f JOIN user_account u ON u.user_id=f.updated_by WHERE f.report_id IN (${ids.map(() => '?').join(',')})`, ids);
+    const byReport = new Map(followUps.map(f => [f.reportId, f]));
+    const [events] = await pool.execute(`SELECT * FROM (
+      SELECT e.report_id AS reportId,e.request_id AS requestId,e.after_json AS value,u.full_name AS actor,
+      UNIX_TIMESTAMP(e.created_at) AS createdAtEpoch,ROW_NUMBER() OVER(PARTITION BY e.report_id ORDER BY CAST(JSON_UNQUOTE(JSON_EXTRACT(e.after_json,'$.version')) AS UNSIGNED) DESC) AS position
+      FROM admin_review_follow_up_event e JOIN user_account u ON u.user_id=e.actor_user_id WHERE e.report_id IN (${ids.map(() => '?').join(',')})
+    ) recent WHERE position<=10 ORDER BY reportId,position`, ids);
+    for (const visit of visits) {
+      const followUp = byReport.get(visit.reportId);
+      visit.followUp = followUp ? { ...followUp, history: events.filter(e => e.reportId === visit.reportId).map(e => ({
+        requestId: e.requestId, actor: e.actor, createdAt: new Date(Number(e.createdAtEpoch) * 1000).toISOString(),
+        ...(typeof e.value === 'string' ? JSON.parse(e.value) : e.value),
+      })) } : null;
+    }
+  }
   for (const v of visits)
     if (!technicians.has(v.technicianId))
       technicians.set(v.technicianId, {
@@ -498,6 +518,9 @@ export function createPerformanceRouter(pool) {
   );
   router.get('/admin', role('Admin'), async (req, res) =>
     res.json(await listPerformance(pool, req.performanceUser, req.query)),
+  );
+  router.put('/admin/visits/:reportId/follow-up', role('Admin'), async (req, res) =>
+    res.json(await saveAdminReviewFollowUp(pool, req.performanceUser, idSchema.parse(req.params.reportId), req.body)),
   );
   router.put(
     '/admin/visits/:reportId/quality',

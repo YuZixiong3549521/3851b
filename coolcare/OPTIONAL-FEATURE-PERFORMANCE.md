@@ -1,5 +1,20 @@
 # Technician performance and visit feedback
 
+## Administrator review follow-up
+
+Migration 36 adds administrator-only internal follow-up, with Open, In progress and
+Resolved states. Low ratings are 1–2 stars. The unresolved filter treats a review
+changed after resolution as requiring attention again. Notes require 5–1500
+characters and are attached to the report, so a shared team review has one follow-up.
+The latest ten audit entries are visible to Admin; all events remain stored.
+
+`PUT /api/performance/admin/visits/:reportId/follow-up` requires the current Admin
+session and CSRF, plus `{ requestId, expectedVersion, feedbackVersion, status, note }`.
+The transaction locks the review, checks both versions and stores the state and
+audit event together. Retries replay the same receipt; conflicting payloads or stale
+versions return 409. Customer and technician responses omit internal follow-up.
+This records an administrator action and sends no customer or technician message.
+
 Run the normal `npm run db:up` flow to apply migration 29 before restarting the API.
 No old performance scores or service reports are deleted. The old
 `technician_performance_score` table remains as legacy data and is not silently

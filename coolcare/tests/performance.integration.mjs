@@ -13,6 +13,27 @@ import {
 } from '../server/performance.mjs';
 import { updateTechnicianJobStatus } from '../server/technician.mjs';
 import { createApp } from '../server/app.mjs';
+import { saveAdminReviewFollowUp } from '../server/admin-review-follow-up.mjs';
+
+test('admin review follow-up is private, versioned, audited and replay-safe', () => fixture(async (db, c, a) => {
+  await a.complete();
+  await writePerformance(db, a.customer, a.reportId, 'Customer feedback', { requestId: randomUUID(), expectedVersion: 0, stars: 2, comment: 'The cooling issue needs investigation.' });
+  const input = { requestId: randomUUID(), expectedVersion: 0, feedbackVersion: 1, status: 'In progress', note: 'Contacted customer and investigating the cooling issue.' };
+  for (const user of [a.customer, a.technician]) await assert.rejects(saveAdminReviewFollowUp(db, user, a.reportId, input), e => e.status === 403);
+  assert.equal((await saveAdminReviewFollowUp(db, a.admin, a.reportId, input)).version, 1);
+  assert.equal((await saveAdminReviewFollowUp(db, a.admin, a.reportId, input)).replayed, true);
+  await assert.rejects(saveAdminReviewFollowUp(db, a.admin, a.reportId, { ...input, note: 'Changed request content.' }), e => e.status === 409);
+  await assert.rejects(saveAdminReviewFollowUp(db, a.admin, a.reportId, { ...input, requestId: randomUUID() }), e => e.status === 409);
+  const read = user => listPerformance(db, user, { reportId: String(a.reportId) });
+  assert.equal((await read(a.admin)).visits[0].followUp.note, input.note);
+  for (const user of [a.customer, a.technician]) assert.equal('followUp' in (await read(user)).visits[0], false);
+  await writePerformance(db, a.customer, a.reportId, 'Customer feedback', { requestId: randomUUID(), expectedVersion: 1, stars: 1, comment: 'The problem still persists.' });
+  await assert.rejects(saveAdminReviewFollowUp(db, a.admin, a.reportId, { ...input, requestId: randomUUID(), expectedVersion: 1, status: 'Resolved' }), e => e.status === 409);
+  await saveAdminReviewFollowUp(db, a.admin, a.reportId, { ...input, requestId: randomUUID(), expectedVersion: 1, feedbackVersion: 2, status: 'Resolved', note: 'Confirmed the issue is now resolved with the customer.' });
+  const [[events]] = await c.execute('SELECT COUNT(*) AS n FROM admin_review_follow_up_event WHERE report_id=?', [a.reportId]);
+  assert.equal(events.n, 2);
+  assert.equal((await read(a.admin)).visits[0].followUp.history[0].status, 'Resolved');
+}));
 
 async function fixture(fn) {
   const c = await openPrivilegedFixtureConnection();
@@ -536,6 +557,9 @@ test('performance HTTP endpoints enforce session, role and CSRF before storing o
       csrf = (await login.json()).csrf;
       assert.equal((await request('/api/performance/admin')).status, 403);
       assert.equal((await request('/api/performance/technician')).status, 403);
+      const followUpPath = `/api/performance/admin/visits/${a.reportId}/follow-up`;
+      const followUpInput = { requestId: randomUUID(), expectedVersion: 0, feedbackVersion: 1, status: 'Open', note: 'Internal HTTP authorization test.' };
+      assert.equal((await request(followUpPath, 'PUT', followUpInput)).status, 403);
       const pending = await request(
         `/api/performance/customer/pending-feedback?bookingId=${a.bookingId}`,
       );
@@ -558,6 +582,13 @@ test('performance HTTP endpoints enforce session, role and CSRF before storing o
       );
       assert.equal(ownVisits.status, 200);
       assert.equal(ownVisits.headers.get('cache-control'), 'private, no-store');
+      const [[adminAccount]] = await c.execute('SELECT email FROM user_account WHERE user_id=?', [a.admin.id]);
+      await c.execute('UPDATE user_account SET password_hash=? WHERE user_id=?', [await bcrypt.hash('AdminFollowUp2026!', 4), a.admin.id]);
+      const adminLogin = await request('/api/public/login', 'POST', { email: adminAccount.email, password: 'AdminFollowUp2026!' });
+      assert.equal(adminLogin.status, 200);
+      csrf = (await adminLogin.json()).csrf;
+      assert.equal((await request(followUpPath, 'PUT', followUpInput, '')).status, 403);
+      assert.equal((await request(followUpPath, 'PUT', followUpInput)).status, 200);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

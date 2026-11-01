@@ -36,6 +36,18 @@ const pool = mysql.createPool({
   decimalNumbers: true,
   connectionLimit: 3,
 });
+
+test('overview links select the exact today, active and completed-week queues across pagination', () => fixture(async ({ c, db, create }) => {
+  const id = await create('Completed');
+  await c.execute('UPDATE booking SET preferred_service_date=DATE(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR)) WHERE booking_id=?', [id]);
+  const overview = await getOperationsOverview(db);
+  for (const [queue, count] of [['today', 'visitsToday'], ['active', 'inProgress'], ['completed-week', 'completedWeek']]) {
+    const page = await listAdminBookings(db, { queue, pageSize: 1 });
+    assert.equal(page.total, overview.counts[count]);
+    assert.ok(page.rows.length <= 1);
+  }
+  assert.equal((await listAdminBookings(db, { queue: 'completed-week', q: String(id) })).rows[0].bookingId, id);
+}));
 after(() => pool.end());
 
 test('waiting dispatch preserves deadlines and customer status, is idempotent, and clears on dispatch', () =>
@@ -377,7 +389,7 @@ test('admin action centre exposes bounded direct order references and precise de
 test('admin order changes reject both In Progress bookings and stale bookings with active work, without side effects', () =>
   fixture(async ({ c, db, actor, create }) => {
     const [[tech]] = await c.execute('SELECT technician_id FROM technician ORDER BY technician_id LIMIT 1');
-    for (const status of ['In Progress', 'Submitted']) {
+    for (const status of ['In Progress', 'Submitted', 'Completed']) {
       const id = await create(status);
       const [assignment] = await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Assigned')", [id, tech.technician_id, actor.userId]);
       const [work] = await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status) VALUES (?,?,'2091-01-08 09:00:00','09:00:00','In Progress')", [id, assignment.insertId]);
@@ -395,7 +407,7 @@ test('admin order changes reject both In Progress bookings and stale bookings wi
         () => queueBooking(db, actor, id, { requestId: randomUUID(), reason: 'Change blocked.' }),
         () => updateReturn(db, 'admin', actor.userId, work.insertId, { requestId: randomUUID(), expectedVersion: 0, action: 'invite', customerMessage: 'Please choose another weekday.' }),
       ];
-      for (const action of actions) await assert.rejects(action(), error => error.status === 409 && /in progress/.test(error.message));
+      for (const action of actions) await assert.rejects(action(), error => error.status === 409 && /in progress|completed/.test(error.message));
       const [[after]] = await c.execute('SELECT * FROM booking WHERE booking_id=?', [id]);
       assert.deepEqual(after, before, 'blocked requests cannot even normalize a legacy appointment');
       assert.equal((await listAdminAudit(db, { bookingId: id })).total, 0);
