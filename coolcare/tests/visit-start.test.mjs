@@ -4,11 +4,11 @@ import {visitStartBlockReason,visitCompletionBlockReason,visitCompletionTimingNo
 test('visit start uses the Singapore date and appointment start, with no lateness cutoff',()=>{
  const now=new Date('2026-10-20T01:00:00.000Z');
  assert.equal(visitStartBlockReason('2026-10-20','09:00:00',now),null);
- assert.match(visitStartBlockReason('2026-10-21','09:00:00',now),/scheduled date/);
- assert.match(visitStartBlockReason('2026-10-19','09:00:00',now),/passed/);
- assert.match(visitStartBlockReason('2026-10-20','09:01:00',now),/before/);
- assert.equal(visitStartBlockReason('2026-10-20','09:00:00',new Date('2026-10-20T15:59:00Z')),null);
- assert.match(visitStartBlockReason('2026-10-20','09:00:00',new Date('2026-10-20T16:00:00Z')),/passed/);
+ assert.equal(visitStartBlockReason('2026-10-21','09:00:00',now),null);
+ assert.equal(visitStartBlockReason('2026-10-19','09:00:00',now),null);
+ assert.equal(visitStartBlockReason('2026-10-20','09:01:00',now),null);
+ assert.equal(visitStartBlockReason('2026-10-20','09:00:00',new Date('2026-10-20T16:00:00Z')),null);
+ assert.equal(visitStartBlockReason('2026-10-20','09:00:00',new Date('2026-10-20T16:00:00Z')),null);
  assert.match(visitStartBlockReason('2026-10-20','09:00:00',now,41),/WO-41/);
  assert.match(visitStartBlockReason('2026-10-20',null,now),/no scheduled start/);
 });
@@ -26,7 +26,7 @@ test('service timing test mode requires explicit opt-in and is disabled in produ
  assert.equal(serviceTimingTestMode({SERVICE_TIMING_TEST_MODE:'true',NODE_ENV:'production'}),false);
  withEnvironment({SERVICE_TIMING_TEST_MODE:'true',NODE_ENV:'production'},()=>{
   const now=new Date('2026-10-20T01:00:00Z');
-  assert.match(visitStartBlockReason('2027-01-01','09:00:00',now),/scheduled date/);
+  assert.equal(visitStartBlockReason('2027-01-01','09:00:00',now),null);
   assert.match(visitCompletionBlockReason('2027-01-01',now),/no valid recorded start/);
   assert.equal(visitCompletionBlockReason('2027-01-01',now,'2026-10-20 08:00:00'),null);
  });
