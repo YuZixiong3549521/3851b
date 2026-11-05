@@ -1,7 +1,7 @@
 import {visitTeamNameSql} from './teams.mjs';
 import {assignmentTeam,memberSql,assertTeamCanStart,teamStartBlockReason} from './teams.mjs';
 import {lockTechnicianRoster} from './scheduling.mjs';
-import {visitStartBlockReason,visitCompletionBlockReason,serviceTimingTestMode} from './visit-start.mjs';
+import {visitStartBlockReason,visitCompletionBlockReason,visitCompletionTimingNotice,serviceTimingTestMode} from './visit-start.mjs';
 import { withBookingReference } from './booking-reference.mjs';
 import {snapshotVisit} from './return-visits.mjs';
 import {capturePerformanceVisitStart} from './performance.mjs';
@@ -35,7 +35,7 @@ export async function getTechnicianJobs(pool, technicianId, jobId) {
     (EXISTS(SELECT 1 FROM simple_service_catalog ss WHERE ss.service_id=b.service_id AND ss.code='repair') OR EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog ss ON ss.service_id=bs.service_id WHERE bs.booking_id=b.booking_id AND ss.code='repair')) AS repairEligible,
     (SELECT COUNT(*) FROM booking_aircon_unit bau WHERE bau.booking_id=b.booking_id) AS acCount,
     UNIX_TIMESTAMP(w.updated_at) AS lastModifiedEpoch,
-    r.report_id AS reportId,UNIX_TIMESTAMP(r.submitted_time) AS reportSubmittedAtEpoch,
+    r.report_id AS reportId,r.started_at AS startedAt,UNIX_TIMESTAMP(r.submitted_time) AS reportSubmittedAtEpoch,
     (w.current_status IN ('Completed','Awaiting return arrangement') AND r.submitted_time IS NULL) AS reportPending,
     (EXISTS(SELECT 1 FROM simple_service_catalog ss WHERE ss.service_id=b.service_id AND ss.code='cleaning')
       OR EXISTS(SELECT 1 FROM booking_service bs JOIN simple_service_catalog ss ON ss.service_id=bs.service_id WHERE bs.booking_id=b.booking_id AND ss.code='cleaning')) AS cleaningEligible,
@@ -56,7 +56,7 @@ export async function getTechnicianJobs(pool, technicianId, jobId) {
     ORDER BY w.appointment_date,w.appointment_time,w.job_id`,jobId === undefined ? [technicianId] : [technicianId,jobId]);
   const [[active]]=await pool.execute(`SELECT w.job_id AS jobId FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id WHERE EXISTS(SELECT 1 FROM technician member_tech WHERE member_tech.technician_id=? AND ${memberSql('a','member_tech.technician_id')}) AND w.current_status='In Progress' LIMIT 1`,[technicianId]);
   const now=new Date();
-  return Promise.all(rows.map(async ({lastModifiedEpoch,reportSubmittedAtEpoch,...row})=>{const startBlockedReason=visitStartBlockReason(row.date,row.time,now,active?.jobId!==row.jobId?active?.jobId:null)||await teamStartBlockReason(pool,row.assignmentId,row.jobId);return {...withBookingReference(row),team:await assignmentTeam(pool,row.assignmentId),isLead:row.leadTechnicianId===technicianId,canManage:row.leadTechnicianId===technicianId,lastModified:lastModifiedEpoch?new Date(Number(lastModifiedEpoch)*1000).toISOString():null,reportSubmittedAt:reportSubmittedAtEpoch?new Date(Number(reportSubmittedAtEpoch)*1000).toISOString():null,reportPending:Boolean(row.reportPending),canStart:row.leadTechnicianId===technicianId&&!startBlockedReason,startBlockedReason,canComplete:row.leadTechnicianId===technicianId&&!visitCompletionBlockReason(row.date,now),completionBlockedReason:visitCompletionBlockReason(row.date,now),cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
+  return Promise.all(rows.map(async ({lastModifiedEpoch,reportSubmittedAtEpoch,...row})=>{const startBlockedReason=visitStartBlockReason(row.date,row.time,now,active?.jobId!==row.jobId?active?.jobId:null)||await teamStartBlockReason(pool,row.assignmentId,row.jobId);return {...withBookingReference(row),team:await assignmentTeam(pool,row.assignmentId),isLead:row.leadTechnicianId===technicianId,canManage:row.leadTechnicianId===technicianId,lastModified:lastModifiedEpoch?new Date(Number(lastModifiedEpoch)*1000).toISOString():null,reportSubmittedAt:reportSubmittedAtEpoch?new Date(Number(reportSubmittedAtEpoch)*1000).toISOString():null,reportPending:Boolean(row.reportPending),canStart:row.leadTechnicianId===technicianId&&!startBlockedReason,startBlockedReason,canComplete:row.status==='In Progress'&&row.leadTechnicianId===technicianId&&!visitCompletionBlockReason(row.date,now,row.startedAt),completionBlockedReason:visitCompletionBlockReason(row.date,now,row.startedAt),completionTimingNotice:row.status==='In Progress'?visitCompletionTimingNotice(row.date,now,row.startedAt):null,cleaningEligible:Boolean(row.cleaningEligible),repairEligible:Boolean(row.repairEligible),id:`WO-${String(row.jobId).padStart(4,'0')}`,
     status:row.status==='On The Way'?'On the Way':row.status,
     serviceTimingTestMode:serviceTimingTestMode(),
     initials:row.customer.split(/\s+/).map(s=>s[0]).slice(0,2).join('')};}));
@@ -168,7 +168,7 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
     if(bookingLock)await connection.execute('SELECT booking_id FROM booking WHERE booking_id=? FOR UPDATE',[bookingLock.booking_id]);
     // Serialize starts with dispatch before locking technician/work-order rows.
     if(data.status==='In Progress')await lockTechnicianRoster(connection);
-    const [[work]]=await connection.execute(`SELECT w.*,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,DATE_FORMAT(w.appointment_time,'%H:%i:%s') AS serviceTime,a.technician_id,a.assignment_status,b.booking_status,r.visit_technician_id AS reportTechnicianId,r.customer_signature_url,r.technician_signature_url
+    const [[work]]=await connection.execute(`SELECT w.*,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS serviceDate,DATE_FORMAT(w.appointment_time,'%H:%i:%s') AS serviceTime,a.technician_id,a.assignment_status,b.booking_status,r.started_at AS startedAt,r.visit_technician_id AS reportTechnicianId,r.customer_signature_url,r.technician_signature_url
       FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id AND a.booking_id=w.booking_id
       JOIN technician t ON t.technician_id=a.technician_id JOIN user_account u ON u.user_id=t.user_id
       JOIN booking b ON b.booking_id=w.booking_id
@@ -190,7 +190,7 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
       const reason=visitStartBlockReason(work.serviceDate,work.serviceTime,new Date(),active[0]?.job_id);
       if(reason)throw new AppError(reason,409);
     }
-    if(data.status==='Completed'){const reason=visitCompletionBlockReason(work.serviceDate);if(reason)throw new AppError(reason,409);}
+    if(data.status==='Completed'){const reason=visitCompletionBlockReason(work.serviceDate,new Date(),work.startedAt);if(reason)throw new AppError(reason,409);}
     if(work.current_status==='Return visit'){
       await connection.execute("UPDATE service_progress SET follow_up_status='In Progress',revision=revision+1 WHERE job_id=?",[jobId]);
       await connection.execute("UPDATE service_report SET archived_job_id=job_id,job_id=NULL WHERE job_id=?",[jobId]);
@@ -221,7 +221,7 @@ export async function updateTechnicianJobStatus(pool,technicianUserId,jobId,raw)
     await connection.execute('UPDATE assignment SET assignment_status=? WHERE assignment_id=?',[data.status==='Completed'?'Completed':'Accepted',work.assignment_id]);
     const notes={'On The Way':'Technician is travelling to the confirmed service address.','In Progress':'Technician arrived and started the service.','Completed':'Technician completed the service visit.'};
     await connection.execute(`INSERT INTO booking_status_history(booking_id,old_status,new_status,changed_by_user_id,change_note)
-      VALUES (?,?,?,?,?)`,[work.booking_id,work.booking_status,data.status,technicianUserId,notes[data.status]]);
+      VALUES (?,?,?,?,?)`,[work.booking_id,work.booking_status,data.status,technicianUserId,notes[data.status]+(data.status==='Completed'&&visitCompletionTimingNotice(work.serviceDate,new Date(),work.startedAt)?' Previously recorded early start retained; actual completion recorded without changing the scheduled appointment.':'')]);
     const result={jobId,bookingId:work.booking_id,status:data.status,replayed:false};
     await connection.execute('INSERT INTO technician_work_operation(request_id,job_id,actor_user_id,payload_hash,result_json) VALUES(?,?,?,?,?)',[data.requestId,jobId,technicianUserId,hash,JSON.stringify(result)]);
     await connection.commit();return result;

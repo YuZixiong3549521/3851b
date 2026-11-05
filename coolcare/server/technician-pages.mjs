@@ -1,5 +1,5 @@
 import {assignmentTeam,memberSql} from './teams.mjs';
-import {visitCompletionBlockReason,serviceTimingTestMode} from './visit-start.mjs';
+import {visitCompletionBlockReason,visitCompletionTimingNotice,serviceTimingTestMode} from './visit-start.mjs';
 import { bookingReference, withBookingReference } from './booking-reference.mjs';
 import {snapshotVisit} from './return-visits.mjs';
 import {awardCompletedBookingRewards} from './commerce.mjs';
@@ -71,7 +71,8 @@ export async function getReport(c, userId, jobId) {
     report: reportDates(report),
     team:await assignmentTeam(c,work.assignment_id),
     isLead:Boolean(work.isLead),
-    canEdit:Boolean(work.isLead)&&['In Progress','Completed','Awaiting return arrangement'].includes(work.current_status)&&!(work.current_status==='In Progress'&&visitCompletionBlockReason(work.serviceDate))&&(!report?.technicianId||report.technicianId===work.technician_id),
+    canEdit:Boolean(work.isLead)&&['In Progress','Completed','Awaiting return arrangement'].includes(work.current_status)&&!(work.current_status==='In Progress'&&visitCompletionBlockReason(work.serviceDate,new Date(),report?.startedAt))&&(!report?.technicianId||report.technicianId===work.technician_id),
+    completionTimingNotice:work.current_status==='In Progress'?visitCompletionTimingNotice(work.serviceDate,new Date(),report?.startedAt):null,
     reportPending:['Completed','Awaiting return arrangement'].includes(work.current_status)&&!report?.submittedAtEpoch,
     version: hash(report ?? null),
     history: history.map((r) => ({
@@ -116,8 +117,8 @@ export async function saveReport(pool, userId, jobId, raw) {
         'Start this service from My Jobs before submitting its report.',
         409,
       );
-    if(w.current_status==='In Progress'){const reason=visitCompletionBlockReason(w.serviceDate);if(reason)throw new AppError(reason,409);}
     const [[old]] = await c.execute(reportSelect+' FOR UPDATE', [jobId]);
+    if(w.current_status==='In Progress'){const reason=visitCompletionBlockReason(w.serviceDate,new Date(),old?.startedAt);if(reason)throw new AppError(reason,409);}
     if(old?.technicianId && old.technicianId!==w.technician_id)throw new AppError('This report belongs to a previous visit and is read-only.',409);
     if (hash(old ?? null) !== d.expectedVersion)
       throw new AppError(
@@ -167,7 +168,7 @@ export async function saveReport(pool, userId, jobId, raw) {
           w.booking_status,
           'Completed',
           userId,
-          'Technician submitted the service report and completed the visit.',
+          'Technician submitted the service report and completed the visit.'+(visitCompletionTimingNotice(w.serviceDate,new Date(),old?.startedAt)?' Previously recorded early start retained; actual completion recorded without changing the scheduled appointment.':''),
         ],
       );
     }

@@ -157,6 +157,7 @@ function WorkStatusActions({
       {job.serviceTimingTestMode && <p role="status">Test mode: appointment time restrictions are off. Service actions still update this order.</p>}
       {startBlocked && <p role="status">{job.startBlockedReason}</p>}
       {completionBlocked && <p role="status">{job.completionBlockedReason}</p>}
+      {job.completionTimingNotice && <p role="status">{job.completionTimingNotice}</p>}
       {error && (
         <p className="tech-error" role="alert">
           {error}

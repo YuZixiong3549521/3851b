@@ -12,6 +12,7 @@ import { getOwnedReportPhoto } from './report-photos.mjs';
 import { getAssistantDraft,saveAssistantDraft,reviewAssistantDraft,confirmAssistantDraft,newAssistantDraft } from './assistant-workflow.mjs';
 import {registerBookingNotifications} from './booking-notifications.mjs';
 import {registerAnnualPlanRoutes} from './plans.mjs';
+import {rebookAnnualVisit} from './annual-rebooking.mjs';
 
 function identifier(value) {
   const id=Number(value);
@@ -118,6 +119,9 @@ app.patch('/bookings/:bookingId/status',asyncRoute(async(request,response)=>{
 }));
 app.patch('/bookings/:bookingId/reschedule',asyncRoute(async(request,response)=>{
   response.json(await changePublicBooking(pool,request.customerUser,request.params.bookingId,'reschedule',request.body));
+}));
+app.patch('/bookings/:bookingId/rebook',asyncRoute(async(request,response)=>{
+  response.json(await rebookAnnualVisit(pool,request.customerUser,request.params.bookingId,request.body));
 }));
 app.get('/bookings/:bookingId/photos/:photoId',asyncRoute(async(request,response)=>{
   const path=await getOwnedReportPhoto(pool,request.customerUser.id,identifier(request.params.bookingId),identifier(request.params.photoId));

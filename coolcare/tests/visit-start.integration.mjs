@@ -29,9 +29,9 @@ test('start dates are enforced by the API, and simultaneous starts allow only on
   await assert.rejects(updateTechnicianJobStatus(pool,userId,jobs[0],input()),e=>e.status===409&&/scheduled date/.test(e.message));
   assert.equal((await getTechnicianJobs(pool,technicianId,jobs[0]))[0].canStart,false);
   await c.execute("UPDATE work_order SET current_status='In Progress' WHERE job_id=?",[jobs[0]]);
-  await assert.rejects(updateTechnicianJobStatus(pool,userId,jobs[0],{requestId:randomUUID(),expectedStatus:'In Progress',status:'Completed'}),e=>e.status===409&&/future service/.test(e.message));
+  await assert.rejects(updateTechnicianJobStatus(pool,userId,jobs[0],{requestId:randomUUID(),expectedStatus:'In Progress',status:'Completed'}),e=>e.status===409&&/no valid recorded start/.test(e.message));
   const futureDraft=await getReport(pool,userId,jobs[0]);assert.equal(futureDraft.canEdit,false);
-  await assert.rejects(saveReport(pool,userId,jobs[0],{requestId:randomUUID(),expectedVersion:futureDraft.version,report:{workPerformed:'Cannot complete a future visit',checklist:'Checks recorded',problemFound:'',solutionApplied:'',customerSignatureUrl:'',technicianSignatureUrl:''}}),e=>e.status===409&&/future service/.test(e.message));
+  await assert.rejects(saveReport(pool,userId,jobs[0],{requestId:randomUUID(),expectedVersion:futureDraft.version,report:{workPerformed:'Cannot complete a future visit',checklist:'Checks recorded',problemFound:'',solutionApplied:'',customerSignatureUrl:'',technicianSignatureUrl:''}}),e=>e.status===409&&/no valid recorded start/.test(e.message));
   await c.execute("UPDATE work_order SET current_status='Assigned' WHERE job_id=?",[jobs[0]]);
   await c.execute('UPDATE work_order SET appointment_date=DATE_SUB(appointment_date,INTERVAL 2 DAY) WHERE job_id=?',[jobs[0]]);
   await assert.rejects(updateTechnicianJobStatus(pool,userId,jobs[0],input()),e=>e.status===409&&/passed/.test(e.message));
@@ -111,7 +111,7 @@ test('local timing test mode runs future visits through both completion paths wi
   const [available]=await getTechnicianJobs(db,tech.insertId,jobs[0]);
   assert.equal(available.serviceTimingTestMode,true);
   assert.equal(available.canStart,true);
-  assert.equal(available.canComplete,true);
+  assert.equal(available.canComplete,false);
   await assert.rejects(updateTechnicianJobStatus(db,users[2],jobs[0],start()),e=>e.status===404);
   await assert.rejects(updateTechnicianJobStatus(db,users[1],jobs[0],{requestId:randomUUID(),expectedStatus:'In Progress',status:'Completed'}),e=>e.status===409&&/status step/.test(e.message));
   await updateTechnicianJobStatus(db,users[1],jobs[0],firstStart);
@@ -182,5 +182,83 @@ test('local timing test mode runs future visits through both completion paths wi
   if(oldEnvironment===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=oldEnvironment;
   await c.rollback();
   await c.end();
+ }
+});
+
+test('production completes a recorded early-started visit through either path without reopening early starts or duplicating rewards',async()=>{
+ const c=await openPrivilegedFixtureConnection();
+ const oldMode=process.env.SERVICE_TIMING_TEST_MODE,oldEnvironment=process.env.NODE_ENV;
+ const executor={execute:c.execute.bind(c),query:c.query.bind(c),
+  beginTransaction:()=>c.query('SAVEPOINT early_start_recovery'),
+  commit:()=>c.query('RELEASE SAVEPOINT early_start_recovery'),
+  rollback:()=>c.query('ROLLBACK TO SAVEPOINT early_start_recovery'),release(){}};
+ const db={...executor,getConnection:async()=>executor};
+ try {
+  process.env.SERVICE_TIMING_TEST_MODE='true'; // Production must still reject new early starts.
+  process.env.NODE_ENV='production';
+  await c.beginTransaction();
+  const [[admin]]=await c.query('SELECT user_id FROM admin_profile LIMIT 1');
+  const [[service]]=await c.query("SELECT service_id FROM simple_service_catalog WHERE code='cleaning' LIMIT 1");
+  const [[dates]]=await c.query("SELECT DATE_FORMAT(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 90 DAY),'%Y-%m-%d') AS scheduledDate,DATE_FORMAT(DATE_SUB(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR),INTERVAL 5 MINUTE),'%Y-%m-%d %H:%i:%s') AS actualStart");
+  const users=[];
+  for(const role of ['Customer','Technician','Technician']){
+   const [u]=await c.execute("INSERT INTO user_account(role_id,full_name,email,password_hash) SELECT role_id,'Isolated early-start recovery',?,'disabled-test-password' FROM role WHERE role_name=?",[`early-start-${randomUUID()}@coolcare.test`,role]);
+   users.push(u.insertId);
+  }
+  const [customer]=await c.execute('INSERT INTO customer(user_id) VALUES (?)',[users[0]]);
+  const [address]=await c.execute("INSERT INTO service_address(customer_id,address_line,postal_code) VALUES (?,'Isolated early-start recovery address','560123')",[customer.insertId]);
+  const technicians=[];
+  for(const user of users.slice(1)){const [tech]=await c.execute('INSERT INTO technician(user_id) VALUES (?)',[user]);technicians.push(tech.insertId);}
+  const jobs=[],bookings=[];
+  const report={workPerformed:'Completed a previously started visit',problemFound:'',solutionApplied:'Filters cleaned',checklist:'Cooling checked',customerSignatureUrl:'',technicianSignatureUrl:''};
+  for(let i=0;i<2;i++){
+   const owner=users[i+1];
+   const [b]=await c.execute("INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,preferred_time_slot,booking_status,total_amount) VALUES (?,?,?,?,'09:00 - 11:00','Assigned',100)",[customer.insertId,address.insertId,service.service_id,dates.scheduledDate]);
+   bookings.push(b.insertId);
+   const [a]=await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Assigned')",[b.insertId,technicians[i],admin.user_id]);
+   const [w]=await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status) VALUES (?,?,?,'09:00:00','Assigned')",[b.insertId,a.insertId,dates.scheduledDate]);
+   const job=w.insertId;jobs.push(job);
+   await assert.rejects(updateTechnicianJobStatus(db,owner,job,{requestId:randomUUID(),expectedStatus:'Assigned',status:'In Progress'}),e=>e.status===409&&/scheduled date/.test(e.message));
+   await c.execute("UPDATE work_order SET current_status='In Progress' WHERE job_id=?",[job]);
+   await c.execute("UPDATE booking SET booking_status='In Progress' WHERE booking_id=?",[b.insertId]);
+   const end={requestId:randomUUID(),expectedStatus:'In Progress',status:'Completed'};
+   await assert.rejects(updateTechnicianJobStatus(db,users[2-i],job,end),e=>e.status===404);
+   await assert.rejects(updateTechnicianJobStatus(db,owner,job,end),e=>e.status===409&&/no valid recorded start/.test(e.message));
+   let draft=await getReport(db,owner,job);assert.equal(draft.canEdit,false);
+   await assert.rejects(saveReport(db,owner,job,{requestId:randomUUID(),expectedVersion:draft.version,report}),e=>e.status===409&&/no valid recorded start/.test(e.message));
+   await c.execute("INSERT INTO service_report(job_id,work_performed,started_at,visit_technician_id,visit_service_date,visit_start_time) VALUES (?,'',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 9 HOUR),?,?,'09:00:00')",[job,technicians[i],dates.scheduledDate]);
+   await assert.rejects(updateTechnicianJobStatus(db,owner,job,end),e=>e.status===409&&/start is in the future/.test(e.message));
+   draft=await getReport(db,owner,job);assert.equal(draft.canEdit,false);
+   await assert.rejects(saveReport(db,owner,job,{requestId:randomUUID(),expectedVersion:draft.version,report}),e=>e.status===409&&/start is in the future/.test(e.message));
+   await c.execute('UPDATE service_report SET started_at=? WHERE job_id=?',[dates.actualStart,job]);
+   const [visible]=await getTechnicianJobs(db,technicians[i],job);
+   assert.equal(visible.serviceTimingTestMode,false);assert.equal(visible.canComplete,true);
+   assert.match(visible.completionTimingNotice,/keeps the original appointment/);
+   if(i===0){
+    await updateTechnicianJobStatus(db,owner,job,end);
+    assert.equal((await updateTechnicianJobStatus(db,owner,job,end)).replayed,true);
+   }
+   draft=await getReport(db,owner,job);assert.equal(draft.canEdit,true);
+   const submit={requestId:randomUUID(),expectedVersion:draft.version,report};
+   await saveReport(db,owner,job,submit);
+   assert.equal((await saveReport(db,owner,job,submit)).replayed,true);
+   await assert.rejects(updateTechnicianJobStatus(db,owner,job,{...end,requestId:randomUUID()}),e=>e.status===409&&/status step/.test(e.message));
+   const [[saved]]=await c.execute(`SELECT w.current_status,b.booking_status,DATE_FORMAT(w.appointment_date,'%Y-%m-%d') AS scheduledDate,
+    DATE_FORMAT(r.visit_service_date,'%Y-%m-%d') AS reportDate,r.started_at AS actualStart,(r.completed_at>=r.started_at) AS chronological,
+    (SELECT COUNT(*) FROM booking_status_history h WHERE h.booking_id=b.booking_id AND h.change_note LIKE '%Previously recorded early start retained%') AS recoveryEvents,
+    (SELECT COUNT(*) FROM booking_completion_reward cr WHERE cr.booking_id=b.booking_id) AS completionRewards,
+    (SELECT COUNT(*) FROM loyalty_transaction l WHERE l.booking_id=b.booking_id AND l.transaction_type='Earned') AS earnings
+    FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN service_report r ON r.job_id=w.job_id WHERE w.job_id=?`,[job]);
+   assert.equal(saved.current_status,'Completed');assert.equal(saved.booking_status,'Completed');
+   assert.equal(saved.scheduledDate,dates.scheduledDate);assert.equal(saved.reportDate,dates.scheduledDate);
+   assert.equal(saved.actualStart,dates.actualStart);assert.equal(saved.chronological,1);
+   assert.equal(saved.recoveryEvents,1);assert.equal(saved.completionRewards,1);
+   const [[rule]]=await c.query('SELECT points_per_dollar FROM reward_rule WHERE rule_id=1');
+   assert.equal(saved.earnings,Number(rule.points_per_dollar)>0?1:0);
+  }
+ } finally {
+  if(oldMode===undefined)delete process.env.SERVICE_TIMING_TEST_MODE;else process.env.SERVICE_TIMING_TEST_MODE=oldMode;
+  if(oldEnvironment===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=oldEnvironment;
+  await c.rollback();await c.end();
  }
 });

@@ -14,6 +14,7 @@ import { addressLineSchema,findOrCreateServiceAddress,addressUnitIds } from './c
 import { assertTeamCapacity,lockServiceDates,bookingServiceSlot } from './scheduling.mjs';
 import {bookingConfirmationDeadline,assertBookingNotExpired} from './order-expiry.mjs';
 import { acceptStaffInvitation,validateStaffInvitation } from './staff-invitations.mjs';
+import { rebookAnnualVisit } from './customer/annual-rebooking.mjs';
 
 export const offers = [
  ['Air Conditioning Cleaning',65,45],['Regular Maintenance',85,55],
@@ -136,6 +137,7 @@ export function createPublicRouter(pool){
  r.post('/bookings',async(req,res)=>res.status(201).json({success:true,booking:await createPublicBooking(pool,req.customerUser,req.body)}));
  r.patch('/bookings/:id/status',async(req,res)=>res.json(await changePublicBooking(pool,req.customerUser,req.params.id,'cancel',req.body)));
  r.patch('/bookings/:id/reschedule',async(req,res)=>res.json(await changePublicBooking(pool,req.customerUser,req.params.id,'reschedule',req.body)));
+ r.patch('/bookings/:id/rebook',async(req,res)=>res.json(await rebookAnnualVisit(pool,req.customerUser,req.params.id,req.body)));
  r.use((error,_req,res,_next)=>{const status=error.status|| (error instanceof z.ZodError?400:500);res.status(status).json({success:false,message:status===500?'The service is temporarily unavailable.':error.message});});
  return r;
 }

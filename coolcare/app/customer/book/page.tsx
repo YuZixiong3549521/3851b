@@ -79,8 +79,13 @@ export default function BookServicePage() {
           const rebook=Number(params.get('rebook'));
           if(Number.isSafeInteger(rebook)&&rebook>0){
             const previous=await coolcareApi.getBooking(rebook);
+            if (!active) return;
+            if (previous.annualBundle) {
+              window.location.replace(`/customer/bookings/${previous.bookingId}?action=rebook`);
+              return;
+            }
             const serviceIds=previous.serviceIds?.length ? previous.serviceIds : nextOptions.services.filter(service=>previous.serviceName.includes(service.name)).map(service=>service.serviceId);
-            nextSelection = previous.annualBundle && previous.packageId ? {mode:'bundle',packageId:previous.packageId,serviceIds:[],propertyType:previous.propertyType ?? previous.annualBundle.propertyType ?? undefined} : {mode:'custom',serviceIds};
+            nextSelection = {mode:'custom',serviceIds};
             nextForm = {...nextForm,serviceAddress:previous.addressLine,postalCode:previous.postalCode ?? '',numberOfUnits:previous.numberOfUnits,problemDescription:previous.problemDescription ?? '',specialNotes:previous.specialNotes ?? ''};
           }
         }

@@ -12,6 +12,8 @@ The first quarterly booking uses the normal confirmation deadline (48 hours by d
 
 Cancellation, rejection or expiry is scoped to the affected visit, including visit 1. Other quarterly bookings, their price snapshots and the annual series are preserved. My Plans explicitly identifies closed visits alongside the remaining reservations and links each booking for management. There is no automatic replacement of closed visits and no automatic cancellation of the whole series.
 
+Customers can explicitly **Rebook this visit** for a closed, unused quarterly booking through its existing detail page. It reopens the same booking as Submitted, keeping its reference, allocated price, series and the other three visits. The new weekday appointment must be at least 72 hours ahead and inside the original quarter. An elapsed quarter or a visit with service/inventory activity requires support. Previously released reward points are not reserved again. The original closure remains in history; the first visit gets a fresh confirmation deadline and visits 2–4 retain no automatic expiry. Legacy `/customer/book?rebook=<annualBookingId>` links redirect to this flow instead of creating another four-visit plan.
+
 Migration `31-annual-confirmation.sql` removes incorrect deadlines only from future Submitted visits 2–4. It does not reopen Expired, Cancelled or Rejected bookings, change past bookings or alter contract snapshots. The expiry worker and mutation guard also exclude subsequent annual visits with legacy deadlines. An administrator can still reject or a customer can still cancel an individual reservation under the existing rules.
 
 ## Renewal and reminders

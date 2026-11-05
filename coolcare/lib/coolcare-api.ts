@@ -81,6 +81,8 @@ export const coolcareApi = {
     apiRequest<{ success: boolean }>(`/bookings/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   rescheduleBooking: async (id: number, input: { preferredDate: string; timeWindow: string }) =>
     apiRequest<{ success: boolean }>(`/bookings/${id}/reschedule`, { method: 'PATCH', body: JSON.stringify(input) }),
+  rebookAnnualVisit: async (id: number, input: { preferredDate: string; timeWindow: string; requestId: string }) =>
+    apiRequest<{ success: boolean }>(`/bookings/${id}/rebook`, { method: 'PATCH', body: JSON.stringify(input) }),
   getReport: async (bookingId: number) =>
     (await apiRequest<{ report: ServiceReport }>(`/bookings/${bookingId}/report`)).report,
   createBooking: async (input: BookingInput) => {

@@ -1,5 +1,30 @@
 # Booking, annual cleaning, inventory and mail workflows
 
+## Reopening an unused quarterly visit
+
+`PATCH /api/customer/bookings/:id/rebook` (also `/api/public/bookings/:id/rebook`)
+accepts `{ preferredDate, timeWindow, requestId }`. The customer session must own
+the annual booking; only Cancelled, Rejected or Expired unused visits qualify.
+The transaction reopens that same booking as Submitted, retains its price and
+series, and leaves the other quarterly visits unchanged. It enforces the original
+quarter, a new weekday appointment at least 72 hours ahead, address cleaning limits
+and team capacity. Existing work, report or inventory activity prevents reopening.
+Previously released reward reservations remain released. A durable operation
+receipt makes retries safe, including concurrent retries, and a status-history
+entry preserves the original closure and records the new request. No new migration
+is needed. Buying or renewing an entire annual plan remains a separate action.
+
+## Finishing an already started visit
+
+End service and report submission may complete an In Progress visit whose current
+report has a valid actual start at or before now, even when the scheduled date is
+still in the future. This recovers previously started test/imported visits without
+rewriting their appointment, start, reports or inventory history. The interface
+explains the discrepancy and the completion history records the recovery. Missing,
+invalid or future actual starts are rejected. New Start service requests still
+obey production date/time rules, lead-technician permissions and one active job
+per technician. Completion and rewards remain atomic and replay-safe.
+
 ## Team dispatch (migration 35)
 
 All booking surfaces accept 1–20 AC units. Automatic staffing is ceil(units / 4): 1–4 units need one technician, 5–8 two, 9–12 three, 13–16 four, and 17–20 five. Manual dispatch accepts any nonempty set of active, available technicians and requires a lead from that set. Automatic dispatch retains the existing postal/travel-cost/workload ranking, selects the whole team atomically and uses its highest-ranked member as lead. A shortage leaves the booking unconfirmed with no partial work order or customer email.

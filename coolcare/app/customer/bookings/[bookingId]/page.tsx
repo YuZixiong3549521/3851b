@@ -35,6 +35,7 @@ import { coolcareApi } from '@/lib/coolcare-api';
 import {
   rescheduleDateError,
   earliestChangeDate,
+  nextWeekday,
 } from '@/lib/booking-schedule';
 import { dayBeforeDate } from '@/lib/annual-booking';
 import {
@@ -42,6 +43,7 @@ import {
   formatDateTime,
   formatTimeSlot,
   formatServiceWindow,
+  formatRecordedMoney,
 } from '@/lib/format';
 import { useBookingClock } from '@/lib/use-booking-clock';
 import { useCustomerResource } from '@/lib/use-customer-resource';
@@ -54,8 +56,8 @@ import {
 import type { BookingDetail, BookingInput } from '@/lib/coolcare-types';
 import { CustomerFeedbackPrompt } from '@/components/customer-feedback-prompt';
 
-type Action = 'cancel' | 'reschedule';
-type PendingChange = { action: Action; date: string; time: string };
+type Action = 'cancel' | 'reschedule' | 'rebook';
+type PendingChange = { action: Action; date: string; time: string; requestId: string };
 const slots = [
   '09:00 - 11:00',
   '11:00 - 13:00',
@@ -114,6 +116,12 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
   const maximum = booking?.annualBundle?.windowEnd
     ? dayBeforeDate(booking.annualBundle.windowEnd)
     : undefined;
+  const closedAnnual = Boolean(booking?.annualBundle && ['Cancelled', 'Rejected', 'Expired'].includes(booking.status));
+  const canRebook = Boolean(closedAnnual && !booking?.reportId && maximum && minimum <= maximum);
+  const rebookBlockedReason = maximum && minimum > maximum
+    ? 'No self-service dates remain in this quarterly visit window. Contact support to discuss this visit.'
+    : 'This quarterly visit cannot be rebooked online. Contact support for help with this visit.';
+  const choosingSchedule = action === 'reschedule' || action === 'rebook';
   const availability = useBookingAvailability({
     serviceAddress: booking?.addressLine,
     addressId: booking?.addressId,
@@ -121,7 +129,7 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
     excludeBookingId: bookingId,
     serviceIds: booking?.serviceIds,
     packageId: booking?.packageId ?? undefined,
-    enabled: action === 'reschedule',
+    enabled: choosingSchedule,
   });
   const dateError = date
     ? rescheduleDateError(date, time, now) ||
@@ -131,7 +139,7 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
     : '';
   const slotAvailability = useSlotAvailability(
     date && !dateError ? [date] : [],
-    action === 'reschedule',
+    choosingSchedule,
     booking?.estimatedDurationMinutes,
     bookingId,
   );
@@ -143,18 +151,14 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
     (nextAction: Action, current: BookingDetail) => {
       if (
         current.bookingId !== bookingId ||
-        !current.canModify ||
-        (current.changeDeadline &&
-          new Date(current.changeDeadline).getTime() < Date.now())
+        (nextAction === 'rebook'
+          ? !current.annualBundle || current.reportId || !['Cancelled', 'Rejected', 'Expired'].includes(current.status)
+          : !current.canModify || (current.changeDeadline && new Date(current.changeDeadline).getTime() < Date.now()))
       )
         return;
       setAction(nextAction);
       setActionError('');
-      setDate(
-        current.preferredDate < earliestChangeDate()
-          ? earliestChangeDate()
-          : current.preferredDate,
-      );
+      setDate(nextWeekday([current.preferredDate, earliestChangeDate(), current.annualBundle?.windowStart ?? ''].sort().at(-1)!));
       setTime(
         slots.find(
           (slot) => formatTimeSlot(slot) === formatTimeSlot(current.timeSlot),
@@ -174,7 +178,7 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
     initialized.current = true;
     const url = new URL(window.location.href);
     const requested = url.searchParams.get('action');
-    if (requested === 'cancel' || requested === 'reschedule') {
+    if (requested === 'cancel' || requested === 'reschedule' || requested === 'rebook') {
       // The card action is consumed once; reloading must not reopen a saved edit.
       url.searchParams.delete('action');
       window.history.replaceState(
@@ -182,9 +186,9 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
         '',
         url.pathname + url.search + url.hash,
       );
-      if (booking.canModify) openAction(requested, booking);
+      if (requested === 'rebook' ? canRebook : booking.canModify) openAction(requested, booking);
     }
-  }, [booking, openAction]);
+  }, [booking, canRebook, openAction]);
 
   async function submitChange() {
     if (
@@ -195,15 +199,15 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
       !mounted.current
     )
       return;
-    if (!pending && !canModify) {
+    if (!pending && !(action === 'rebook' ? canRebook : canModify)) {
       setActionError(
-        'Changes must be made at least 72 hours before the original appointment. Please contact support.',
+        action === 'rebook' ? rebookBlockedReason : 'Changes must be made at least 72 hours before the original appointment. Please contact support.',
       );
       return;
     }
     if (
       !pending &&
-      action === 'reschedule' &&
+      choosingSchedule &&
       (dateError ||
         !date ||
         !time ||
@@ -220,12 +224,18 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
       );
       return;
     }
-    const change = pending ?? { action, date, time };
+    const change = pending ?? { action, date, time, requestId: crypto.randomUUID() };
     setBusy(true);
     setActionError('');
     try {
       if (change.action === 'cancel')
         await coolcareApi.updateBookingStatus(bookingId, 'Cancelled');
+      else if (change.action === 'rebook')
+        await coolcareApi.rebookAnnualVisit(bookingId, {
+          preferredDate: change.date,
+          timeWindow: change.time,
+          requestId: change.requestId,
+        });
       else
         await coolcareApi.rescheduleBooking(bookingId, {
           preferredDate: change.date,
@@ -237,6 +247,8 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
       setSuccess(
         change.action === 'cancel'
           ? 'This visit has been cancelled. It is now in Booking History.'
+          : change.action === 'rebook'
+          ? `This quarterly visit was rebooked for ${formatDate(change.date)}, ${formatServiceWindow(change.time, booking.estimatedDurationMinutes)} under the same booking reference and annual plan. The service team will review and confirm it. Your other visits are unchanged.`
           : `Your visit was moved to ${formatDate(change.date)}, ${formatServiceWindow(change.time, booking.estimatedDurationMinutes)}. The service team will review and confirm the new appointment.`,
       );
       await refresh();
@@ -394,7 +406,7 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
                   to request changes to an arranged visit.
                 </p>
               )}
-            {booking.changeDeadline && (
+            {booking.changeDeadline && !closedAnnual && (
               <p className="mt-4 rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground">
                 {bookingChangeNotice}
                 <span className="mt-1 block">
@@ -403,7 +415,19 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
                 </span>
               </p>
             )}
-            {['Rejected', 'Expired'].includes(booking.status) && (
+            {closedAnnual ? (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <p className="font-semibold text-amber-950">Rebook this quarterly visit</p>
+                <p className="mt-2 text-sm text-amber-950">
+                  Keep the same annual plan, booking reference and agreed visit price. Only this visit is rearranged; the other quarterly visits stay unchanged. Previously returned loyalty points will not be reserved again.
+                </p>
+                {canRebook ? (
+                  <Button className="mt-3" onClick={() => openAction('rebook', booking)} disabled={Boolean(pending)}>
+                    Rebook this visit
+                  </Button>
+                ) : <p role="status" className="mt-3 text-sm text-amber-950">{rebookBlockedReason}</p>}
+              </div>
+            ) : ['Rejected', 'Expired'].includes(booking.status) && (
               <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <p className="text-sm text-amber-950">
                   {booking.status === 'Rejected'
@@ -508,6 +532,7 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
               <DialogTitle>
                 {action === 'cancel'
                   ? 'Cancel this visit?'
+                  : action === 'rebook' ? 'Rebook this visit'
                   : 'Reschedule your visit'}
               </DialogTitle>
               <DialogDescription>
@@ -527,10 +552,15 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
             ) : (
               <div className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  Changes require 72 hours of notice before the original visit.
+                  {action !== 'rebook' && 'Changes require 72 hours of notice before the original visit. '}
                   Choose a new weekday appointment at least 72 hours from now.
                   Times are in Singapore time.
                 </p>
+                {action === 'rebook' && (
+                  <p className="rounded-xl bg-muted/50 p-3 text-sm">
+                    This reopens only visit {booking?.annualBundle?.visitNumber} in your existing annual plan. Agreed service amount: {formatRecordedMoney(booking?.totalAmount)}. No new annual plan is created and returned points are not reapplied.
+                  </p>
+                )}
                 {booking?.annualBundle?.windowStart && maximum && (
                   <p className="rounded-xl bg-primary/5 p-3 text-sm">
                     This visit window:{' '}
@@ -641,7 +671,7 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
                 onClick={() => setAction(null)}
                 disabled={busy}
               >
-                Keep booking
+                {action === 'rebook' ? 'Not now' : 'Keep booking'}
               </Button>
               <Button
                 variant={action === 'cancel' ? 'destructive' : 'default'}
@@ -649,7 +679,7 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
                 disabled={
                   busy ||
                   (!pending &&
-                    action === 'reschedule' &&
+                    choosingSchedule &&
                     Boolean(
                       !date ||
                       dateError ||
@@ -667,6 +697,7 @@ function BookingDetailsContent({ bookingId }: { bookingId: number }) {
                     ? 'Retry same update'
                     : action === 'cancel'
                       ? 'Confirm cancellation'
+                      : action === 'rebook' ? 'Confirm this visit'
                       : 'Save new schedule'}
               </Button>
             </DialogFooter>

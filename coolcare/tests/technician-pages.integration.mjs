@@ -64,6 +64,9 @@ test('report submission completes the visit, edits persist with audit and preser
       "UPDATE work_order SET current_status='In Progress' WHERE job_id=?",
       [a.jobId],
     );
+    await c.execute(`INSERT INTO service_report(job_id,work_performed,started_at)
+      VALUES (?,'',DATE_SUB(DATE_ADD(UTC_TIMESTAMP(),INTERVAL 8 HOUR),INTERVAL 5 MINUTE))
+      ON DUPLICATE KEY UPDATE started_at=VALUES(started_at),completed_at=NULL,submitted_time=NULL`,[a.jobId]);
     const initial = await getReport(db, a.userId, a.jobId);
     const input = {
       requestId: randomUUID(),
