@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import { credentialFingerprint } from './account-password.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { AppError } from './inventory.mjs';
@@ -204,6 +205,7 @@ export async function acceptStaffInvitation(pool, req, raw) {
     req.session.regenerate((error) => (error ? reject(error) : resolve())),
   );
   req.session.portalUser = { id: user.id };
+  req.session.credentialFingerprint = credentialFingerprint(passwordHash);
   req.session.csrf = randomBytes(24).toString('hex');
   if (user.role === 'Admin')
     req.session.user = {

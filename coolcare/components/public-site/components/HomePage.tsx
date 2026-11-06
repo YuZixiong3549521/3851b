@@ -33,7 +33,7 @@ const serviceCards = [
     features: [
       'One cleaning visit',
       'Cleaning method assessed by your technician',
-      'SGD 50 per unit; around 45 minutes per unit',
+      'Price and estimated duration update with your AC count',
     ],
   },
   {
@@ -83,7 +83,7 @@ const faqs = [
   {
     question: 'Do I need to choose regular or chemical cleaning?',
     answer:
-      'No. Choose Cleaning for one visit or Annual Cleaning Bundle for quarterly care. Your technician assesses the aircon and records the appropriate method. Cleaning costs SGD 50 per unit. Repair has a minimum diagnostic fee of SGD 50; additional repair labour and replacement parts are quoted by the technician and shown in the booking and service report.',
+      'No. Choose Cleaning for one visit or Annual Cleaning Bundle for quarterly care. Your technician assesses the aircon and records the appropriate method. Current cleaning prices and the minimum repair diagnostic fee are shown in Services & pricing. Additional repair labour and replacement parts are recorded by the technician and shown in the booking and service report; no separate online approval is required.',
   },
   {
     question: 'Can I cancel or reschedule a booking?',
@@ -111,7 +111,7 @@ const processSteps = [
   {
     icon: 'engineering',
     title: 'Get an on-site assessment',
-    text: 'Your technician checks the unit and explains any extra work and price before proceeding.',
+    text: 'Your technician checks the unit and records the cleaning method, repair work and any extra charges.',
   },
   {
     icon: 'description',

@@ -13,6 +13,7 @@ import { Footer } from './components/Footer';
 import { HomePage } from './components/HomePage';
 import { LoginPage } from './components/LoginPage';
 import { RegisterPage } from './components/RegisterPage';
+import { PolicyPage } from './components/PolicyPage';
 import { BookingModal } from './components/BookingModal';
 
 function sectionId(hash: string) {
@@ -59,7 +60,8 @@ export default function App() {
       }
       setCurrentPage(hash.startsWith('#/login') || hash === '#login' ? 'login'
         : hash.startsWith('#/register') || hash === '#register' ? 'register'
-        : hash.startsWith('#/bookings') || hash === '#bookings' ? 'bookings' : 'home');
+        : hash.startsWith('#/bookings') || hash === '#bookings' ? 'bookings'
+        : route === '#/terms' ? 'terms' : route === '#/privacy' ? 'privacy' : 'home');
     };
     handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
@@ -111,7 +113,7 @@ export default function App() {
     setCurrentPage(page);
     window.location.hash = page === 'home' ? (targetHash ? `#${sectionId(targetHash)}` : '#/')
       : page === 'login' ? getLoginHref(returnTo || undefined).slice(1)
-      : `#/${page}${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''}`;
+      : `#/${page}${page === 'register' && returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''}`;
     if (page === 'home' && targetHash) {
       window.setTimeout(() => document.getElementById(sectionId(targetHash))?.scrollIntoView({ behavior: 'smooth' }), 80);
     } else window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -198,6 +200,7 @@ export default function App() {
         {currentPage === 'home' && <HomePage currentUser={currentUser} onNavigate={navigateTo} onOpenBooking={handleOpenBooking} />}
         {currentPage === 'login' && <LoginPage onNavigate={navigateTo} onLoginSuccess={handleLoginSuccess} initialNotice={loginNotice} initialEmail={prefilledLoginEmail} onClearNotice={() => setLoginNotice(null)} />}
         {currentPage === 'register' && <RegisterPage onNavigate={navigateTo} onRegisterSuccess={handleRegisterSuccess} />}
+        {(currentPage === 'terms' || currentPage === 'privacy') && <PolicyPage kind={currentPage} onNavigate={navigateTo} />}
         {currentPage === 'bookings' && <p role="status" className="mx-auto px-6 py-20">{sessionError ? 'Bookings are unavailable until your account can be loaded.' : 'Opening your bookings…'}</p>}
       </div>
       <Footer currentUser={currentUser} onNavigate={navigateTo} onOpenBooking={handleOpenBooking} />

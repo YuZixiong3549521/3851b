@@ -141,13 +141,13 @@ function ServiceReportContent({ bookingId }: { bookingId: number }) {
               <div className="mt-7 grid gap-4 border-t border-white/20 pt-6 sm:grid-cols-2 lg:grid-cols-4">
                 <ReportMeta
                   icon={CalendarDays}
-                  label="Service date"
-                  value={formatDate(report.serviceDate)}
+                  label="Scheduled visit date"
+                  value={report.serviceDate ? formatDate(report.serviceDate) : 'Not recorded for this visit'}
                 />
                 <ReportMeta
                   icon={Clock3}
-                  label="Appointment"
-                  value={formatTimeSlot(report.timeSlot)}
+                  label="Scheduled start"
+                  value={report.timeSlot ? formatTimeSlot(report.timeSlot) : 'Not recorded for this visit'}
                 />
                 <ReportMeta
                   icon={UserRound}
@@ -161,6 +161,17 @@ function ServiceReportContent({ bookingId }: { bookingId: number }) {
                 />
               </div>
             </section>
+
+            <Card className="mt-6">
+              <CardHeader><CardTitle>Actual service record</CardTitle></CardHeader>
+              <CardContent>
+                <dl className="grid gap-4 sm:grid-cols-2">
+                  <div><dt className="text-sm text-muted-foreground">Started (SGT)</dt><dd className="mt-1 font-medium">{report.startedAt ? formatDateTime(report.startedAt) : 'Not recorded'}</dd></div>
+                  <div><dt className="text-sm text-muted-foreground">Completed (SGT)</dt><dd className="mt-1 font-medium">{report.completedAt ? formatDateTime(report.completedAt) : 'Not recorded'}</dd></div>
+                </dl>
+                {(!report.serviceDate || !report.timeSlot) && <p className="mt-4 text-sm text-muted-foreground">This historical report does not contain a complete appointment snapshot. {report.bookingDate && <>The current booking appointment is {formatDate(report.bookingDate)}{report.bookingTimeSlot ? ' · ' + formatTimeSlot(report.bookingTimeSlot) : ''}. </>}Actual service times are shown above when recorded.</p>}
+              </CardContent>
+            </Card>
 
             <div className="mt-6">
               <ServiceProgressSummary progress={report.serviceProgress} />

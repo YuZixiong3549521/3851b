@@ -63,7 +63,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate, onOpenBooking, curre
         </div>
       </div>
       <div className="border-t border-ac-outline-variant/40 px-gutter py-6 text-center text-body-sm text-ac-on-surface-variant">
-        © {new Date().getFullYear()} CoolCare. Air conditioning care, made simple.
+        <p>© {new Date().getFullYear()} CoolCare. Air conditioning care, made simple.</p>
+        <nav aria-label="Policies" className="mt-3 flex flex-wrap justify-center gap-x-6 gap-y-2">
+          <a href="/#/terms" onClick={event => { event.preventDefault(); onNavigate('terms'); }} className="inline-flex min-h-11 items-center text-ac-primary underline underline-offset-4">Terms of Service</a>
+          <a href="/#/privacy" onClick={event => { event.preventDefault(); onNavigate('privacy'); }} className="inline-flex min-h-11 items-center text-ac-primary underline underline-offset-4">Privacy Policy</a>
+        </nav>
       </div>
     </footer>
   );

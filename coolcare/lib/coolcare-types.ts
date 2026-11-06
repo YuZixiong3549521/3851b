@@ -196,6 +196,10 @@ export type ServiceReport = {
   bookingReference: string;
   serviceDate: string;
   timeSlot: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  bookingDate?: string;
+  bookingTimeSlot?: string;
   serviceName: string;
   technicianName: string;
   reportId: number;

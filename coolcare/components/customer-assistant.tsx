@@ -18,6 +18,7 @@ import { bookingConflictMessage } from '@/components/booking-availability-notice
 import { useBookingAvailability } from '@/lib/use-booking-availability';
 import { useSlotAvailability } from '@/lib/use-slot-availability';
 import { useAssistantDraft } from '@/lib/use-assistant-draft';
+import { assistantIssueSelection } from '@/lib/assistant-guidance';
 import { assistantApi, emptyAssistantDraft, verifyAssistantState, type AssistantConflict, type AssistantError, type AssistantState, type AssistantStep } from '@/lib/assistant-api';
 import { coolcareApi } from '@/lib/coolcare-api';
 import { formatDate, formatDateTime, formatMoney, formatTimeSlot, formatServiceWindow } from '@/lib/format';
@@ -42,7 +43,7 @@ const prompts: Record<Screen, string> = {
   address: 'Where should we visit, and how can we reach you?',
   schedule: 'Choose a preferred weekday. I will check every visit before you confirm.',
   review: 'Check your details and current estimate. Nothing is booked until you confirm.',
-  success: 'Your request is saved. The service team will confirm availability.',
+  success: 'Your booking request was saved. Open the booking for its latest appointment and service details.',
 };
 const supportHref = 'mailto:' + customerSupportEmail + '?subject=CoolCare%20booking%20help';
 
@@ -72,6 +73,10 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   const [priceChanged, setPriceChanged] = useState(false);
   const [rewardsValid, setRewardsValid] = useState(true);
   const [rewardRefresh, setRewardRefresh] = useState(0);
+  const [closeWarning, setCloseWarning] = useState(false);
+  const [discardWarning, setDiscardWarning] = useState(false);
+  const [issueProposal, setIssueProposal] = useState<{ code: 'cleaning' | 'repair' | 'annual-cleaning'; note?: string; label: string } | null>(null);
+  const preserveOnOpen = useRef(false);
   const inFlight = useRef(false);
   const confirming = useRef(false);
   const pendingConfirmation = useRef<Parameters<typeof assistantApi.confirm>[0] | null>(null);
@@ -87,7 +92,11 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
     const url = new URL(window.location.href);
     url.searchParams.set('assistant', 'resume');
     window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
-    void loadAssistant(resumeOnOpen.current);
+    if (preserveOnOpen.current) {
+      // Closing a panel must not hydrate over unsaved answers or forget the UUID
+      // of a confirmation whose response was lost. Recovery remains explicit.
+      preserveOnOpen.current = false;
+    } else void loadAssistant(resumeOnOpen.current);
     resumeOnOpen.current = false;
   }, [open]);
   useEffect(() => { body.current?.scrollTo({ top: 0 }); }, [screen]);
@@ -101,6 +110,8 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   const slotAvailability=useSlotAvailability(slotDates,Boolean(open&&context&&screen==='schedule'&&!locked),selected.durationMinutes,undefined,draft.numberOfUnits);
   const selectedSlotFull=Boolean(draft.timeWindow&&!slotAvailability.isAvailable(timeCodes[draft.timeWindow]));
   const receipt = record?.status === 'completed' ? record.booking : null;
+  const currentBooking = record?.currentBooking;
+  const receiptReward = currentBooking ? currentBooking.rewardReservation : receipt?.rewardReservation;
   const quote = record?.quote;
   const estimate = quote && !store.dirty && (screen === 'review' || screen === 'success') ? quote.totalAmount : selected.estimate;
   const rewardAmount = annual ? annualVisitAmounts(estimate)[0] : estimate;
@@ -145,9 +156,10 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
       const [nextContext, nextOptions, nextState] = await Promise.all([coolcareApi.getCustomerContext(), coolcareApi.getBookingOptions(), assistantApi.load()]);
       verifyAssistantState(nextState, nextContext.customer.userId);
       setContext(nextContext); setOptions(nextOptions);
-      const defaults = { ...emptyAssistantDraft, preferredDate: earliestBookingDate(), serviceAddress: nextContext.addresses.find(address => address.isDefault)?.addressLine || nextContext.addresses[0]?.addressLine || '', phone: nextContext.customer.phone || '' };
+      const defaultAddress = nextContext.addresses.find(address => address.isDefault) ?? nextContext.addresses[0];
+      const defaults = { ...emptyAssistantDraft, preferredDate: earliestBookingDate(), serviceAddress: defaultAddress?.addressLine || '', postalCode: defaultAddress?.postalCode || '', phone: nextContext.customer.phone || '' };
       store.hydrate(nextState, nextContext.customer.userId, defaults);
-      setAuthExpired(false); setDraftConflict(false); setUncertain(false); setConflicts([]); setEditingReview(false); setPriceChanged(false);
+      setAuthExpired(false); setDraftConflict(false); setUncertain(false); setConflicts([]); setEditingReview(false); setPriceChanged(false); setCloseWarning(false); setDiscardWarning(false); setIssueProposal(null);
       setScreen(nextState?.status === 'completed' ? 'success' : resume && nextState ? nextState.draft.step : 'menu');
       setNotice(nextState?.status === 'completed' ? '' : resume && nextState ? 'Your saved answers have been restored.' : '');
       if (nextState?.status === 'completed') notifyCreated(nextState);
@@ -161,7 +173,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
     finally { inFlight.current = false; setOperation(''); }
   }
   async function startBooking(reset = false) {
-    if (!context) return;
+    if (!context || uncertain || confirming.current) return;
     await run('Preparing your booking…', async () => {
       // Finish/reconcile every prior save before resetting the durable draft.
       await store.flush(true);
@@ -171,9 +183,10 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
         current = await assistantApi.startNew({ expectedUserId: context.customer.userId, draftId: current.draftId, revision: current.revision });
         store.hydrate(current, context.customer.userId);
       }
-      setNotice(''); setConflicts([]); setEditingReview(false); setPriceChanged(false); setPhoneTouched(false);
+      setNotice(''); setConflicts([]); setEditingReview(false); setPriceChanged(false); setPhoneTouched(false); setDiscardWarning(false); setIssueProposal(null);
       pendingConfirmation.current = null;
-      store.update({ step: 'service', preferredDate: earliestBookingDate(), serviceAddress: context.addresses.find(address => address.isDefault)?.addressLine || context.addresses[0]?.addressLine || '', phone: context.customer.phone || '', notes: '', serviceId: undefined, serviceIds: [], propertyType: undefined, packageId: undefined, rewardPoints: 0, rewardRuleVersion: undefined });
+      const defaultAddress = context.addresses.find(address => address.isDefault) ?? context.addresses[0];
+      store.update({ step: 'service', preferredDate: earliestBookingDate(), serviceAddress: defaultAddress?.addressLine || '', postalCode: defaultAddress?.postalCode || '', phone: context.customer.phone || '', notes: '', serviceId: undefined, serviceIds: [], propertyType: undefined, packageId: undefined, rewardPoints: 0, rewardRuleVersion: undefined });
       await store.flush(true); setScreen('service');
     });
   }
@@ -199,7 +212,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
       if (message) { setError(message); return false; }
     }
     if (screen === 'schedule') {
-      const message = bookingDateError(draft.preferredDate) || (!draft.timeWindow ? 'Choose a preferred arrival window.' : '') || (availability.selectedDateBlocked ? bookingConflictMessage : '') || (selectedSlotFull?'This service time is fully booked. Choose another available time.':'');
+      const message = bookingDateError(draft.preferredDate) || (!draft.timeWindow ? 'Choose a preferred arrival window.' : '') || (availability.selectedDateBlocked ? bookingConflictMessage : '') || (slotAvailability.error ? 'Service times could not be checked. Retry the availability check before continuing.' : !slotAvailability.checked ? 'Wait for the service time check before continuing.' : '') || (selectedSlotFull?'This service time is fully booked. Choose another available time.':'');
       if (message) { setError(message); return false; }
     }
     return true;
@@ -277,27 +290,30 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
       if (current.status !== 'completed') { setScreen('review'); setNotice('No completed booking was found for this request. You can safely retry the same confirmation.'); }
     });
   }
-  async function closeAssistant() {
-    if (inFlight.current || confirming.current || addressEditorOpen) return;
-    if (uncertain || authExpired || store.saveStatus === 'auth' || draftConflict || store.saveStatus === 'conflict') { setError('Resolve the saved draft or sign in again before closing so your changes are not lost.'); return; }
-    await run('Saving before closing…', async () => {
-      await store.flush(); setOpen(false);
-      const url = new URL(window.location.href); url.searchParams.delete('assistant');
-      window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
-    });
+  function dismissAssistant() {
+    preserveOnOpen.current = Boolean(store.dirty || store.savingRef.current || uncertain || pendingConfirmation.current || inFlight.current || confirming.current || addressEditorOpen || savedProblem || authExpired || draftConflict);
+    setCloseWarning(false); setOpen(false);
+    const url = new URL(window.location.href); url.searchParams.delete('assistant');
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+  }
+  function closeAssistant() {
+    if (store.dirty || store.savingRef.current || uncertain || inFlight.current || confirming.current || addressEditorOpen) {
+      setCloseWarning(true); body.current?.scrollTo({ top: 0 }); return;
+    }
+    dismissAssistant();
   }
   function addressSaved(address: Address) {
     setContext(current => current ? { ...current, addresses: [address, ...current.addresses.filter(item => item.addressId !== address.addressId)] } : current);
-    store.update({ serviceAddress: address.addressLine });
+    store.update({ serviceAddress: address.addressLine, postalCode: address.postalCode || '' });
   }
-  function chooseIssue(serviceCode: 'cleaning' | 'repair' | 'annual-cleaning', note?: string) {
-    const service = options?.services.find(item => item.code === serviceCode);
-    const bundle = options?.bundles.find(item => item.code === serviceCode);
-    if (!service && !bundle) { setError('This service is currently unavailable. Reload the assistant to check again.'); return; }
-    const notes = note && !draft.notes.includes(note) ? [draft.notes, note].filter(Boolean).join('\n') : draft.notes;
-    if (notes.length > 1000) { setError('Shorten your technician notes before adding another symptom. Notes can contain up to 1,000 characters.'); return; }
-    store.update({ serviceId: undefined, serviceIds: service ? [service.serviceId] : [], packageId: bundle?.packageId, propertyType: undefined, ...(note ? { notes } : {}) });
-    setNotice(note ? 'Service selected and your symptom added to the technician notes.' : 'Quarterly cleaning selected.'); setHelp(null);
+  function chooseIssue(serviceCode: 'cleaning' | 'repair' | 'annual-cleaning', note?: string, replace = false) {
+    if (!options || locked) return;
+    try {
+      const result = assistantIssueSelection(draft, options, serviceCode, note);
+      if (result.replacesSelection && !replace) { setIssueProposal({ code: serviceCode, note, label: result.label }); return; }
+      store.update(result.patch); setIssueProposal(null); setError('');
+      setNotice(note ? 'Your symptom was added to the technician notes. Existing compatible services are kept.' : 'Quarterly cleaning selected. Choose your property type to review the price.'); setHelp(null);
+    } catch (reason) { handleError(reason); }
   }
 
   return <Dialog open={open} onOpenChange={value => { if (value) setOpen(true); else void closeAssistant(); }}>
@@ -308,6 +324,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
         {context && screen !== 'menu' && screen !== 'success' && <ol className="mt-4 grid grid-cols-4 gap-2" aria-label="Booking progress">{steps.map((step, index) => <li key={step} aria-current={screen === step ? 'step' : undefined} className={'rounded-lg px-1 py-2 text-center text-xs ' + (screen === step ? 'bg-primary font-semibold text-white' : steps.indexOf(screen as AssistantStep) > index ? 'bg-primary/10 text-primary' : 'bg-background text-muted-foreground')}><span className="block text-[10px] opacity-80">Step {index + 1}</span><span className="mt-0.5 block">{labels[step]}</span></li>)}</ol>}
       </div>
       <div ref={body} className="min-h-0 space-y-4 overflow-y-auto p-5">
+        {closeWarning && <div role="alert" className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-semibold">Close the assistant for now?</p><p>{uncertain || confirming.current ? 'Your confirmation request is preserved. Reopen the assistant to check the same result before starting another booking.' : 'Your last saved draft stays in your account. Unsaved booking answers remain in this page while it stays open; refreshing or signing out can discard them.'}</p>{addressEditorOpen && <p>An unfinished new-address form will be closed. Save that address first to keep it, or check Saved addresses if its save was already in progress.</p>}<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setCloseWarning(false)}>Keep editing</Button><Button onClick={dismissAssistant}>Close for now</Button></div></div>}
         {operation && <p role="status" className="text-sm text-muted-foreground">{operation}</p>}
         {(error || savedProblem) && <div role="alert" className="space-y-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
           <p>{error || store.saveError}</p>
@@ -322,7 +339,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
           <div className="rounded-2xl rounded-tl-sm bg-muted p-4 text-sm leading-6" aria-live="polite">{screen === 'menu' && <p className="font-semibold">Hi {context.customer.fullName.split(' ')[0]}!</p>}{prompts[screen]}</div>
           {screen === 'menu' && <div className="grid gap-3">{record && record.status !== 'completed' ? <>
             <div className="rounded-xl border p-4 text-sm"><p className="font-semibold">A booking draft is ready to continue</p><p className="mt-1 text-muted-foreground">{selected.label || 'Service not selected'} · {draft.numberOfUnits} aircon units</p><p className="mt-1 text-xs text-muted-foreground">Last saved {formatDateTime(record.updatedAt)}</p><Button className="mt-3 w-full" onClick={resumeBooking} disabled={locked}>Resume saved booking</Button></div>
-            <Button variant="outline" className="h-auto whitespace-normal py-3" onClick={() => void startBooking(true)} disabled={locked}>Discard saved draft and start again</Button>
+            {!discardWarning ? <Button variant="outline" className="h-auto whitespace-normal py-3" onClick={() => setDiscardWarning(true)} disabled={locked}>Discard saved draft and start again</Button> : <div role="alert" className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm"><p className="font-semibold">Replace your saved answers?</p><p>Your service, address, schedule and notes in this draft will be replaced. Existing bookings are unaffected.</p><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={locked} onClick={() => setDiscardWarning(false)}>Keep draft</Button><Button disabled={locked} onClick={() => void startBooking(true)}>Start again</Button></div></div>}
           </> : <Button className="h-14 justify-start" onClick={() => void startBooking()} disabled={locked}><CalendarPlus />Create a new booking</Button>}</div>}
           {screen === 'service' && options && <fieldset disabled={locked} className="min-w-0 space-y-4">
             <BookingServiceSelection options={options} value={selection} onChange={value=>store.update({serviceId:undefined,serviceIds:value.serviceIds,packageId:value.mode==='bundle'?value.packageId:undefined,propertyType:value.mode==='bundle'?value.propertyType:undefined})} />
@@ -341,16 +358,19 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
             {availability.selectedDateBlocked && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{bookingConflictMessage}</p>}
             {availability.error && <p className="text-xs text-muted-foreground">The calendar check is unavailable. All dates will be checked before confirmation.</p>}
             {conflicts.length > 0 && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p className="font-semibold">Choose another first date to resolve these visits:</p><ul className="mt-2 space-y-2">{conflicts.map(item => <li key={item.visitNumber}><strong>Visit {item.visitNumber} · {formatDate(item.preferredDate)}</strong><br />{item.message}</li>)}</ul></div>}
-            <p className="text-sm font-medium">Preferred service time</p><div className="grid grid-cols-2 gap-2">{times.map(time => <Button key={time} className="h-auto whitespace-normal py-3" disabled={!slotAvailability.isAvailable(timeCodes[time])} variant={draft.timeWindow === time ? 'default' : 'outline'} aria-pressed={draft.timeWindow === time} onClick={() => store.update({ timeWindow: time })}>{formatServiceWindow(time,selected.durationMinutes)}{slotAvailability.isAvailable(timeCodes[time])?'':' · Unavailable'}</Button>)}</div>
-            {slotAvailability.loading&&<p className="text-xs text-muted-foreground">Checking team availability…</p>}{selectedSlotFull&&<p role="alert" className="text-xs text-red-700">This service time is fully booked.</p>}
+            <p className="text-sm font-medium">Preferred service time</p><div className="grid grid-cols-2 gap-2">{times.map(time => <Button key={time} className="h-auto whitespace-normal py-3" disabled={locked || !slotAvailability.checked || !slotAvailability.isAvailable(timeCodes[time])} variant={draft.timeWindow === time ? 'default' : 'outline'} aria-pressed={draft.timeWindow === time} onClick={() => store.update({ timeWindow: time })}>{formatServiceWindow(time,selected.durationMinutes)}{!slotAvailability.checked ? ' · Not checked' : slotAvailability.isAvailable(timeCodes[time]) ? '' : ' · Unavailable'}</Button>)}</div>
+            {slotAvailability.loading && <p role="status" className="text-xs text-muted-foreground">Checking team availability…</p>}
+            {slotAvailability.error && <div role="alert" className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm"><p>Unable to check service times. Availability has not been confirmed.</p><Button variant="outline" size="sm" onClick={slotAvailability.retry} disabled={locked}>Retry availability check</Button></div>}
+            {selectedSlotFull && <p role="alert" className="text-xs text-red-700">This service time is fully booked.</p>}
             {annual && <AnnualBookingSummary durationMinutes={selected.durationMinutes} firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={selected.estimate} collapsible />}
             <p className="text-xs leading-5 text-muted-foreground">All {annual ? 'four dates' : 'dates'} are checked before review and again on confirmation. {bookingFrequencyNotice}</p>
           </fieldset>}
           {(screen === 'review' || screen === 'success') && <>
-            {receipt && <div role="status" className="rounded-xl bg-emerald-50 p-4 text-emerald-900"><p className="flex items-center gap-2 font-bold"><CheckCircle2 className="size-5" />{receipt.annualBundle ? 'Four booking requests saved' : 'Booking ' + (receipt.bookingReference || 'Reference unavailable')}</p><p className="mt-1">Status: {bookingStatusLabel(receipt.status)}</p></div>}
+            {receipt && <div role="status" className="rounded-xl bg-emerald-50 p-4 text-emerald-900"><p className="flex items-center gap-2 font-bold"><CheckCircle2 className="size-5" />{receipt.annualBundle ? 'Four booking requests saved' : 'Booking ' + (receipt.bookingReference || 'Reference unavailable')}</p><p className="mt-1">{currentBooking ? 'Latest checked status' : 'Status when submitted'}{annual ? ' · First visit' : ''}: {bookingStatusLabel(currentBooking?.status ?? receipt.status)}</p><Button variant="outline" size="sm" className="mt-3" disabled={locked} onClick={() => void loadAssistant()}>Refresh booking status</Button></div>}
             {receipt && bookingId && <div className="grid gap-2"><Button nativeButton={false} render={<Link href={'/customer/bookings/' + bookingId} />} onClick={() => void closeAssistant()} className="w-full">View this booking</Button><a href={bookingSupportLink(receipt.bookingReference || 'Reference unavailable')} className="inline-flex items-center justify-center gap-2 py-2 text-sm font-medium text-primary underline underline-offset-4"><Mail className="size-4" />Contact support about this booking</a></div>}
             {priceChanged && !receipt && <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">The current price or reward conversion differs from the earlier review. Check the updated amounts before confirming.</div>}
             <div className="space-y-3 rounded-xl border p-4 text-sm">
+              {receipt && <p className="text-xs text-muted-foreground">Original submission details. Open the booking to see any later schedule, service or price changes.</p>}
               {[
                 { key: 'service' as AssistantStep, title: 'Service & quantity', value: (quote?.serviceName || selected.label || 'Service unavailable') + ' · ' + draft.numberOfUnits + ' aircon unit(s)' },
                 { key: 'address' as AssistantStep, title: 'Address & contact', value: draft.serviceAddress + '\n' + draft.phone },
@@ -362,7 +382,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
             {annual && <AnnualBookingSummary durationMinutes={selected.durationMinutes} firstDate={draft.preferredDate} timeSlot={draft.timeWindow} totalAmount={estimate} saved={receipt?.annualBundle} compact />}
             {!receipt && <BookingRewardSelection key={`${context.customer.userId}:${record?.draftId}:${rewardRefresh}`} amount={rewardAmount} annual={annual} value={draft.rewardPoints ?? 0} onChange={rewardPoints => { store.update({ rewardPoints }); setError(''); setPriceChanged(false); }} onValidityChange={setRewardsValid} disabled={locked || savedProblem} />}
             {!receipt && quote?.rewardReservation && !store.dirty && record?.status === 'reviewed' && <p className="rounded-xl bg-primary/5 p-3 text-sm">Reviewed reward discount: {formatMoney(quote.rewardReservation.discount)} for {quote.rewardReservation.points} points. {annual ? 'First visit' : 'Visit'} estimate after rewards: {formatMoney(Math.max(0, rewardAmount - quote.rewardReservation.discount))}.</p>}
-            {receipt?.rewardReservation && <div className="space-y-1 rounded-xl bg-primary/5 p-3 text-sm"><p className="font-semibold">{receipt.rewardReservation.points} loyalty points {receipt.rewardReservation.status === 'Redeemed' ? 'used' : receipt.rewardReservation.status === 'Released' ? 'released' : 'reserved'} · {formatMoney(receipt.rewardReservation.discount)} {receipt.rewardReservation.status === 'Released' ? 'discount released' : 'discount'}</p><p>{receipt.rewardReservation.status === 'Released' ? 'The points reservation was released and this discount no longer applies.' : <>{receipt.annualBundle ? 'First visit' : 'Service amount'} after rewards: {formatMoney(Math.max(0, receipt.totalAmount - receipt.rewardReservation.discount))}.{receipt.rewardReservation.status === 'Reserved' && ' Points are deducted when this order is completed.'}</>}</p>{receipt.annualBundle && receipt.rewardReservation.status !== 'Released' && <p>The discount applies to the first visit only.</p>}</div>}
+            {receipt && receiptReward && <div className="space-y-1 rounded-xl bg-primary/5 p-3 text-sm"><p className="text-xs text-muted-foreground">{currentBooking ? 'Latest checked points status' : 'Points when submitted'}</p><p className="font-semibold">{receiptReward.points} loyalty points {receiptReward.status === 'Redeemed' ? 'used' : receiptReward.status === 'Released' ? 'returned' : 'reserved'} · {formatMoney(receiptReward.discount)} {receiptReward.status === 'Released' ? 'discount released' : 'discount'}</p><p>{receiptReward.status === 'Released' ? 'The reserved points were returned to your available balance. This discount no longer applies.' : receiptReward.status === 'Reserved' ? 'Reserved points are unavailable for other bookings and will be settled when this order is completed.' : 'This points discount has been applied to the completed order.'}</p>{receipt.annualBundle && receiptReward.status !== 'Released' && <p>The discount applies to the first visit only.</p>}</div>}
             <p className="text-xs leading-5 text-muted-foreground">{bookingChangeNotice} {bookingConfirmationNotice(annual)}</p>
             {selected.pricingNote && <p className="text-xs leading-5 text-muted-foreground">{selected.pricingNote}</p>}
             {!receipt && <p className="text-xs leading-5 text-muted-foreground">Your request will be saved as Awaiting confirmation. Preferred dates and times still need the service team's confirmation.</p>}
@@ -370,8 +390,8 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
           {screen !== 'menu' && screen !== 'review' && screen !== 'success' && selected.valid && <details className="rounded-xl border p-3 text-sm"><summary className="cursor-pointer font-medium">Your selected answers</summary><dl className="mt-3 space-y-2 text-xs"><div><dt className="text-muted-foreground">Service</dt><dd>{selected.label} · {draft.numberOfUnits} unit(s) · {formatMoney(selected.estimate)} {annual ? 'per year' : 'per visit'}</dd></div>{draft.serviceAddress && <div><dt className="text-muted-foreground">Address</dt><dd className="break-words">{draft.serviceAddress}</dd></div>}{draft.preferredDate && <div><dt className="text-muted-foreground">Preferred date</dt><dd>{formatDate(draft.preferredDate)} · {formatServiceWindow(draft.timeWindow,selected.durationMinutes)}</dd></div>}</dl></details>}
           {screen !== 'success' && <div className="border-t pt-3">
             <div className="flex flex-wrap gap-2" aria-label="Booking help">{([{ id: 'pricing', label: 'Prices & inclusions' }, { id: 'dates', label: 'Booking rules' }, { id: 'changes', label: 'Change a request' }] as const).map(topic => <Button key={topic.id} variant="outline" size="sm" aria-expanded={help === topic.id} onClick={() => setHelp(help === topic.id ? null : topic.id)}>{topic.label}<ChevronDown className="size-3" /></Button>)}</div>
-            {help === 'service' && <div className="mt-3 space-y-3 rounded-xl bg-muted p-3 text-sm"><p>Choose the closest description. Your technician will assess the cause on site.</p><div className="grid grid-cols-2 gap-2">{homepageIssues.map(issue => <Button key={issue.id} variant="outline" disabled={locked} className="h-auto whitespace-normal py-2" onClick={() => chooseIssue(issue.id === 'needs-cleaning' ? 'cleaning' : 'repair', issue.name + ': ' + issue.description)}>{issue.name}</Button>)}</div><Button variant="outline" disabled={locked} className="w-full h-auto whitespace-normal py-2" onClick={() => chooseIssue('annual-cleaning')}>I want quarterly cleaning all year</Button></div>}
-            {help === 'pricing' && <div className="mt-3 rounded-xl bg-muted p-3 text-sm leading-6"><p>Prices use your selected AC count and the current service catalogue. Repair has a minimum diagnostic fee. Your technician records additional labour and parts charges in the booking; there is no separate approval step. Cleaning is S$50 per unit; the technician decides the method. Annual bundle prices depend on property type and unit count.</p>{selected.valid && <p className="mt-2 font-semibold">{selected.label}: {formatMoney(selected.estimate)} {annual ? 'for all four visits, paid after each service' : 'for this visit'}.</p>}<p className="mt-2">The final review checks the current price. A changed price needs your confirmation again.</p></div>}
+            {help === 'service' && <div className="mt-3 space-y-3 rounded-xl bg-muted p-3 text-sm"><p>Choose the closest description. Compatible services and your written notes are kept. Your technician will assess the cause on site.</p><div className="grid grid-cols-2 gap-2">{homepageIssues.map(issue => <Button key={issue.id} variant="outline" disabled={locked} className="h-auto whitespace-normal py-2" onClick={() => chooseIssue(issue.id === 'needs-cleaning' ? 'cleaning' : 'repair', issue.name + ': ' + issue.description)}>{issue.name}</Button>)}</div><Button variant="outline" disabled={locked} className="w-full h-auto whitespace-normal py-2" onClick={() => chooseIssue('annual-cleaning')}>I want quarterly cleaning all year</Button>{issueProposal && <div role="alert" className="space-y-3 rounded-xl border border-amber-300 bg-background p-3"><p>Switch your current service selection to <strong>{issueProposal.label}</strong>? Annual care and one-off services are booked separately. Your written notes will stay.</p><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={locked} onClick={() => setIssueProposal(null)}>Keep current services</Button><Button disabled={locked} onClick={() => chooseIssue(issueProposal.code, issueProposal.note, true)}>Switch service</Button></div></div>}</div>}
+            {help === 'pricing' && <div className="mt-3 space-y-3 rounded-xl bg-muted p-3 text-sm leading-6">{options?.services.filter(service => service.code === 'cleaning' || service.code === 'repair').map(service => <div key={service.serviceId} className="rounded-lg bg-background p-3"><p className="font-semibold">{service.name} · {formatMoney(service.basePrice)} {service.code === 'cleaning' ? 'per unit' : 'minimum diagnostic fee'}</p><p className="mt-1 text-xs text-muted-foreground">{service.code === 'cleaning' ? 'The technician decides the cleaning method after inspection.' : 'Additional labour and parts are quoted by your technician and recorded in the booking.'}</p></div>)}<div className="rounded-lg bg-background p-3"><p className="font-semibold">Annual cleaning bundle</p><p className="mt-1 text-xs text-muted-foreground">Four quarterly cleaning visits. Choose your property type and unit count for the current annual estimate.</p></div>{selected.valid && <p className="font-semibold">{selected.label}: {formatMoney(selected.estimate)} {annual ? 'for all four visits, paid after each service' : 'for this visit'}.</p>}<p className="text-xs text-muted-foreground">The final review checks the current price. Any changed price needs your confirmation again. No payment is collected online.</p></div>}
             {help === 'dates' && <div className="mt-3 rounded-xl bg-muted p-3 text-sm leading-6">{bookingScheduleNotice} {bookingFrequencyNotice} Annual care includes four visits every three months; later weekend dates move to Monday. All slots await confirmation.</div>}
             {help === 'changes' && <div className="mt-3 rounded-xl bg-muted p-3 text-sm leading-6">Before submitting, use Edit on the review to change your answers. After booking, eligible visits can be changed from the booking detail page at least 72 hours before the original visit. The new visit must also be at least 72 hours ahead. Annual visits stay within their quarterly window. For help, <a href={supportHref} className="font-medium text-primary underline">email support</a>.</div>}
             <a href={supportHref} className="mt-3 inline-flex items-center gap-2 text-xs font-medium text-primary underline underline-offset-4"><Mail className="size-3" />Contact support</a>
@@ -382,7 +402,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
         {record?.status !== 'completed' && <p role="status" className={'mb-3 text-xs ' + (savedProblem ? 'text-red-700' : 'text-muted-foreground')}>{store.saveStatus === 'saving' ? 'Saving your answers to your account…' : store.saveStatus === 'dirty' ? 'Changes waiting to save…' : store.saveStatus === 'saved' ? 'Draft saved to your account. You can resume after signing in.' : store.saveStatus === 'error' ? 'Latest changes are not saved. Retry saving before continuing.' : store.saveStatus === 'conflict' ? 'Another session changed this draft.' : store.saveStatus === 'auth' ? 'Sign in to continue saving.' : 'Start a booking to save your draft.'}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2">
           {screen !== 'menu' && screen !== 'success' && <Button variant="outline" disabled={locked || savedProblem || addressEditorOpen} onClick={() => screen === 'service' ? setScreen('menu') : void move(steps[Math.max(0, steps.indexOf(screen as AssistantStep) - 1)])}>Back</Button>}
-          {(['service', 'address', 'schedule'] as Screen[]).includes(screen) && <Button disabled={locked || savedProblem || addressEditorOpen || (screen === 'service' && !selected.valid) || (screen === 'schedule' && availability.selectedDateBlocked)} onClick={continueStep}>{editingReview ? 'Return to review' : screen === 'schedule' ? 'Review booking' : 'Continue'}</Button>}
+          {(['service', 'address', 'schedule'] as Screen[]).includes(screen) && <Button disabled={locked || savedProblem || addressEditorOpen || (screen === 'service' && !selected.valid) || (screen === 'schedule' && (availability.selectedDateBlocked || !slotAvailability.checked || selectedSlotFull))} onClick={continueStep}>{editingReview ? 'Return to review' : screen === 'schedule' ? 'Review booking' : 'Continue'}</Button>}
           {screen === 'review' && !receipt && (record?.status !== 'reviewed' || !quote || store.dirty ? <Button disabled={locked || savedProblem || !canReview || !rewardsValid} onClick={review}>Check price, points &amp; dates</Button> : <Button disabled={locked || savedProblem || !rewardsValid} onClick={confirm}>{priceChanged ? 'Confirm updated price' : 'Confirm booking'}</Button>)}
           {screen === 'success' && <Button variant="outline" className="w-full" disabled={locked} onClick={() => void startBooking(true)}><CalendarPlus className="size-4" />Book another service</Button>}
         </div>

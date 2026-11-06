@@ -10,7 +10,8 @@ import {
   validateReportSignatures,
 } from './report-signatures.mjs';
 import { createHash } from 'node:crypto';
-import bcrypt from 'bcryptjs';
+import { changePassword, invalidateAccountSessions } from './account-password.mjs';
+export { changePassword, passwordSchema } from './account-password.mjs';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { AppError, idSchema } from './inventory.mjs';
@@ -255,45 +256,6 @@ export async function saveProfile(pool, userId, raw) {
     c.release();
   }
 }
-export const passwordSchema = z
-  .object({
-    currentPassword: z.string().min(1).max(72),
-    newPassword: z
-      .string()
-      .min(8)
-      .max(72)
-      .refine(
-        (v) => Buffer.byteLength(v, 'utf8') <= 72,
-        'Password must be at most 72 UTF-8 bytes.',
-      ),
-    confirmPassword: z.string(),
-  })
-  .strict()
-  .refine((d) => d.newPassword === d.confirmPassword, 'Passwords do not match.')
-  .refine(
-    (d) => d.newPassword !== d.currentPassword,
-    'Choose a different password.',
-  );
-export async function changePassword(pool, userId, raw) {
-  const d = passwordSchema.parse(raw);
-  const [[old]] = await pool.execute(
-    "SELECT password_hash FROM user_account WHERE user_id=? AND status='Active'",
-    [userId],
-  );
-  if (!old || !(await bcrypt.compare(d.currentPassword, old.password_hash)))
-    throw new AppError('Current password is incorrect.', 400);
-  const next = await bcrypt.hash(d.newPassword, 12);
-  const [result] = await pool.execute(
-    "UPDATE user_account SET password_hash=? WHERE user_id=? AND password_hash=? AND status='Active'",
-    [next, userId, old.password_hash],
-  );
-  if (!result.affectedRows)
-    throw new AppError(
-      'Your password changed elsewhere. Please sign in again.',
-      409,
-    );
-  return { success: true };
-}
 export function registerTechnicianPages(router, pool) {
   registerTechnicianPhotos(router,pool);
   router.post(
@@ -349,7 +311,8 @@ export function registerTechnicianPages(router, pool) {
     rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }),
     async (req, res) => {
       await changePassword(pool, req.technicianUser.id, req.body);
-      res.json({ success: true });
+      await invalidateAccountSessions(req, req.technicianUser.id);
+      res.clearCookie('coolcare.sid').json({ success: true, signInRequired: true });
     },
   );
 }

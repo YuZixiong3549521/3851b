@@ -15,6 +15,7 @@ import { assertTeamCapacity,lockServiceDates,bookingServiceSlot } from './schedu
 import {bookingConfirmationDeadline,assertBookingNotExpired} from './order-expiry.mjs';
 import { acceptStaffInvitation,validateStaffInvitation } from './staff-invitations.mjs';
 import { rebookAnnualVisit } from './customer/annual-rebooking.mjs';
+import { changePassword, credentialFingerprint, invalidateAccountSessions } from './account-password.mjs';
 
 export const offers = [
  ['Air Conditioning Cleaning',65,45],['Regular Maintenance',85,55],
@@ -116,12 +117,21 @@ export function createPublicRouter(pool){
   const valid=await bcrypt.compare(d.password,row?.password_hash||'$2a$10$ttwWVXZBWjxwxQUWgS.fj.X0q3rUNeqCWeyeCNbXNKUBZeHEpR/B.');
   if(!row||!valid||row.status!=='Active')throw new AppError('Incorrect email or password.',401);
   await new Promise((resolve,reject)=>req.session.regenerate(e=>e?reject(e):resolve()));
-  req.session.portalUser={id:row.user_id};req.session.csrf=randomBytes(24).toString('hex');
+  req.session.portalUser={id:row.user_id};req.session.credentialFingerprint=credentialFingerprint(row.password_hash);req.session.csrf=randomBytes(24).toString('hex');
   req.session.cookie.maxAge=d.rememberMe?7*86400000:8*3600000;
   const user=await sessionUser(pool,req);if(user.role==='Admin')req.session.user={user_id:user.id,full_name:user.name,email:user.email};
   res.json({success:true,user,csrf:req.session.csrf});
  });
  r.post('/logout',(req,res,next)=>req.session.destroy(e=>e?next(e):res.clearCookie('coolcare.sid').json({success:true})));
+ r.post('/account/password',rateLimit({windowMs:15*60*1000,limit:10,standardHeaders:true,legacyHeaders:false}),async(req,res)=>{
+  const user=await sessionUser(pool,req);
+  const body=z.object({currentPassword:z.string(),newPassword:z.string(),confirmPassword:z.string(),expectedUserId:z.number().int().positive().optional()}).strict().parse(req.body);
+  if(body.expectedUserId!==undefined&&body.expectedUserId!==Number(user.id))throw new AppError('Your signed-in account changed. Reload before changing your password.',409);
+  const {expectedUserId,...passwords}=body;
+  await changePassword(pool,user.id,passwords);
+  await invalidateAccountSessions(req,user.id);
+  res.clearCookie('coolcare.sid').json({success:true,signInRequired:true,message:'Password changed. Sign in again with your new password.'});
+ });
  r.post('/staff-invitations/validate',limiter,async(req,res)=>res.json({success:true,invitation:await validateStaffInvitation(pool,req.body?.token)}));
  r.post('/staff-invitations/accept',limiter,async(req,res)=>res.json(await acceptStaffInvitation(pool,req,req.body)));
  r.get('/offers',async(_req,res)=>{const options=await getBookingOptions(pool);res.json({currency:'SGD',offers:[...options.services.map(service=>({name:service.name,base:service.basePrice,perUnit:service.additionalUnitPrice,serviceId:service.serviceId,code:service.code,pricingNote:service.pricingNote,durationMinutes:service.durationMinutes,durationPerUnit:Boolean(service.durationPerUnit),durationMinutesPerUnit:service.durationMinutesPerUnit,minimumDurationMinutes:service.minimumDurationMinutes})),...options.bundles.map(bundle=>({name:bundle.name,base:bundle.price,perUnit:bundle.additionalUnitPrice,packageId:bundle.packageId,serviceIds:bundle.serviceIds,includedVisits:bundle.includedVisits,includedUnits:bundle.includedUnits,code:bundle.code,pricingNote:bundle.pricingNote,propertyPrices:bundle.propertyPrices}))]});});

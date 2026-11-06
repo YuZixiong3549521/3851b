@@ -1,4 +1,5 @@
-// Explicit local testing opt-in; production always enforces appointment start timing.
+// Legacy local UI indicator. Early starts are allowed in all environments;
+// the checks below preserve schedule presence and the one-active-job rule.
 export function serviceTimingTestMode(env = process.env) {
   return env.SERVICE_TIMING_TEST_MODE === 'true' && env.NODE_ENV !== 'production';
 }

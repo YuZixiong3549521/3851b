@@ -56,9 +56,16 @@ trusting arbitrary client-supplied forwarding chains.
 
 If email is needed, configure the existing `MAIL_MODE`, `MAIL_FROM` and SMTP settings
 for a reachable SMTP service; the local Mailpit service is not a cloud mail server.
-Report signatures/photos under `.local/` need persistent storage. On App Service
-ensure the app runs under persistent `/home` storage (including App Service storage
-for custom containers); back up runtime media separately from deployments.
+Report signatures/photos use `/home/coolcare-data/` automatically on App Service,
+outside the replaced deployment directory. `COOLCARE_DATA_DIR` can select another
+absolute private persistent directory; local development still uses `.local/`.
+At API startup existing ordinary media files in `.local/service-photos` and
+`.local/report-signatures` are copied without overwriting or deleting originals.
+Conflicting files stop startup for investigation. No public static media route is
+added: existing authenticated ownership checks continue to protect every image.
+Ensure persistent `/home` storage is enabled (including App Service storage for
+custom containers) and back up runtime media separately from deployments. This
+setting cannot be verified from GitHub alone; the Azure operator must confirm it.
 
 ## Verify
 
@@ -94,3 +101,27 @@ needed, use a MySQL administrative client on the same database while application
 writes are paused, and import the generated SQL file. Existing matching IDs must
 not have been recreated. Media files are retained; only their selected database
 references are removed. No application credentials are included in this backup.
+## Rotating exposed presentation passwords
+
+Remove public shortcuts and rotate the actual database passwords separately.
+After deploying the current API, use `node scripts/rotate-account-passwords.mjs`
+from `coolcare/` with `--origin=https://your-site` and
+`--input=C:/absolute/private-accounts.json`. The private input contains an
+`accounts` array with `email`, `currentPassword` and `expectedRole` per account.
+The default is a local validation plan; add `--apply` to perform the changes.
+Never commit this file or paste passwords into chat or Actions output.
+
+The tool saves generated passwords to an ignored, access-restricted local
+manifest before making changes. Keep that manifest; it is the recovery record.
+If interrupted, use the same input and `--resume=C:/absolute/manifest.json --apply`.
+Resume verifies the saved credential first instead of blindly repeating a change.
+The tool verifies the account identity and role and checks the new login. It does
+not print passwords or cookies, follow redirects, or change business records.
+
+`POST /api/public/account/password` accepts `currentPassword`, `newPassword`,
+`confirmPassword`, and optional `expectedUserId`. It requires an authenticated
+session and CSRF token, verifies the current password, and changes only the
+signed-in account. Success returns `{ success: true, signInRequired: true }` and
+revokes that account's sessions. Passwords are bcrypt-hashed; per-request
+credential checks also invalidate sessions on another running API instance.
+The technician profile uses the same password rules and signs out after success.

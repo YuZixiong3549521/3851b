@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { CalendarCheck, LockKeyhole, UserRound } from 'lucide-react';
 import { technicianRequest } from '../services/jobService.js';
+import { LOGIN_PATH, notifySessionChange } from '@/lib/portal-session.mjs';
 export default function Profile({ onChanged }) {
   const [profile, setProfile] = useState(null),
     [form, setForm] = useState(null),
@@ -86,9 +87,9 @@ export default function Profile({ onChanged }) {
         newPassword: '',
         confirmPassword: '',
       });
-      setNotice(
-        'Password changed successfully. Use your new password next time you sign in.',
-      );
+      notifySessionChange('signed-out');
+      window.dispatchEvent(new Event('coolcare:signed-out'));
+      window.location.replace(LOGIN_PATH);
     } catch (e) {
       setPasswordError(e.message);
     } finally {
@@ -333,7 +334,7 @@ export default function Profile({ onChanged }) {
         <DialogContent>
           <DialogTitle>Change password</DialogTitle>
           <DialogDescription>
-            Enter your current password and choose a new password of at least 8
+            Changing your password signs you out on all devices. Enter your current password and choose a new password of at least 8
             characters.
           </DialogDescription>
           <form onSubmit={savePassword} className="portal-form">

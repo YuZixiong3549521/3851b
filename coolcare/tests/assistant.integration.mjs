@@ -5,6 +5,7 @@ import mysql from 'mysql2/promise';
 import {createApp} from '../server/app.mjs';
 import {annualVisitSchedule} from '../server/customer/annual-bookings.mjs';
 import {addCalendarDays,minimumBookingDate,nextWeekday} from '../server/customer/booking-schedule.mjs';
+import {adjustReward} from '../server/commerce.mjs';
 
 const pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),user:process.env.DB_USER,
   password:process.env.DB_PASSWORD,database:process.env.DB_NAME,dateStrings:true,decimalNumbers:true,connectionLimit:4});
@@ -79,7 +80,7 @@ async function fixture(work) {
     return {client,account,user:client.user,customerId:context.customer.customerId};
   }
   await start();
-  try {await work({connection,hooks,newClient,customer,restart});}
+  try {await work({connection,db,hooks,newClient,customer,restart});}
   finally {await new Promise(resolve=>server.close(resolve));await connection.rollback();connection.release();}
 }
 
@@ -342,4 +343,38 @@ test('assistant reset and confirmation races preserve the winning request and ar
   assert.equal((await client.request(`${prefix}/draft`)).data.state.draftId,newDraft.data.state.draftId,'receipt recovery does not replace the newer current draft');
   const [[active]]=await connection.execute('SELECT COUNT(*) AS n FROM assistant_booking_draft WHERE current_customer_id=?',[customerId]);assert.equal(active.n,1);
   assert.deepEqual(await recordCounts(connection,customerId),{bookings:1,series:0,addresses:1,units:2,emails:0});
+}));
+
+test('assistant receipt recovery keeps the submission immutable while refreshing cancelled status and returned points',async()=>fixture(async({connection,db,customer})=>{
+  const {client,customerId}=await customer();
+  const [[actor]]=await connection.execute('SELECT user_id FROM admin_profile LIMIT 1');
+  await adjustReward(db,actor.user_id,customerId,{points:200,reason:'Isolated assistant receipt regression',requestId:randomUUID()});
+  const draft=await selectedDraft(client,{rewardPoints:100});
+  const reviewed=await review(client,await save(client,draft));
+  const input=confirmInput(client,reviewed);
+  const confirmed=await client.request(`${prefix}/confirm`,'POST',input);
+  assert.equal(confirmed.status,200,JSON.stringify(confirmed.data));
+  const original=confirmed.data.booking;
+  const id=original.bookingId;
+  assert.equal(confirmed.data.state.currentBooking.status,'Submitted');
+  assert.equal(confirmed.data.state.currentBooking.rewardReservation.status,'Reserved');
+  const cancel=await client.request(`/api/customer/bookings/${id}/status`,'PATCH',{status:'Cancelled'});
+  assert.equal(cancel.status,200,JSON.stringify(cancel.data));
+  const fresh=(await client.request(`${prefix}/draft`)).data.state;
+  assert.equal(fresh.currentBooking.status,'Cancelled');
+  assert.deepEqual(fresh.currentBooking.rewardReservation,{bookingId:id,points:100,discount:5,status:'Released'});
+  assert.deepEqual(fresh.booking,original,'the original request receipt is not rewritten by a later cancellation');
+  const [[stored]]=await connection.execute('SELECT booking_receipt FROM assistant_booking_draft WHERE draft_id=?',[fresh.draftId]);
+  assert.deepEqual(json(stored.booking_receipt),original);
+  const reset=await client.request(`${prefix}/new`,'POST',identity(client.user,fresh));
+  assert.equal(reset.status,200);
+  const replay=await client.request(`${prefix}/confirm`,'POST',input);
+  assert.equal(replay.status,200);
+  assert.deepEqual(replay.data.booking,original);
+  assert.equal(replay.data.state.currentBooking.status,'Cancelled');
+  assert.equal(replay.data.state.currentBooking.rewardReservation.status,'Released');
+  const other=await customer('Other receipt customer');
+  const foreign=await other.client.request(`${prefix}/confirm`,'POST',{...input,expectedUserId:other.user.id});
+  assert.equal(foreign.status,409);
+  assert.equal(foreign.data.state,null,'a different customer cannot read the archived receipt or live reward status');
 }));

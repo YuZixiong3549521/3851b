@@ -201,6 +201,28 @@ test('reports expose actual inventory usage without inferred duration or public 
   if(photo)await assert.rejects(getOwnedReportPhoto(db,user.id,existing.bookingId,photo.photoId),error=>error.status===404);
 }));
 
+test('report appointment snapshots and actual service times remain distinct for historical and rescheduled visits',async()=>fixture(async(db,c)=>{
+  const [[existing]]=await c.execute(`SELECT b.booking_id AS bookingId,c.user_id AS userId,sr.report_id AS reportId
+    FROM service_report sr JOIN work_order w ON COALESCE(sr.job_id,sr.archived_job_id)=w.job_id
+    JOIN booking b ON b.booking_id=w.booking_id JOIN customer c ON c.customer_id=b.customer_id
+    WHERE sr.submitted_time IS NOT NULL ORDER BY sr.report_id DESC LIMIT 1`);
+  assert.ok(existing);
+  await c.execute("UPDATE service_report SET visit_service_date='2026-04-01',visit_start_time='09:00:00',started_at='2026-04-02 09:15:00',completed_at='2026-04-02 10:00:00' WHERE report_id=?",[existing.reportId]);
+  const report=await getBookingReport(db,existing.bookingId,existing.userId);
+  assert.equal(report.serviceDate,'2026-04-01');
+  assert.equal(report.timeSlot,'09:00');
+  assert.equal(report.startedAt,'2026-04-02T09:15:00+08:00');
+  assert.equal(report.completedAt,'2026-04-02T10:00:00+08:00');
+  assert.equal(report.durationMinutes,45);
+  assert.ok(report.bookingDate);
+  await c.execute('UPDATE service_report SET visit_service_date=NULL,visit_start_time=NULL WHERE report_id=?',[existing.reportId]);
+  const historical=await getBookingReport(db,existing.bookingId,existing.userId);
+  assert.equal(historical.serviceDate,'','do not invent a historical appointment from the current booking');
+  assert.equal(historical.timeSlot,'');
+  assert.equal(historical.startedAt,report.startedAt);
+  assert.equal(historical.bookingDate,report.bookingDate);
+},{privileged:true}));
+
 test('authenticated report image HTTP serves private dot-directory bytes only to the owning customer',async()=>fixture(async(db,c)=>{
   const [[owned]]=await c.execute(`SELECT b.booking_id AS bookingId,w.job_id AS jobId
     FROM service_report r JOIN work_order w ON w.job_id=r.job_id JOIN booking b ON b.booking_id=w.booking_id

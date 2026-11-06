@@ -3,8 +3,10 @@ import { createApp } from './app.mjs';
 import { startBookingEmailWorker } from './booking-email.mjs';
 import { expireSubmittedBookings } from './order-expiry.mjs';
 import { productionConfig } from './production-config.mjs';
+import { prepareRuntimeStorage } from './runtime-storage.mjs';
 const production = process.env.NODE_ENV === 'production';
 if (production) productionConfig();
+await prepareRuntimeStorage();
 if (process.env.DB_SSL !== undefined && !['true', 'false'].includes(process.env.DB_SSL))
   throw new Error('DB_SSL must be true or false.');
 const pool = mysql.createPool({

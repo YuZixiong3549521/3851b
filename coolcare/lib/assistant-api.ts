@@ -47,6 +47,8 @@ export type AssistantState = {
   draft: AssistantDraft;
   quote: AssistantQuote | null;
   booking: AssistantReceipt | null;
+  // Live state is separate from the immutable confirmation receipt.
+  currentBooking?: { status: string; rewardReservation: AssistantReceipt['rewardReservation'] } | null;
   updatedAt: string;
 };
 export type AssistantConflict = { visitNumber: number; preferredDate: string; message: string };

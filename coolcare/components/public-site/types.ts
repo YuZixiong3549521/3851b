@@ -1,6 +1,6 @@
 import type { AnnualBundle } from '@/lib/coolcare-types';
 
-export type PageRoute = 'home' | 'login' | 'register' | 'bookings';
+export type PageRoute = 'home' | 'login' | 'register' | 'bookings' | 'terms' | 'privacy';
 
 export interface BookingPrefillOptions {
   propertyType?: string;

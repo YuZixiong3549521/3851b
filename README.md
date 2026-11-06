@@ -15,7 +15,7 @@ npm start
 
 打开 http://localhost:3000/ 。以后可在 Docker Desktop 运行后双击 `启动整合网站.cmd`。`npm run db:down` 仅停止数据库，保留数据卷。
 
-课堂测试需要提前开始服务时，在本机 `coolcare/.env.local` 设置 `SERVICE_TIMING_TEST_MODE=true`，然后重新运行 `npm start`。技师工单和报告页会显示英文 Test mode 提示，可以在预约日期或时间之前 Start service、End service 和提交报告。操作仍写入本地数据库并正常处理积分；预约日期不变，开始与结束时间记录实际操作时间。工单归属、状态顺序和每名技师只能同时进行一单的限制继续有效。设置为 `false` 并重启可恢复预约时间限制；未设置时默认关闭，`NODE_ENV=production` 时始终关闭。此本机配置不提交 GitHub，组员需要各自开启。自动测试默认保留严格时间规则，另有测试覆盖提前开工模式。
+当前课堂演示允许负责技师在预约日期之前 Start service；本机和线上行为一致，不需要时间开关。预约日期保持不变，开始与结束时间记录实际操作时间。工单归属、状态顺序和每名技师只能同时进行一单的限制继续有效。提前完成的服务在报表中使用 Actual completion date 查看；新预约的 14 天提前期仍然保留。
 
 新电脑只需要当前仓库中的文件，不需要旧 ZIP、旧项目目录或 Git LFS。`coolcare/` 包含两端前端源码、共享组件、Node API、数据库结构和迁移；根目录保留统一启动脚本、团队约定及 Postman 工作区。
 
@@ -45,11 +45,7 @@ My Rewards 在预订时立即记录 Points reserved，在取消、拒绝、过�
 | 管理员年度套餐管理 | `/admin/plans` |
 | 技师自己的表现记录 | `/technician/index.html#performance` |
 
-已有测试账号共用密码 `CoolCareDemo2026!`：
-
-- 客户：`alice.tan@coolcare.demo`
-- 技师：`chris.lim@coolcare.demo`
-- Owner 管理员：`norshida@coolcare.demo`
+公开登录页不再提供 Demo 快捷登录或自动填入账号密码。演示账号由项目负责人私下提供；已公开过的线上密码应更换，新密码只保存到本机忽略跟踪的私密文件，不写入代码、文档或聊天。测试套件使用独立的本机数据库，不能对线上数据库执行。
 
 主页登录后按账号角色进入对应区域；客户可通过页头 Dashboard 进入原客户中心。公开注册始终只创建 Customer。Admin 和 Technician 使用 48 小时有效的一次性邀请链接激活账号；Owner 可邀请 Admin，Owner 或 Admin 可邀请 Technician。旧 SQLite 导入账号保留原有 bcrypt 密码，不覆盖同邮箱现有账号。
 
@@ -98,7 +94,7 @@ node scripts/import-accare.mjs "C:/path/to/ac-care.db"
 
 ## 范围说明
 
-原页面的 Google / Apple 登录及邮件找回密码没有配置外部提供商，界面会明确提示不可用。预约通知已接入邮件队列，本机默认由 Mailpit 测试邮箱接收；这与找回密码是不同功能。首页已移除未实现的促销和示例评价，价格卡片读取当前数据库目录。
+登录页已移除未配置的 Google / Apple 登录；忘记密码入口打开账号帮助并提供真实客服邮箱链接，不显示不会发送邮件的 Send Link 操作。注册页提供可阅读的 Terms of Service 和 Privacy Policy（也可通过 `/#/terms`、`/#/privacy` 访问），明确课程演示用途与数据使用范围，密码提示与八位最小长度校验一致。预约通知已接入邮件队列，本机默认由 Mailpit 测试邮箱接收；这与账号找回是不同功能。首页价格卡片读取当前数据库目录。
 
 Admin Console 已提供订单审核、自动派单、员工邀请和库存管理；Technician 工单只能按顺序推进状态。服务端会话目前存放内存，重启后需要重新登录。
 
@@ -166,7 +162,7 @@ npm start
 
 `.gitignore` 排除本机凭据、依赖、生成文件、IDE 缓存及旧上传参考目录。原上传文件可从历史提交查阅，不再占据当前分支的项目列表。同步更新使用 `git pull --ff-only origin main`，首次运行按上方安装步骤准备本机环境。
 
-公开部署前需要配置持久化会话、HTTPS、邮件及可选 OAuth 服务；当前服务只面向本机运行。
+Azure 部署和运行配置见 [AZURE-DEPLOYMENT.md](coolcare/AZURE-DEPLOYMENT.md)。当前会话保存在内存，重启会退出登录；外部邮件、自动找回密码及社交登录不属于本次演示范围。完整演示步骤及限制见 [PRESENTATION-CHECKLIST.md](coolcare/PRESENTATION-CHECKLIST.md)。
 
 Technician parts issuing supports up to 30 distinct part rows with separate quantities and descriptions. `POST /api/technician/jobs/:jobId/stock-out-batch` accepts `{ request_id, items }`; all stock changes are committed together or rolled back, with idempotent retries. The existing single-part endpoint remains supported.
 

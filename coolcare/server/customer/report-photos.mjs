@@ -1,12 +1,12 @@
 import { realpath,stat } from 'node:fs/promises';
 import { resolve,relative,isAbsolute,extname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { privateMediaDirectory } from '../runtime-storage.mjs';
 import { getDemoCustomer } from './customer.mjs';
 import { HttpError } from './errors.mjs';
 
 // Private local originals, never mounted as public static assets. The database
 // stores filenames (or legacy uploads/ paths); remote URLs are never fetched.
-export const reportPhotoDirectory=fileURLToPath(new URL('../../.local/service-photos/',import.meta.url));
+export const reportPhotoDirectory=privateMediaDirectory('service-photos');
 const imageExtensions=new Set(['.jpg','.jpeg','.png','.webp','.gif']);
 export async function resolveReportPhoto(storedPath) {
   if(typeof storedPath!=='string'||/[\0?#]/.test(storedPath)||storedPath.includes(':')||storedPath.includes('\\'))return null;

@@ -12,6 +12,7 @@ import { rateLimit } from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { credentialFingerprint, verifySessionCredential } from './account-password.mjs';
 import {
   AppError,
   idSchema,
@@ -193,6 +194,7 @@ export function createApp({
       },
     }),
   );
+  app.use('/api', verifySessionCredential(pool));
   app.get('/api/health', async (req, res) => {
     try {
       await pool.query('SELECT 1 FROM inventory_web_operation LIMIT 1');
@@ -287,6 +289,7 @@ export function createApp({
         access_level: user.access_level,
       };
       req.session.portalUser = { id: user.user_id };
+      req.session.credentialFingerprint = credentialFingerprint(user.password_hash);
       req.session.csrf = randomBytes(24).toString('hex');
       res.json({ user: req.session.user, csrf: req.session.csrf });
     },

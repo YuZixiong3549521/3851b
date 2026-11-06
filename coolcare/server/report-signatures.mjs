@@ -1,14 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile, unlink, realpath } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { privateMediaDirectory } from './runtime-storage.mjs';
 import { join, relative, isAbsolute } from 'node:path';
 import sharp from 'sharp';
 import { z } from 'zod';
 import { AppError } from './inventory.mjs';
 import { sessionUser } from './public-site.mjs';
-export const signatureDirectory = fileURLToPath(
-  new URL('../.local/report-signatures/', import.meta.url),
-);
+export const signatureDirectory = privateMediaDirectory('report-signatures');
 export const signaturePrefix = '/api/report-signatures/';
 export const signatureId = (url) =>
   typeof url === 'string' &&

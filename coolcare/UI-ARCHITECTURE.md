@@ -1,5 +1,29 @@
 # Shared UI and application architecture
 
+## Presentation readiness
+
+Public sign-in uses email/password only. Demo credential filling and unconfigured
+social buttons are removed. Account help opens the support email application and
+does not claim to send reset mail. Shared Terms/Privacy content is available at
+`/#/terms` and `/#/privacy`; registration opens the same documents in a dialog
+without losing entered answers. All new copy stays in English.
+
+The assistant separates unchecked, loading, failed and available time choices,
+offers retries, and prevents edits during review/confirmation. Symptoms preserve
+combined services; replacing an annual selection requires an explicit choice.
+Closing with unsaved work offers Close for now while retaining in-memory answers;
+uncertain confirmations retain their request identity. Receipt restoration keeps
+the original submission immutable and displays current order/reward status
+separately. Discarding saved answers requires confirmation. It remains a guided
+booking assistant without a history-query feature or external AI dependency.
+
+Customer reports distinguish the immutable scheduled visit snapshot from actual
+recorded start/completion times (explicit Singapore offsets). Missing historical
+snapshots are labelled, never replaced with the current booking appointment. The
+current appointment is shown separately when useful. Report photos/signatures
+remain private and use the runtime media directory documented in AZURE-DEPLOYMENT.
+
+
 ## Admin follow-up and reporting improvements
 
 Order search defaults to the current queue/status. Explicit `scope=all` searches

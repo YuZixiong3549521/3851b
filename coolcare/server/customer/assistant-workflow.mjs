@@ -47,7 +47,7 @@ function parseInput(schema,input,user) {
 function stateView(row,userId) {
   if(!row)return null;
   return {draftId:row.draft_id,userId:Number(userId),revision:row.revision,status:row.draft_status,requestId:row.request_id,
-    draft:readJson(row.draft_data),quote:readJson(row.reviewed_quote),booking:readJson(row.booking_receipt),updatedAt:row.updated_at_iso};
+    draft:readJson(row.draft_data),quote:readJson(row.reviewed_quote),booking:readJson(row.booking_receipt),currentBooking:row.current_booking??null,updatedAt:row.updated_at_iso};
 }
 
 // Enrich legacy saved receipts on read, without rewriting their immutable payloads.
@@ -60,14 +60,21 @@ async function receiptReferences(connection, row) {
     .filter(id => Number.isSafeInteger(id) && id > 0);
   if (!ids.length) return row;
   const [bookings] = await connection.execute(
-    `SELECT booking_id AS bookingId,created_at AS createdAt FROM booking WHERE customer_id=? AND booking_id IN (${ids.map(() => '?').join(',')})`,
+    `SELECT b.booking_id AS bookingId,b.created_at AS createdAt,b.booking_status AS status,
+      r.points,r.discount_amount AS discount,r.status AS rewardStatus
+      FROM booking b LEFT JOIN reward_reservation r ON r.booking_id=b.booking_id
+      WHERE b.customer_id=? AND b.booking_id IN (${ids.map(() => '?').join(',')})`,
     [row.customer_id, ...ids],
   );
   const references = new Map(bookings.map(b => [b.bookingId, bookingReference(b.bookingId, b.createdAt)]));
   const booking = { ...receipt, bookingReference: references.get(bookingId) ?? 'Reference unavailable' };
   if (receipt.annualBundle) booking.annualBundle = { ...receipt.annualBundle,
     visits: visits.map(v => ({ ...v, bookingReference: references.get(v.bookingId) ?? 'Reference unavailable' })) };
-  return { ...row, booking_receipt: booking };
+  const current = bookings.find(item => Number(item.bookingId) === Number(bookingId));
+  return { ...row, booking_receipt: booking, current_booking: current ? {
+    status: current.status,
+    rewardReservation: current.rewardStatus ? { bookingId: Number(current.bookingId), points: Number(current.points), discount: Number(current.discount), status: current.rewardStatus } : null,
+  } : null };
 }
 
 async function currentRow(connection,customerId) {

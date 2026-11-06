@@ -3,6 +3,8 @@ import { SiteIcon } from '@/components/ui/site-icon';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { PolicyDocument, type PolicyKind } from './PolicyPage';
 import { apiFetch as fetch } from '../api';
 import React, { useState } from 'react';
 import { PageRoute, User } from '../types';
@@ -23,6 +25,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigate, onRegist
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [policy, setPolicy] = useState<PolicyKind | null>(null);
 
   const handleBackToHome = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -277,7 +280,9 @@ const handleSubmit = async (e: React.FormEvent) => {
                     id="reg-password"
                     type={showPassword ? 'text' : 'password'}
                     required
-                    placeholder="At least 6 chars"
+                    placeholder="At least 8 characters"
+                    minLength={8}
+                    autoComplete="new-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full pl-10 pr-10 py-2.5 rounded-lg border border-ac-outline-variant bg-ac-surface-container-lowest text-ac-on-surface focus:outline-none focus:border-ac-primary focus:ring-2 focus:ring-ac-primary/20 text-sm transition-all"
@@ -327,8 +332,8 @@ const handleSubmit = async (e: React.FormEvent) => {
                 />
                 <span className="text-xs text-ac-on-surface-variant leading-normal">
                   I agree to CoolCare's{' '}
-                  <span className="text-ac-primary font-medium underline">Terms of Service</span> and{' '}
-                  <span className="text-ac-primary font-medium underline">Privacy Policy</span>, and consent to service notification SMS/emails.
+                  <a href="/#/terms" onClick={event => { event.preventDefault(); setPolicy('terms'); }} className="text-ac-primary font-medium underline underline-offset-2">Terms of Service</a> and{' '}
+                  <a href="/#/privacy" onClick={event => { event.preventDefault(); setPolicy('privacy'); }} className="text-ac-primary font-medium underline underline-offset-2">Privacy Policy</a>.
                 </span>
               </label>
             </div>
@@ -387,6 +392,13 @@ const handleSubmit = async (e: React.FormEvent) => {
           </div>
         </div>
       </div>
+      {policy && <Dialog open onOpenChange={open => { if (!open) setPolicy(null); }}>
+        <DialogContent className="ac-site max-h-[85dvh] overflow-y-auto bg-ac-surface p-6 sm:max-w-2xl sm:p-8" aria-describedby={undefined}>
+          <DialogTitle className="pr-8 text-xl font-bold text-ac-on-background">{policy === 'terms' ? 'Terms of Service' : 'Privacy Policy'}</DialogTitle>
+          <PolicyDocument kind={policy} />
+          <Button variant="outline" onClick={() => setPolicy(null)}>Return to registration</Button>
+        </DialogContent>
+      </Dialog>}
     </div>
   );
 };

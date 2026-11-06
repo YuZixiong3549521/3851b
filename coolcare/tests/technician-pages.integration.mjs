@@ -608,10 +608,19 @@ test('technicians cannot schedule return visits directly',()=>fixture(async(db,c
 }));
 
 test('technician repair quotes are audited without customer approval, and require own repair job and CSRF',()=>fixture(async(db,c,a)=>{
- const [[work]]=await c.execute('SELECT booking_id FROM work_order WHERE job_id=?',[a.jobId]);
+ // A completed fixture may already have an immutable completion/reward snapshot.
+ // Create a fresh in-progress repair instead of pretending that settled work is
+ // editable by changing only its work-order status. All rows roll back below.
+ const [[source]]=await c.execute(`SELECT b.customer_id,b.address_id,b.preferred_service_date,b.preferred_time_slot,b.slot_start,b.slot_end,
+   w.appointment_date,w.appointment_time,a.technician_id,a.assigned_by_admin_id
+   FROM work_order w JOIN booking b ON b.booking_id=w.booking_id JOIN assignment a ON a.assignment_id=w.assignment_id WHERE w.job_id=?`,[a.jobId]);
  const [[repair]]=await c.execute("SELECT service_id FROM simple_service_catalog WHERE code='repair'");
- await c.execute("UPDATE work_order SET current_status='In Progress' WHERE job_id=?",[a.jobId]);
- await c.execute('UPDATE booking SET service_id=? WHERE booking_id=?',[repair.service_id,work.booking_id]);
+ const [booking]=await c.execute(`INSERT INTO booking(customer_id,address_id,service_id,preferred_service_date,preferred_time_slot,slot_start,slot_end,booking_status,total_amount)
+   VALUES (?,?,?,?,?,?,?,'In Progress',50)`,[source.customer_id,source.address_id,repair.service_id,source.preferred_service_date,source.preferred_time_slot,source.slot_start,source.slot_end]);
+ const [assignment]=await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Accepted')",[booking.insertId,source.technician_id,source.assigned_by_admin_id]);
+ await c.execute('INSERT INTO assignment_member(assignment_id,technician_id) VALUES (?,?)',[assignment.insertId,source.technician_id]);
+ const [job]=await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status) VALUES (?,?,?,?,'In Progress')",[booking.insertId,assignment.insertId,source.appointment_date,source.appointment_time]);
+ a.jobId=job.insertId;
  let progress=await getServiceProgress(db,a.jobId);
  const input={requestId:randomUUID(),expectedVersion:progress.version,action:'repair-quote',amount:85.5,notes:'Replacement capacitor and repair labour.'};
  await updateServiceProgress(db,a.userId,a.jobId,input);assert.equal((await updateServiceProgress(db,a.userId,a.jobId,input)).replayed,true);
@@ -633,6 +642,7 @@ test('technician repair quotes are audited without customer approval, and requir
   const response=await request(path,'PATCH',changed);assert.equal(response.status,200);assert.equal((await getServiceProgress(db,a.jobId)).additionalRepairFee,95);
   assert.equal((await request('/api/technician/jobs/4294967295/service-progress','PATCH',changed)).status,404);
   await c.execute("UPDATE work_order SET current_status='Completed' WHERE job_id=?",[a.jobId]);
+  await c.execute("UPDATE booking SET booking_status='Completed' WHERE booking_id=?",[booking.insertId]);
   const completedProgress=await getServiceProgress(db,a.jobId);
   assert.equal((await request(path,'PATCH',{...changed,requestId:randomUUID(),expectedVersion:completedProgress.version,amount:120})).status,409);
   assert.equal((await getServiceProgress(db,a.jobId)).additionalRepairFee,95);
