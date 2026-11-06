@@ -64,3 +64,22 @@ Local development is unchanged from the repository root: `npm start`. Inside
 `coolcare/`, use `npm run start:local`. To run production locally, first build and
 provide the same environment variables, then run root `npm run start:production`;
 use an HTTPS reverse proxy with the configured origin for secure browser sessions.
+
+## Remove the optional 2026-11-04 DEMO order batch
+
+This maintenance task is never run by startup, migration or deployment. From the
+deployed application directory, `node scripts/cleanup-demo-orders.mjs` previews only.
+The explicitly requested `--apply` removes exactly 300 orders belonging to exactly
+60 customers whose numbered DEMO names and `customerN@cc-demo-20261104.invalid`
+emails both match. Accounts and other orders remain. It refuses a different batch
+size, unknown/cyclic/shared dependencies, triggers, or stock/payment/reward/annual
+visit records that require additional reconciliation. It never disables foreign keys.
+
+Before deletion it writes a private, parent-first SQL restore backup under
+`/home/demo-order-backups/`. Deletes run in one transaction and compare all retained
+booking rows before committing. A failed check rolls back the entire operation.
+Keep this backup private; it contains the removed business data. If restoration is
+needed, use a MySQL administrative client on the same database while application
+writes are paused, and import the generated SQL file. Existing matching IDs must
+not have been recreated. Media files are retained; only their selected database
+references are removed. No application credentials are included in this backup.
