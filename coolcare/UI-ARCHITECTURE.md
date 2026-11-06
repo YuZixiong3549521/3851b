@@ -2,8 +2,11 @@
 
 ## Presentation readiness
 
-Public sign-in uses email/password only. Demo credential filling and unconfigured
-social buttons are removed. Account help opens the support email application and
+Public sign-in uses email/password. Three Demo Fast Sign-In buttons fill the
+Customer, Technician and Admin demo email addresses and focus the password field.
+Passwords remain manually entered; users click Sign In and pass the normal API authentication and role checks.
+The buttons are disabled during a pending login. Unconfigured social buttons remain
+removed. Account help opens the support email application and
 does not claim to send reset mail. Shared Terms/Privacy content is available at
 `/#/terms` and `/#/privacy`; registration opens the same documents in a dialog
 without losing entered answers. All new copy stays in English.

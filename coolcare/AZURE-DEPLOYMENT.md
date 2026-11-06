@@ -103,7 +103,9 @@ not have been recreated. Media files are retained; only their selected database
 references are removed. No application credentials are included in this backup.
 ## Rotating exposed presentation passwords
 
-Remove public shortcuts and rotate the actual database passwords separately.
+The presentation login page includes three email-only demo shortcuts; passwords
+are entered manually and are not embedded in the page. Changing their actual
+database passwords is a separate, explicitly run maintenance action.
 After deploying the current API, use `node scripts/rotate-account-passwords.mjs`
 from `coolcare/` with `--origin=https://your-site` and
 `--input=C:/absolute/private-accounts.json`. The private input contains an

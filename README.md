@@ -45,7 +45,7 @@ My Rewards 在预订时立即记录 Points reserved，在取消、拒绝、过�
 | 管理员年度套餐管理 | `/admin/plans` |
 | 技师自己的表现记录 | `/technician/index.html#performance` |
 
-公开登录页不再提供 Demo 快捷登录或自动填入账号密码。演示账号由项目负责人私下提供；已公开过的线上密码应更换，新密码只保存到本机忽略跟踪的私密文件，不写入代码、文档或聊天。测试套件使用独立的本机数据库，不能对线上数据库执行。
+登录页提供 Alice Tan（Customer）、Chris Lim（Technician）和 Norshida（Admin）三个课堂演示快捷按钮，填入对应演示账号邮箱并聚焦密码框。手动输入密码后点击 Sign In，通过正常后端密码校验、会话和角色检查。快捷按钮不会公开密码、创建账号或修改数据库密码。账号凭据与密码轮换记录保持私密。测试套件使用独立的本机数据库，不能对线上数据库执行。
 
 主页登录后按账号角色进入对应区域；客户可通过页头 Dashboard 进入原客户中心。公开注册始终只创建 Customer。Admin 和 Technician 使用 48 小时有效的一次性邀请链接激活账号；Owner 可邀请 Admin，Owner 或 Admin 可邀请 Technician。旧 SQLite 导入账号保留原有 bcrypt 密码，不覆盖同邮箱现有账号。
 

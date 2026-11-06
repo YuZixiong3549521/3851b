@@ -8,6 +8,12 @@ import { apiFetch as fetch, loginErrorMessage } from '../api';
 import React, { useState, useEffect } from 'react';
 import { PageRoute, User } from '../types';
 
+const demoAccounts = [
+  { label: 'Alice Tan (Customer)', email: 'alice.tan@coolcare.demo' },
+  { label: 'Chris Lim (Technician)', email: 'chris.lim@coolcare.demo' },
+  { label: 'Norshida (Admin)', email: 'norshida@coolcare.demo' },
+] as const;
+
 interface LoginPageProps {
   onNavigate: (page: PageRoute, hash?: string) => void;
   onLoginSuccess: (user: User) => void;
@@ -41,6 +47,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     e.preventDefault();
     if (onClearNotice) onClearNotice();
     onNavigate('home');
+  };
+
+  const handleQuickLogin = (demoEmail: string) => {
+    setEmail(demoEmail);
+    setShowPassword(false);
+    setErrorMessage('');
+    document.getElementById('login-password')?.focus();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -253,6 +266,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               )}
             </Button>
           </form>
+
+          <section aria-labelledby="demo-sign-in-heading" className="mt-6 border-t border-ac-outline-variant/30 pt-4">
+            <h2 id="demo-sign-in-heading" className="text-center text-sm font-medium text-ac-on-surface-variant">
+              Demo Fast Sign-In
+            </h2>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {demoAccounts.map((account, index) => (
+                <Button
+                  key={account.email}
+                  type="button"
+                  variant="outline"
+                  disabled={isLoading}
+                  aria-pressed={email === account.email}
+                  onClick={() => handleQuickLogin(account.email)}
+                  className={`min-h-11 w-full whitespace-normal rounded-lg border-ac-outline-variant/40 bg-ac-primary-fixed/30 px-3 py-3 text-xs font-semibold text-ac-primary hover:bg-ac-primary-fixed/60 ${index === 2 ? 'sm:col-span-2' : ''}`}
+                >
+                  {account.label}
+                </Button>
+              ))}
+            </div>
+            <p className="mt-3 text-center text-xs leading-5 text-ac-on-surface-variant">
+              Choose an account, enter its password, then click Sign In.
+            </p>
+          </section>
 
           {/* Link to Registration */}
           <div className="mt-6 text-center pt-4 border-t border-ac-outline-variant/30">
