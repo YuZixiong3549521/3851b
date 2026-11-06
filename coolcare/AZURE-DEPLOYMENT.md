@@ -6,6 +6,12 @@ and local runtime data. The deployed `coolcare/` directory is the application ro
 Its `npm start` runs the production launcher without `.env.local`, Docker, rebuilding,
 or a development server.
 
+Production workflow runs share a concurrency group. A new push waits for the active
+publish to finish instead of starting another OneDeploy upload against the same
+app (which can fail with HTTP 409). The active run is never cancelled; GitHub keeps
+the latest pending run if several newer pushes arrive. Avoid starting a separate
+manual Azure deployment while this workflow is publishing.
+
 ## App Service settings
 
 Use Node.js 22 LTS on Linux and startup command `npm start`. Enable HTTPS Only.

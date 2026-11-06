@@ -9,6 +9,12 @@ on:
       - 'main'
   workflow_dispatch:
 
+# One production publishing operation at a time. Never interrupt an active
+# OneDeploy upload when another team member pushes to main.
+concurrency:
+  group: coolcare-web-3851-production
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
