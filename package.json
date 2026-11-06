@@ -9,6 +9,7 @@
     "test": "npm --prefix coolcare test && npm --prefix coolcare/technician test",
     "db:up": "npm --prefix coolcare run db:up",
     "db:down": "npm --prefix coolcare run db:down",
-    "db:sample": "node coolcare/scripts/seed-realistic.mjs"
+    "db:sample": "node coolcare/scripts/seed-realistic.mjs",
+    "db:coursework": "node coolcare/scripts/import-coursework.mjs"
   }
 }

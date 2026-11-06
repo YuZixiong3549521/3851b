@@ -19,6 +19,7 @@
     "build:web": "vinext build",
     "db:up": "docker compose --env-file .env.local up -d --wait && node scripts/migrate-public.mjs",
     "db:sample": "node scripts/seed-realistic.mjs",
+    "db:coursework": "node scripts/import-coursework.mjs",
     "staff:bootstrap-owner": "node scripts/bootstrap-owner.mjs",
     "db:down": "docker compose --env-file .env.local down"
   },

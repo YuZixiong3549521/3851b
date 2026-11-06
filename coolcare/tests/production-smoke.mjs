@@ -57,11 +57,13 @@ test('built production app serves both portals/assets and same-origin API withou
     try {
       const response = await get(port, '/');
       if (process.env.DEBUG_SMOKE) console.log(`Smoke readiness status: ${response.status}`);
-      if (response.status === 200) { ready = true; break; }
+      // The gateway starts two independent children. The web process can serve
+      // HTML before the API has finished importing its modules (notably Windows).
+      if (response.status === 200 && (await get(port, '/api/session')).status === 200) { ready = true; break; }
     } catch (error) { if (process.env.DEBUG_SMOKE) console.log(`Smoke readiness: ${error.message}`); }
     await new Promise(done => setTimeout(done, 300));
   }
-  assert.ok(ready, `Production frontend did not become ready: ${log}`);
+  assert.ok(ready, `Production frontend/API did not become ready: ${log}`);
   for (const path of ['/', '/customer', '/admin/orders', '/technician/index.html']) {
     if (process.env.DEBUG_SMOKE) console.log(`Smoke checking ${path}`);
     const response = await get(port, path);

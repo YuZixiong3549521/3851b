@@ -8,7 +8,7 @@ import {getServiceProgress,updateServiceProgress} from '../server/service-progre
 import {updateTechnicianJobStatus,getTechnicianJobs} from '../server/technician.mjs';
 const pool=mysql.createPool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),user:process.env.DB_USER,password:process.env.DB_PASSWORD,database:process.env.DB_NAME,dateStrings:true,connectionLimit:4});
 after(()=>pool.end());
-test('start dates are enforced by the API, and simultaneous starts allow only one live visit per technician',async()=>{
+test('early and overdue appointments are startable, but completion needs a recorded start and simultaneous starts allow only one live visit',async()=>{
  const c=await openPrivilegedFixtureConnection(),bookings=[],jobs=[],assignments=[];
  let userId,technicianId;
  try {
@@ -26,16 +26,15 @@ test('start dates are enforced by the API, and simultaneous starts allow only on
   await c.commit();
   const input=()=>({requestId:randomUUID(),expectedStatus:'Assigned',status:'In Progress'});
   await c.execute('UPDATE work_order SET appointment_date=DATE_ADD(appointment_date,INTERVAL 1 DAY) WHERE job_id=?',[jobs[0]]);
-  await assert.rejects(updateTechnicianJobStatus(pool,userId,jobs[0],input()),e=>e.status===409&&/scheduled date/.test(e.message));
-  assert.equal((await getTechnicianJobs(pool,technicianId,jobs[0]))[0].canStart,false);
+  assert.equal((await getTechnicianJobs(pool,technicianId,jobs[0]))[0].canStart,true);
   await c.execute("UPDATE work_order SET current_status='In Progress' WHERE job_id=?",[jobs[0]]);
   await assert.rejects(updateTechnicianJobStatus(pool,userId,jobs[0],{requestId:randomUUID(),expectedStatus:'In Progress',status:'Completed'}),e=>e.status===409&&/no valid recorded start/.test(e.message));
   const futureDraft=await getReport(pool,userId,jobs[0]);assert.equal(futureDraft.canEdit,false);
-  await assert.rejects(saveReport(pool,userId,jobs[0],{requestId:randomUUID(),expectedVersion:futureDraft.version,report:{workPerformed:'Cannot complete a future visit',checklist:'Checks recorded',problemFound:'',solutionApplied:'',customerSignatureUrl:'',technicianSignatureUrl:''}}),e=>e.status===409&&/no valid recorded start/.test(e.message));
+  await assert.rejects(saveReport(pool,userId,jobs[0],{requestId:randomUUID(),expectedVersion:futureDraft.version,report:{workPerformed:'Cannot complete without a recorded actual start',checklist:'Checks recorded',problemFound:'',solutionApplied:'',customerSignatureUrl:'',technicianSignatureUrl:''}}),e=>e.status===409&&/no valid recorded start/.test(e.message));
   await c.execute("UPDATE work_order SET current_status='Assigned' WHERE job_id=?",[jobs[0]]);
   await c.execute('UPDATE work_order SET appointment_date=DATE_SUB(appointment_date,INTERVAL 2 DAY) WHERE job_id=?',[jobs[0]]);
-  await assert.rejects(updateTechnicianJobStatus(pool,userId,jobs[0],input()),e=>e.status===409&&/passed/.test(e.message));
-  await c.execute('UPDATE work_order SET appointment_date=DATE_ADD(appointment_date,INTERVAL 1 DAY) WHERE job_id=?',[jobs[0]]);
+  assert.equal((await getTechnicianJobs(pool,technicianId,jobs[0]))[0].canStart,true);
+  await c.execute('UPDATE work_order SET appointment_date=DATE_ADD(appointment_date,INTERVAL 1 DAY) WHERE job_id=?',[jobs[1]]);
   const requests=jobs.map(input);
   const results=await Promise.allSettled(jobs.map((id,i)=>updateTechnicianJobStatus(pool,userId,id,requests[i])));
   assert.equal(results.filter(r=>r.status==='fulfilled').length,1,JSON.stringify(results));
@@ -185,7 +184,7 @@ test('local timing test mode runs future visits through both completion paths wi
  }
 });
 
-test('production completes a recorded early-started visit through either path without reopening early starts or duplicating rewards',async()=>{
+test('production permits early starts and completes either path once while rejecting missing or future actual starts',async()=>{
  const c=await openPrivilegedFixtureConnection();
  const oldMode=process.env.SERVICE_TIMING_TEST_MODE,oldEnvironment=process.env.NODE_ENV;
  const executor={execute:c.execute.bind(c),query:c.query.bind(c),
@@ -194,7 +193,7 @@ test('production completes a recorded early-started visit through either path wi
   rollback:()=>c.query('ROLLBACK TO SAVEPOINT early_start_recovery'),release(){}};
  const db={...executor,getConnection:async()=>executor};
  try {
-  process.env.SERVICE_TIMING_TEST_MODE='true'; // Production must still reject new early starts.
+  process.env.SERVICE_TIMING_TEST_MODE='false'; // Early starts are now allowed without the local test-mode switch.
   process.env.NODE_ENV='production';
   await c.beginTransaction();
   const [[admin]]=await c.query('SELECT user_id FROM admin_profile LIMIT 1');
@@ -218,15 +217,19 @@ test('production completes a recorded early-started visit through either path wi
    const [a]=await c.execute("INSERT INTO assignment(booking_id,technician_id,assigned_by_admin_id,assignment_status) VALUES (?,?,?,'Assigned')",[b.insertId,technicians[i],admin.user_id]);
    const [w]=await c.execute("INSERT INTO work_order(booking_id,assignment_id,appointment_date,appointment_time,current_status) VALUES (?,?,?,'09:00:00','Assigned')",[b.insertId,a.insertId,dates.scheduledDate]);
    const job=w.insertId;jobs.push(job);
-   await assert.rejects(updateTechnicianJobStatus(db,owner,job,{requestId:randomUUID(),expectedStatus:'Assigned',status:'In Progress'}),e=>e.status===409&&/scheduled date/.test(e.message));
-   await c.execute("UPDATE work_order SET current_status='In Progress' WHERE job_id=?",[job]);
-   await c.execute("UPDATE booking SET booking_status='In Progress' WHERE booking_id=?",[b.insertId]);
+   assert.equal((await getTechnicianJobs(db,technicians[i],job))[0].canStart,true);
+   await updateTechnicianJobStatus(db,owner,job,{requestId:randomUUID(),expectedStatus:'Assigned',status:'In Progress'});
+   const [[started]]=await c.execute("SELECT started_at,visit_service_date FROM service_report WHERE job_id=?",[job]);
+   assert.ok(started.started_at);assert.equal(started.visit_service_date,dates.scheduledDate);
+   // Corrupt only this rollback fixture to preserve validation coverage: early
+   // appointments are allowed, but completion still needs a valid actual start.
+   await c.execute('UPDATE service_report SET started_at=NULL WHERE job_id=?',[job]);
    const end={requestId:randomUUID(),expectedStatus:'In Progress',status:'Completed'};
    await assert.rejects(updateTechnicianJobStatus(db,users[2-i],job,end),e=>e.status===404);
    await assert.rejects(updateTechnicianJobStatus(db,owner,job,end),e=>e.status===409&&/no valid recorded start/.test(e.message));
    let draft=await getReport(db,owner,job);assert.equal(draft.canEdit,false);
    await assert.rejects(saveReport(db,owner,job,{requestId:randomUUID(),expectedVersion:draft.version,report}),e=>e.status===409&&/no valid recorded start/.test(e.message));
-   await c.execute("INSERT INTO service_report(job_id,work_performed,started_at,visit_technician_id,visit_service_date,visit_start_time) VALUES (?,'',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 9 HOUR),?,?,'09:00:00')",[job,technicians[i],dates.scheduledDate]);
+   await c.execute("UPDATE service_report SET started_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 9 HOUR) WHERE job_id=?",[job]);
    await assert.rejects(updateTechnicianJobStatus(db,owner,job,end),e=>e.status===409&&/start is in the future/.test(e.message));
    draft=await getReport(db,owner,job);assert.equal(draft.canEdit,false);
    await assert.rejects(saveReport(db,owner,job,{requestId:randomUUID(),expectedVersion:draft.version,report}),e=>e.status===409&&/start is in the future/.test(e.message));

@@ -36,6 +36,11 @@ apply the existing reviewed database schema/migrations to that database before u
 The launcher does not seed, reset or migrate business data automatically. Existing
 local Docker setup/migration scripts remain local tools.
 
+To append coursework examples to an already populated hosted database, use the
+explicit preview/dry-run/apply steps in [COURSEWORK-DATA.md](COURSEWORK-DATA.md).
+This separate tool preserves existing records and records a replay-safe batch
+receipt. It is never invoked by GitHub deployment or the production launcher.
+
 Keep one App Service instance for the current in-memory session store. A restart
 signs users out. Multiple instances require a shared session store before scaling.
 The gateway trusts only the configured host and replaces forwarding headers; HTTPS

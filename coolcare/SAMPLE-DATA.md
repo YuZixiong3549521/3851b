@@ -1,5 +1,9 @@
 # Connected local sample data
 
+For append-only examples in an existing local or hosted database, use the separate
+[coursework importer](COURSEWORK-DATA.md). The replacement loader documented below
+is local-only and must not be used against Azure.
+
 These are **synthetic development scenarios**, not records of real customers or completed field work. They use Singapore-style addresses, equipment, service notes, prices from the current catalogue and connected booking, work-order, report and stock records. No personal database export is published in GitHub.
 
 ## Load on a new computer

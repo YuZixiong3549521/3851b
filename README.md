@@ -184,3 +184,5 @@ Run `npm run db:up` to apply migration 23; existing work orders/reports are reta
 ## Azure App Service
 
 Cloud startup and environment settings: [coolcare/AZURE-DEPLOYMENT.md](coolcare/AZURE-DEPLOYMENT.md). Root `npm start` still starts local development; the deployed coolcare directory uses `npm start` for production.
+
+线上补充课堂数据使用 [COURSEWORK-DATA.md](coolcare/COURSEWORK-DATA.md) 中的一次性追加工具：保留原数据，新增 50 笔完整关联的模拟订单，同一批次重复执行不会重复导入。GitHub 自动部署只上传程序，不会执行该工具或同步本机数据库；由 Azure 操作者在部署后明确执行预览、试运行和导入。
