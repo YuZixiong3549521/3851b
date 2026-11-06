@@ -19,20 +19,28 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Node.js version
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '22.x'
       - name: Install dependencies and build
         working-directory: ./coolcare
         run: |
-          npm ci
-          npm install --prefix technician --include=dev
+          npm ci --include=dev
+          npm ci --prefix technician --include=dev
+          npm test
+          npm test --prefix technician
           npm run build
+          node --test tests/production-smoke.mjs
+      - name: Package production application
+        working-directory: ./coolcare
+        run: |
+          mkdir -p ../deploy
+          tar --exclude='./.env' --exclude='./.env.*' --exclude='./.local' --exclude='./.git' --exclude='./technician/node_modules' --exclude='./node_modules/.cache' -czf ../deploy/app.tar.gz .
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: ./coolcare
+          path: ./deploy/app.tar.gz
 
   deploy:
     runs-on: ubuntu-latest
@@ -46,7 +54,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
-      
+      - name: Extract production application
+        run: |
+          mkdir app
+          tar -xzf app.tar.gz -C app
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -60,5 +72,6 @@ jobs:
         with:
           app-name: 'coolcare-web-3851'
           slot-name: 'Production'
-          package: .
-          
+          package: ./app
+          startup-command: 'npm start'
+

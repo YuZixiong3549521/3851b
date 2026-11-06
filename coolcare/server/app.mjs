@@ -142,12 +142,14 @@ export function createApp({
   secret,
   origin = 'http://localhost:3000',
   threshold = 15,
+  production = false,
 }) {
   if (!secret || secret.length < 32)
-    throw new Error('Set a strong local SESSION_SECRET.');
+    throw new Error('Set SESSION_SECRET to at least 32 characters.');
   const localHosts = ['localhost', '127.0.0.1', '[::1]'];
   const trustedOrigins = new Set([origin]);
   const configuredOrigin = new URL(origin);
+  const allowedHosts = production ? [configuredOrigin.hostname] : localHosts;
   // These names reach the same local website. Keep its protocol and port exact;
   // do not trust arbitrary localhost ports, remote origins or request headers.
   if (localHosts.includes(configuredOrigin.hostname)) {
@@ -158,10 +160,12 @@ export function createApp({
     }
   }
   const app = express();
+  // Only the loopback gateway can supply proxy protocol information.
+  if (production) app.set('trust proxy', 'loopback');
   app.disable('x-powered-by');
   app.use((req, res, next) => {
-    if (!localHosts.includes(req.hostname))
-      return res.status(403).json({ error: 'Only localhost is allowed.' });
+    if (!allowedHosts.includes(req.hostname))
+      return res.status(403).json({ error: production ? 'Untrusted request host.' : 'Only localhost is allowed.' });
     res.set({
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
@@ -174,7 +178,7 @@ export function createApp({
   app.use('/api/technician/reports/:jobId/signatures/:signer', express.json({limit:'3mb'}));
   app.use('/api/technician/reports/:jobId/photos',express.json({limit:'8mb'}));
   app.use(express.json({ limit: '64kb' }));
-  // Memory sessions are intentional for this local-only edition. Restart => sign in again.
+  // In-memory sessions: use one App Service instance; restart requires signing in again.
   app.use(
     session({
       name: 'coolcare.sid',
@@ -184,7 +188,7 @@ export function createApp({
       cookie: {
         httpOnly: true,
         sameSite: 'strict',
-        secure: false,
+        secure: production,
         maxAge: 8 * 60 * 60 * 1000,
       },
     }),

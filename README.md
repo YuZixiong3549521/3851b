@@ -180,3 +180,7 @@ Run the normal `npm run db:up` to apply migrations 19–22. They preserve existi
 
 ## Return visit approval workflow
 Run `npm run db:up` to apply migration 23; existing work orders/reports are retained. Technicians request a return during In Progress, which closes that visit and places the original booking in Awaiting return arrangement (not History). Admin Orders has a Return visits queue: approve and notify the customer, or ask for a new time. The customer receives an in-app notice and chooses a weekday at least 14 calendar days ahead (Singapore time) in My Bookings. Slot capacity is checked on selection and again on admin confirmation. Admin confirms and selects an available technician; overlapping work is rejected. The same work order becomes Return visit, then Start service makes it In Progress. End service completes it; another return requirement can repeat the process. Technician self-scheduling APIs are rejected. Retained visit snapshots and service event history remain attached to the same report. Notifications are in-app; this workflow does not send an external email.
+
+## Azure App Service
+
+Cloud startup and environment settings: [coolcare/AZURE-DEPLOYMENT.md](coolcare/AZURE-DEPLOYMENT.md). Root `npm start` still starts local development; the deployed coolcare directory uses `npm start` for production.
