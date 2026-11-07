@@ -191,17 +191,24 @@ This navigation update passed 56 main unit tests, 4 technician tests, 52 real-My
 
 ## Customer assistant
 
-Every authenticated customer page exposes **CoolCare Assistant** below Booking History in the sidebar, or **Assistant** as the fifth mobile navigation item. `CoolCareShell` mounts one assistant instance after session verification; both navigation buttons open the same dialog without navigating away or resetting the underlying page. The Dashboard banner retains only Book a service. This is a button-guided React assistant, with no external AI provider or API key, reusing the shared dialog, buttons and fields. Closing keeps the existing unsaved-work warning and returns focus to the visible navigation trigger.
+Every authenticated customer page exposes a small circular **Open chat assistant** button at the bottom right. It replaces the sidebar and mobile Assistant entries; the mobile navigation has four items. The floating button sits above mobile navigation and moves higher on Book Service to avoid its fixed Back/Continue bar. It is hidden on printed service reports. `CoolCareShell` mounts one assistant after session verification, and closing returns focus to the floating trigger while preserving the existing unsaved-work warning. Guests and other roles do not get this customer launcher.
 
 `AssistantFaqChat` adds a compact, blue-branded conversation pane, anchored at the
 bottom right on desktop and fitted to the phone viewport. **Chat & FAQs** has user
-and assistant bubbles, four quick replies and a labelled native dropdown with twelve
-grouped questions and an Ask button. `lib/assistant-faq.ts` supplies curated answers;
+and assistant bubbles, a primary text composer, four quick replies and a collapsible
+Common questions dropdown with twelve grouped questions. Enter sends a message;
+Shift+Enter adds a line, and IME composition does not send prematurely. Messages are
+limited to 500 characters and rendered as text. `lib/assistant-intents.ts` matches
+keywords and short questions to the curated answers in `lib/assistant-faq.ts`;
+English and supported Chinese keywords receive English answers. Ambiguous questions
+offer topic choices, and unsupported requests receive guidance rather than invented
+facts. Typing a booking request only offers the existing booking flow and never
+creates, changes or cancels an order. No external AI service or key is required;
 price answers use the server catalogue loaded for the session and explain that review
 rechecks prices. Topics include service choices, repair extras, scheduling, changes,
 annual visits, points, confirmation and support. Email answers distinguish queued
 notifications from delivery, and support links open the customer's email application.
-There is no simulated free-text AI input or booking-history lookup.
+This is service-specific keyword assistance, not a general-purpose AI or booking-history lookup.
 
 The FAQ and **Booking** panes remain mounted when switching views, preserving draft
 fields and an unfinished new-address form. Questions never invoke draft mutations.
@@ -333,7 +340,7 @@ offer; migration 34 stores accepted offers. The 100-point bonus is granted once
 on the renewed plan's first completed quarterly order, separately from normal
 service earnings. See OPTIONAL-FEATURE-PLANS.md for eligibility and concurrency.
 
-Customer pages `/customer/plans`, `/customer/rewards` and `/customer/feedback` use `CoolCareShell`. Desktop navigation, the account menu and dashboard links expose these pages without expanding the five-item mobile bottom bar. My Plans reuses the existing booking detail/change flow and opens `/customer/book?renewPlan=<seriesId>` for a reviewed renewal; all prefill loading completes before the booking form becomes interactive.
+Customer pages `/customer/plans`, `/customer/rewards` and `/customer/feedback` use `CoolCareShell`. Desktop navigation, the account menu and dashboard links expose these pages without expanding the four-item mobile bottom bar. The assistant uses its separate floating chat button. My Plans reuses the existing booking detail/change flow and opens `/customer/book?renewPlan=<seriesId>` for a reviewed renewal; all prefill loading completes before the booking form becomes interactive.
 
 Admin routes `/admin/reports`, `/admin/rewards` and `/admin/performance` use `InventoryApp` and its shared navigation. The former `/admin/payments` page redirects to rewards management. Reporting uses the existing Recharts dependency and includes accessible tables and CSV output for completed service value and reward discounts. These amounts do not represent money received. Payment forms, receipt/refund APIs and collection totals are no longer part of the active application.
 
@@ -417,7 +424,8 @@ Feature contracts and configurable rules are documented in [COMMERCE-REWARDS.md]
 
 Run the documented unit, database, TypeScript and both-frontend build checks, then
 inspect affected routes on desktop and a narrow viewport. For the assistant, ask a
-dropdown question, start/resume a booking, switch panes during new-address editing,
+typed keyword, an ambiguous question and a dropdown question; check Enter/Shift+Enter,
+the floating trigger and focus return, then start/resume a booking and switch panes during new-address editing,
 and confirm draft values and close/retry warnings survive. For reports, compare chart
 tables/CSV under scheduled and actual-completion modes, zero-data periods, a plan with
 two completed/two awaiting visits, repeated customers and edited/missing ratings.

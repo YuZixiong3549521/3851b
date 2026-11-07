@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {BookingNotifications} from '@/components/booking-notifications';
 import { useState, useEffect, useId, useRef } from 'react';
 import { usePathname } from 'next/navigation';
-import { CalendarDays, ClipboardCheck, Gauge, Gift, History, MessageCircle, Package, Snowflake, Sparkles, Star } from 'lucide-react';
+import { CalendarDays, ClipboardCheck, Gauge, Gift, History, MessageCircleMore, Package, Snowflake, Sparkles, Star } from 'lucide-react';
 import { CustomerAssistant } from '@/components/customer-assistant';
 import { Button } from '@/components/ui/button';
 import { PortalAccountMenu } from '@/components/portal-account-menu';
@@ -31,8 +31,7 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
   const ready = sessionReady && Boolean(user);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const assistantDialogId = useId();
-  const desktopAssistantTrigger = useRef<HTMLButtonElement>(null);
-  const mobileAssistantTrigger = useRef<HTMLButtonElement>(null);
+  const assistantTrigger = useRef<HTMLButtonElement>(null);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60_000);
@@ -64,10 +63,6 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
               </Link>
             );
           })}
-          <Button ref={desktopAssistantTrigger} type="button" variant="ghost" disabled={!ready} aria-haspopup="dialog" aria-expanded={assistantOpen} aria-controls={assistantOpen ? assistantDialogId : undefined} onClick={() => setAssistantOpen(true)} className="h-auto min-h-12 w-full justify-start gap-3 rounded-xl px-4 text-sm font-semibold text-muted-foreground hover:bg-muted hover:text-foreground">
-            <MessageCircle className="size-5" aria-hidden="true" />
-            CoolCare Assistant
-          </Button>
         </nav>
         <div className="mt-auto rounded-2xl bg-[linear-gradient(145deg,#eff5ff,#ecfffb)] p-5">
           <div className="mb-3 grid size-9 place-items-center rounded-xl bg-white text-secondary shadow-sm"><Sparkles className="size-5" aria-hidden="true" /></div>
@@ -76,7 +71,7 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="customer-shell-main pb-24 lg:ml-[280px] lg:pb-10">
+      <main className="customer-shell-main pb-40 lg:ml-[280px] lg:pb-24">
         <header className="customer-shell-navigation sticky top-0 z-20 flex h-[76px] items-center justify-between border-b border-border/80 bg-white/90 px-5 backdrop-blur-xl sm:px-8 lg:px-10">
           <div className="lg:hidden"><Brand compact /></div>
           <p className="hidden text-sm font-medium text-muted-foreground lg:block">{today}</p>
@@ -86,7 +81,7 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
         {ready ? children : !sessionError ? <div className="mx-auto max-w-5xl p-5 sm:p-8"><PageLoading /></div> : null}
       </main>
 
-      <nav aria-label="Mobile navigation" className="customer-shell-navigation fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-border bg-white/95 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl lg:hidden">
+      <nav aria-label="Mobile navigation" className="customer-shell-navigation fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-border bg-white/95 px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl lg:hidden">
         {navItems.map(({ shortLabel, href, icon: Icon }) => {
           const active = isActive(href);
           return (
@@ -96,13 +91,12 @@ export function CoolCareShell({ children }: { children: ReactNode }) {
             </Link>
           );
         })}
-        <Button ref={mobileAssistantTrigger} type="button" variant="ghost" disabled={!ready} aria-haspopup="dialog" aria-expanded={assistantOpen} aria-controls={assistantOpen ? assistantDialogId : undefined} onClick={() => setAssistantOpen(true)} className="h-auto min-h-14 flex-col gap-1 rounded-xl px-0 py-0 text-[11px] font-semibold text-muted-foreground">
-          <MessageCircle className="size-5" aria-hidden="true" />
-          <span>Assistant</span>
-        </Button>
       </nav>
+      {ready && <Button ref={assistantTrigger} type="button" size="icon" title="Chat with CoolCare" aria-label="Open chat assistant" aria-haspopup="dialog" aria-expanded={assistantOpen} aria-controls={assistantOpen ? assistantDialogId : undefined} onClick={() => setAssistantOpen(true)} className={`customer-shell-navigation fixed right-4 z-40 size-14 rounded-full border-2 border-background shadow-lg transition-transform hover:scale-105 motion-reduce:transform-none lg:right-6 lg:bottom-6 ${pathname === '/customer/book' ? 'bottom-[calc(152px+env(safe-area-inset-bottom))]' : 'bottom-[calc(88px+env(safe-area-inset-bottom))]'}`}>
+        <MessageCircleMore className="size-7" aria-hidden="true" />
+      </Button>}
       {ready && <BookingNotifications key={user?.id} enabled={!assistantOpen} />}
-      {ready && <CustomerAssistant open={assistantOpen} onOpenChange={setAssistantOpen} dialogId={assistantDialogId} returnFocus={() => desktopAssistantTrigger.current?.getClientRects().length ? desktopAssistantTrigger.current : mobileAssistantTrigger.current} onBookingCreated={notifyCustomerUpdate} />}
+      {ready && <CustomerAssistant open={assistantOpen} onOpenChange={setAssistantOpen} dialogId={assistantDialogId} returnFocus={() => assistantTrigger.current} onBookingCreated={notifyCustomerUpdate} />}
     </div>
   );
 }
