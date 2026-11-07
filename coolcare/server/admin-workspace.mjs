@@ -1,5 +1,7 @@
 import {memberSql} from './teams.mjs';
-import { withBookingReference, parseBookingSearch } from './booking-reference.mjs';
+import { withBookingReference } from './booking-reference.mjs';
+import { listAdminAudit } from './admin-audit.mjs';
+export { listAdminAudit } from './admin-audit.mjs';
 import { assertAdminOrderEditable, assignedRescheduleCondition } from './admin-order-policy.mjs';
 import { listAdminAnnualPlans } from './customer/plans.mjs';
 import { reviewOverdueCondition } from './admin-queue-filters.mjs';
@@ -263,59 +265,6 @@ export async function getBookingPlanner(pool, bookingId, query) {
   return { week: start, days, requiredTechnicians };
 }
 
-const auditQuery = z.object({
-  page: z.coerce.number().int().min(1).max(100000).default(1),
-  bookingId: z.union([z.string(), z.number()]).transform(value => parseBookingSearch(value)).refine(Boolean, 'Enter a valid booking reference or ID.').optional(),
-  action: z
-    .enum([
-      '',
-      'Dispatch',
-      'Redispatch',
-      'Reject',
-      'Reschedule',
-      'Edit rejection',
-      'Edit travel plan',
-      'Queue for dispatch',
-      'Retry customer email',
-      'Approve',
-    ])
-    .default(''),
-});
-export async function listAdminAudit(pool, query) {
-  const data = auditQuery.parse(query),
-    where = [],
-    values = [];
-  if (data.bookingId) {
-    where.push('o.booking_id=?');
-    values.push(data.bookingId.id);
-    if (data.bookingId.year !== null) {
-      where.push('YEAR(b.created_at)=?');
-      values.push(data.bookingId.year);
-    }
-  }
-  if (data.action) {
-    where.push('o.operation_type=?');
-    values.push(data.action);
-  }
-  const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
-  const [[{ total }]] = await pool.execute(
-    `SELECT COUNT(*) AS total FROM booking_admin_operation o JOIN booking b ON b.booking_id=o.booking_id${clause}`,
-    values,
-  );
-  const page = Math.min(data.page, Math.max(1, Math.ceil(Number(total) / 25)));
-  const [rows] = await pool.execute(
-    `SELECT o.request_id AS requestId,o.booking_id AS bookingId,b.created_at AS bookingCreatedAt,o.operation_type AS action,UNIX_TIMESTAMP(o.created_at) AS createdAtEpoch,u.full_name AS actor
-    FROM booking_admin_operation o JOIN booking b ON b.booking_id=o.booking_id JOIN user_account u ON u.user_id=o.actor_user_id${clause} ORDER BY o.created_at DESC,o.request_id DESC LIMIT 25 OFFSET ?`,
-    [...values, (page - 1) * 25],
-  );
-  return {
-    rows:rows.map(({createdAtEpoch,...row})=>withBookingReference({
-      ...row,createdAt:new Date(Number(createdAtEpoch)*1000).toISOString(),
-    })),
-    total:Number(total),page,pageSize:25,
-  };
-}
-
 export const csvCell = (value) =>
   '"' +
   String(value ?? '')
@@ -385,14 +334,21 @@ export function registerAdminWorkspaceRoutes(router, pool) {
   router.get('/audit/export', async (req, res) => {
     if (req.adminUser.accessLevel !== 'Owner')
       throw new AppError('Only the Owner can export operation logs.', 403);
-    const result = await listAdminAudit(pool, req.query);
+    const result = await listAdminAudit(pool, req.query, { exportAll: true });
     const csv = [
-      ['Time (UTC)', 'Admin', 'Booking', 'Action', 'Request ID'],
+      ['Time (UTC)', 'Time (SGT)', 'Admin', 'Current role', 'Current access level', 'Customer', 'Customer email', 'Booking', 'Category', 'Action', 'Recorded outcome', 'Request ID'],
       ...result.rows.map((row) => [
         row.createdAt,
+        new Date(new Date(row.createdAt).getTime() + 8 * 3600000).toISOString().slice(0, 19).replace('T', ' ') + ' SGT',
         row.actor,
+        row.actorRole,
+        row.actorAccessLevel,
+        row.customerName,
+        row.customerEmail,
         row.bookingReference,
+        row.category,
         row.action,
+        row.outcome.map(item => `${item.label}: ${item.value}`).join(' | '),
         row.requestId,
       ]),
     ]
@@ -401,7 +357,7 @@ export function registerAdminWorkspaceRoutes(router, pool) {
     res
       .set(
         'Content-Disposition',
-        `attachment; filename="admin-operations-page-${result.page}.csv"`,
+        'attachment; filename="admin-operations-filtered.csv"',
       )
       .type('text/csv')
       .send('\uFEFF' + csv);

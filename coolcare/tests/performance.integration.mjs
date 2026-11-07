@@ -112,6 +112,35 @@ async function fixture(fn) {
   }
 }
 
+test('rating trends use current feedback by completed visit date, preserve scope and allow multi-year comparisons', () =>
+  fixture(async (db, c, a) => {
+    await a.complete();
+    await c.execute("UPDATE performance_visit SET actual_end='2025-12-31 23:55:00' WHERE report_id=?", [a.reportId]);
+    const rating = { requestId: randomUUID(), expectedVersion: 0, stars: 4, comment: 'Historical completed visit feedback.' };
+    await writePerformance(db, a.customer, a.reportId, 'Customer feedback', rating);
+    const range = { from: '2023-01-01', to: '2026-12-31', reportId: a.reportId };
+    const first = await listPerformance(db, a.admin, range);
+    const trend = first.ratingTrends.find(row => row.technicianId === a.technicianId);
+    assert.equal(trend.count, 1);
+    assert.equal(trend.average, 4);
+    assert.equal(trend.periods.month.find(row => row.period === '2025-12').count, 1);
+    assert.equal(trend.periods.quarter.find(row => row.period === '2025-Q4').average, 4);
+    assert.equal(trend.periods.year.find(row => row.period === '2026').average, null);
+    await writePerformance(db, a.customer, a.reportId, 'Customer feedback', { ...rating, requestId: randomUUID(), expectedVersion: 1, stars: 2 });
+    const updated = await listPerformance(db, a.technician, range);
+    assert.equal(updated.ratingTrends.length, 1);
+    assert.equal(updated.ratingTrends[0].technicianId, a.technicianId);
+    assert.equal(updated.ratingTrends[0].count, 1);
+    assert.equal(updated.ratingTrends[0].average, 2);
+    assert.equal(updated.ratingTrends[0].periods.year.find(row => row.period === '2025').negative, 1);
+    assert.deepEqual((await listPerformance(db, { id: 4294967295, role: 'Technician' }, range)).ratingTrends, []);
+    assert.deepEqual((await listPerformance(db, a.technician, { ...range, technicianId: 4294967295 })).ratingTrends, []);
+    const customer = await listPerformance(db, a.customer, { reportId: a.reportId });
+    assert.equal('ratingTrends' in customer, false);
+    await assert.rejects(listPerformance(db, a.admin, { from: '2020-01-01', to: '2026-01-01' }), error => error.status === 400);
+    await assert.rejects(listPerformance(db, a.customer, range), error => error.status === 400);
+  }));
+
 test('performance captures real visit start/end and ownership, with independent feedback and admin quality audits', () =>
   fixture(async (db, c, a) => {
     const feedback = {
@@ -449,6 +478,14 @@ test('reassignment and return visit never move a previous report score onto a ne
       [a.reportId, active.reportId],
     );
     assert.equal(count.n, 2);
+    const originalTrend = await listPerformance(db, a.technician, { ...a.filter, reportId: a.reportId });
+    assert.equal(originalTrend.ratingTrends[0].technicianId, a.technicianId);
+    assert.equal(originalTrend.ratingTrends[0].average, 4);
+    const replacementUser = { id: other.userId, role: 'Technician' };
+    assert.deepEqual((await listPerformance(db, replacementUser, { ...a.filter, reportId: a.reportId })).ratingTrends, []);
+    const returnTrend = await listPerformance(db, replacementUser, { ...a.filter, reportId: active.reportId });
+    assert.equal(returnTrend.ratingTrends[0].technicianId, other.id);
+    assert.equal(returnTrend.ratingTrends[0].average, 5);
   }));
 
 test('legacy closing visits keep missing schedule unknown; settings update atomically with versions and audit', () =>

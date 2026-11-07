@@ -7,6 +7,8 @@ import { readBookingAmounts } from './booking-amounts.mjs';
 import { buildReportAnalytics, classifyReportService, groupServicePeriods } from './report-periods.mjs';
 import { listAdminAnnualPlans } from './customer/plans.mjs';
 import { recordPlanReminder } from './admin-plan-reminders.mjs';
+import { reportAudience } from './report-audience.mjs';
+import { memberSql } from './teams.mjs';
 
 const terminal = new Set(['Cancelled', 'Rejected', 'Expired']);
 const money = z.coerce.number().finite().positive().max(9999999.99).refine(v => Math.abs(v * 100 - Math.round(v * 100)) < 0.000001, 'Use at most two decimal places.');
@@ -304,9 +306,10 @@ function bookingFilter(filters, alias = 'b') {
   if (filters.serviceId) { clauses.push(`(${alias}.service_id=? OR EXISTS(SELECT 1 FROM booking_service bs WHERE bs.booking_id=${alias}.booking_id AND bs.service_id=?))`); values.push(filters.serviceId, filters.serviceId); }
   if (filters.serviceGroup === 'annual') clauses.push(`EXISTS(SELECT 1 FROM annual_booking_visit av WHERE av.booking_id=${alias}.booking_id)`);
   if (filters.technicianId) {
-    clauses.push(`(EXISTS(SELECT 1 FROM assignment fa WHERE fa.booking_id=${alias}.booking_id AND fa.technician_id=? AND fa.assignment_status NOT IN ('Cancelled','Reassigned','Declined'))
-      OR EXISTS(SELECT 1 FROM performance_visit fv JOIN work_order fw ON fw.job_id=fv.job_id WHERE fw.booking_id=${alias}.booking_id AND fv.technician_id=?))`);
-    values.push(filters.technicianId, filters.technicianId);
+    clauses.push(`(EXISTS(SELECT 1 FROM assignment fa WHERE fa.booking_id=${alias}.booking_id AND ${memberSql('fa', '?')} AND fa.assignment_status NOT IN ('Cancelled','Reassigned','Declined'))
+      OR EXISTS(SELECT 1 FROM performance_visit fv JOIN work_order fw ON fw.job_id=fv.job_id WHERE fw.booking_id=${alias}.booking_id
+        AND (fv.technician_id=? OR EXISTS(SELECT 1 FROM visit_member fvm WHERE fvm.report_id=fv.report_id AND fvm.technician_id=?))))`);
+    values.push(filters.technicianId, filters.technicianId, filters.technicianId, filters.technicianId);
   }
   return { sql: clauses.length ? ' AND ' + clauses.join(' AND ') : '', values };
 }
@@ -318,7 +321,7 @@ export async function commerceReport(pool, raw) {
     (SELECT DATE(MAX(v.ended_at)) FROM service_visit_record v JOIN work_order vw ON vw.job_id=v.job_id WHERE vw.booking_id=b.booking_id AND v.outcome='Completed'))`;
   const reportDate = filters.dateBasis === 'completed' ? completedDate : 'b.preferred_service_date';
   const completedOnly = filters.dateBasis === 'completed' ? " AND b.booking_status='Completed'" : '';
-  const [orderRows] = await pool.execute(`SELECT b.booking_id AS bookingId,b.created_at AS bookingCreatedAt,b.booking_status AS status,${reportDate} AS serviceDate,
+  const [orderRows] = await pool.execute(`SELECT b.booking_id AS bookingId,b.customer_id AS customerId,b.created_at AS bookingCreatedAt,b.booking_status AS status,${reportDate} AS serviceDate,
     b.preferred_service_date AS scheduledDate,${completedDate} AS completedDate,
     (SELECT av.series_id FROM annual_booking_visit av WHERE av.booking_id=b.booking_id) AS seriesId,
     EXISTS(SELECT 1 FROM annual_booking_visit av WHERE av.booking_id=b.booking_id) AS isAnnual,
@@ -330,13 +333,13 @@ export async function commerceReport(pool, raw) {
     COALESCE((SELECT bp.package_name FROM booking_package bp WHERE bp.booking_id=b.booking_id),
       (SELECT GROUP_CONCAT(bs.service_name ORDER BY bs.service_id SEPARATOR ', ') FROM booking_service bs WHERE bs.booking_id=b.booking_id),s.service_name) AS serviceName,
     COALESCE((SELECT SUM(p.additional_repair_fee) FROM work_order w JOIN assignment a ON a.assignment_id=w.assignment_id JOIN service_progress p ON p.job_id=w.job_id WHERE w.booking_id=b.booking_id AND a.assignment_status NOT IN ('Cancelled','Reassigned','Declined')),0) AS additionalFee,
-    (SELECT COUNT(*) FROM service_visit_record v JOIN work_order w ON w.job_id=v.job_id WHERE w.booking_id=b.booking_id AND v.outcome='Return required'${filters.technicianId ? ' AND v.technician_id=?' : ''}) AS returns,
+    (SELECT COUNT(*) FROM service_visit_record v JOIN work_order w ON w.job_id=v.job_id WHERE w.booking_id=b.booking_id AND v.outcome='Return required'${filters.technicianId ? ' AND (v.technician_id=? OR EXISTS(SELECT 1 FROM visit_member rvm WHERE rvm.report_id=v.report_id AND rvm.technician_id=?))' : ''}) AS returns,
     (SELECT COUNT(*) FROM service_report r JOIN work_order w ON w.job_id=COALESCE(r.job_id,r.archived_job_id)
       JOIN assignment va ON va.assignment_id=w.assignment_id LEFT JOIN performance_visit pv ON pv.report_id=r.report_id
-      WHERE w.booking_id=b.booking_id AND r.started_at IS NOT NULL${filters.technicianId ? ' AND pv.technician_id=?' : ''}) AS visits
+      WHERE w.booking_id=b.booking_id AND r.started_at IS NOT NULL${filters.technicianId ? ' AND (pv.technician_id=? OR EXISTS(SELECT 1 FROM visit_member svm WHERE svm.report_id=r.report_id AND svm.technician_id=?))' : ''}) AS visits
     FROM booking b JOIN service_catalog s ON s.service_id=b.service_id LEFT JOIN booking_completion_reward done ON done.booking_id=b.booking_id
     LEFT JOIN reward_reservation r ON r.booking_id=b.booking_id
-    WHERE ${reportDate} BETWEEN ? AND ?${completedOnly}${f.sql} ORDER BY serviceDate,b.booking_id`, [...(filters.technicianId ? [filters.technicianId, filters.technicianId] : []), filters.from, filters.to, ...f.values]);
+    WHERE ${reportDate} BETWEEN ? AND ?${completedOnly}${f.sql} ORDER BY serviceDate,b.booking_id`, [...(filters.technicianId ? Array(4).fill(filters.technicianId) : []), filters.from, filters.to, ...f.values]);
   const orders = orderRows.map(withBookingReference);
   const [parts] = await pool.execute(`SELECT p.part_id AS partId,p.part_name AS name,p.stock_unit AS unit,
     SUM(IF(i.transaction_type='Stock Out',i.quantity,0)) AS issued,SUM(IF(i.transaction_type='Return',i.quantity,0)) AS returned
@@ -373,11 +376,12 @@ export async function commerceReport(pool, raw) {
   }
   const dailyService = [...daily.values()].map(r => ({ ...r, serviceAmount: r.serviceAmount / 100, rewardDiscounts: r.rewardDiscounts / 100, netServiceAmount: r.netServiceAmount / 100 }));
   const completedRows = mapped.filter(o => o.status === 'Completed');
+  const audience = await reportAudience(pool, mapped, filters);
   return { filters, summary: { unknownCompletionDates: Number(missingDates.count), orders: total, completed, cancelled, returnOrders, visits: orders.reduce((s, o) => s + number(o.visits), 0), completionRate: total ? Math.round(completed / total * 1000) / 10 : 0, cancellationRate: total ? Math.round(cancelled / total * 1000) / 10 : 0, returnRate: total ? Math.round(returnOrders / total * 1000) / 10 : 0,
     completedServiceAmount: completedRows.reduce((sum, o) => sum + dollars(o.serviceAmount), 0) / 100,
     rewardDiscounts: completedRows.reduce((sum, o) => sum + dollars(o.rewardDiscount), 0) / 100,
     completedNetServiceAmount: completedRows.reduce((sum, o) => sum + dollars(o.netServiceAmount), 0) / 100,
-    unknownCompletedPrices: completedRows.filter(o => o.serviceAmount === null).length }, orders: mapped, dailyService, periodService: groupServicePeriods(dailyService, filters.groupBy), analytics: buildReportAnalytics(mapped, filters), parts, bundles, services, technicians };
+    unknownCompletedPrices: completedRows.filter(o => o.serviceAmount === null).length }, orders: mapped, dailyService, periodService: groupServicePeriods(dailyService, filters.groupBy), analytics: buildReportAnalytics(mapped, filters), audience, parts, bundles, services, technicians };
 }
 function reportCsv(data) {
   return safeCsv([
@@ -396,6 +400,18 @@ function reportCsv(data) {
     ...data.analytics.periods.map(r => [r.period, r.services.cleaning, r.services.repair, r.services.combined, r.services.annual, r.services.other]),
     [], ['Annual bundle period', 'Quarterly visits', 'Completed', 'Active', 'Closed without completion', 'Other status'],
     ...data.analytics.periods.map(r => [r.period, r.annual.visits, r.annual.completed, r.annual.active, r.annual.closed, r.annual.other]),
+    [], ['Completion comparison period', 'Completed', 'Not completed (includes cancelled/rejected/expired)'],
+    ...data.analytics.periods.map(r => [r.period, r.completed, r.orders - r.completed]),
+    [], ['Customer period', 'New registrations (all customers)', 'Distinct customers in selected orders'],
+    ...data.audience.periods.map(r => [r.period, r.newCustomers, r.bookingCustomers]),
+    ['Distinct customers across selected range', data.audience.customers.withBookings],
+    [], ['Feedback receipt period (SGT)', 'Positive (4-5 stars)', 'Neutral (3 stars)', 'Negative (1-2 stars)'],
+    ...data.audience.periods.map(r => [r.period, r.positive, r.neutral, r.negative]),
+    ['Feedback totals', data.audience.reviews.total, 'Legacy dates use latest saved feedback timestamp', data.audience.reviews.fallbackDates],
+    [], ['Annual plan (whole plan; at least one visit matches filters)', 'Customer', 'Address', 'Entitlements', 'Recorded visits', 'Completed visits', 'Open visits (awaiting or in progress)', 'Closed without completion', 'Visits matching report'],
+    ...data.audience.annualPlans.map(p => [p.seriesId,p.customerName,p.address,p.totalVisits,p.recordedVisits,p.completed,p.awaiting,p.closed,p.selectedVisits]),
+    [], ['Plan', 'Visit', 'Booking', 'Scheduled date', 'Current status', 'Matches report filters'],
+    ...data.audience.annualPlans.flatMap(p => p.visits.map(v => [p.seriesId,v.visitNumber,v.reference,v.date,v.status,v.included?'Yes':'No'])),
   ]);
 }
 export function registerCommerceRoutes(app, pool) {

@@ -41,8 +41,10 @@ records and API contracts remain intact for compatibility; no migration or data
 deletion is required. Customer feedback remains editable only by its owner.
 
 All website copy, dates and times use English and Singapore time. Date filters
-default to the last 90 calendar days and accept ranges up to 367 days. The period
-is based on when a visit ended, and the page shows the currently applied range
+default to the last 90 calendar days. Admin and Technician accept up to five years
+(a maximum 1,830-day difference between `from` and `to`); Customer retains its
+367-calendar-day inclusive limit. The period is based on when a visit ended,
+and the page shows the currently applied range
 separately from pending date-input changes.
 The Reviews filter separates customer-rated visits from completed visits awaiting
 feedback. Technicians can read the stars and comments for their captured visits,
@@ -106,6 +108,32 @@ session and CSRF middleware.
 | PUT | `/admin/visits/:reportId/quality` | Admin/Owner, legacy compatibility only; no website control |
 | PUT | `/admin/settings` | Admin/Owner, legacy compatibility only; no website control |
 | GET | `/technician?from=YYYY-MM-DD&to=YYYY-MM-DD` | Own technician visits |
+
+GET date filters are inclusive Singapore calendar dates; invalid or reversed
+ranges return HTTP 400. The existing optional `reportId` selects one authorized
+visit without the default date-window restriction. Ownership still applies.
+
+Admin and Technician responses retain their existing fields and add
+`ratingTrends[]`; Customer responses omit it. Each trend contains:
+
+```text
+technicianId, name, count, average: number | null
+periods: { month: RatingPeriod[], quarter: RatingPeriod[], year: RatingPeriod[] }
+RatingPeriod: { period, from, to, partial, count, average: number | null,
+                positive, neutral, negative }
+comparison: { minimumReviews, earlier: { from, to, count, average },
+              later: { from: string | null, to, count, average },
+              difference: number | null,
+              direction: higher | lower | unchanged | insufficient }
+```
+
+`period` uses `YYYY-MM`, `YYYY-Qn` or `YYYY`. All three groupings are returned in
+one response; no new grouping query parameter is required. Empty periods have a
+null average and zero reviews. The earlier/later comparison uses the applied
+date range, independently of chart grouping, with at least three rated completed
+visits in each half. No migration or extra scoring settings are introduced.
+See [UI-ARCHITECTURE.md](UI-ARCHITECTURE.md#plans-rewards-reporting-and-performance)
+for captured-team attribution, completion-date grouping and interpretation.
 
 Every PUT requires `requestId` (UUID) and `expectedVersion`.
 Feedback adds `stars`, `comment`; quality adds `score`, `reason`; settings adds

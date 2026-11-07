@@ -243,12 +243,45 @@ Migration `26-admin-operations-workspace.sql` adds waiting-dispatch metadata to 
 - The detail-page weekly planner includes Monday–Sunday, closed hours and weekends. Suggestions check the 14-day rule, annual window, membership period, address quota, duration, team capacity and eligible technicians including travel. Selection fills the editable appointment form; Save appointment rechecks existing scheduling rules. The planner itself does not mutate a booking.
 - Automatic/manual dispatch and redispatch open a final review with the appointment and technician. Requests can include `review: { status, date, timeSlot, travelBufferMinutes, technicianId }`; the locked transaction rejects changed booking details or a different automatic recommendation. Older clients without `review` remain compatible. Successful retries reuse the same request ID.
 - Admin can view customer assignment-email status and retry a failed Pending message. This moves the same outbox row to immediate retry, preserving event/message identity and attempt history. Sending, Sent, disabled and nonfailed messages cannot be manually retried. The existing worker claims messages under locks. SMTP acceptance does not prove receipt or reading, and SMTP cannot guarantee exactly-once delivery after a connection loss. Local delivery means Mailpit only.
-- `/admin/overview` reports live queues, deadline risk, scheduled visits, active work, completed bookings scheduled in the current week, return requests, email failures and technician workload. `/admin/audit` lists successful booking operations and email retries, filterable by booking/action. Owner alone can export the displayed page as CSV; regular Admin can review logs and perform daily operations. Staff-account management retains its existing Owner restrictions.
+- `/admin/overview` reports live queues, deadline risk, scheduled visits, active work, completed bookings scheduled in the current week, return requests, email failures and technician workload. `/admin/audit` lists successful booking operations and email retries with combined filters described below. Owner alone can export all matching results as CSV; regular Admin can review logs and perform daily operations. Staff-account management retains its existing Owner restrictions.
 - Orders has a **Reports awaiting submission** action count and filter at `/admin/orders?queue=reports`. A booking needs follow-up when its current work order is Completed or Awaiting return arrangement and its active service report has not been submitted (including historical missing reports). In-progress drafts are excluded. Each row/detail names the responsible technician and work order; submitting the report removes the reminder without changing service completion. Historical archived reports retain their own technician/date identity and are labelled Earlier visit.
 
 `GET /api/admin/bookings?queue=reports` filters pending-report bookings. Booking list/detail responses expose `reportPending`, `reportId`, `pendingReportJobId` and `pendingReportTechnicianName`; `/api/admin/action-summary` includes `pendingReports` in the action totals. The current report is identified by `service_report.job_id`; archived reports do not satisfy or reopen the current submission obligation. Booking creation, status-history and assignment timestamps are serialized as UTC ISO instants and displayed as English Singapore time. Service report start/end and progress-event times retain their Singapore wall-clock meaning.
 
-New Admin-only routes: `GET /api/admin/operations-overview`, `GET /api/admin/audit`, `GET /api/admin/audit/export`, `POST /api/admin/bookings/:id/waiting-dispatch` (`requestId`, `reason`), `GET /api/admin/bookings/:id/planner?week=YYYY-MM-DD`, `GET /api/admin/bookings/:id/emails`, and `POST /api/admin/bookings/:id/emails/:emailId/retry` (`requestId`). Writes retain session/CSRF checks and operation idempotency. The audit export is limited to the displayed 25-row page and escapes spreadsheet formulas.
+New Admin-only routes: `GET /api/admin/operations-overview`, `GET /api/admin/audit`, `GET /api/admin/audit/export`, `POST /api/admin/bookings/:id/waiting-dispatch` (`requestId`, `reason`), `GET /api/admin/bookings/:id/planner?week=YYYY-MM-DD`, `GET /api/admin/bookings/:id/emails`, and `POST /api/admin/bookings/:id/emails/:emailId/retry` (`requestId`). Writes retain session/CSRF checks and operation idempotency. Audit CSV export remains Owner-only and escapes spreadsheet formulas.
+
+## Booking operation log API
+
+`GET /api/admin/audit` accepts these optional, combinable query parameters:
+
+| Parameter | Accepted value / default |
+| --- | --- |
+| `bookingId` | Numeric ID, `#ID`, legacy `BK-ID`, or full `BK-YYYY-ID`; a full reference also checks the creation year |
+| `category` | `dispatch`, `schedule`, `rejection`, `email`, or empty for all |
+| `action` | `Approve`, `Dispatch`, `Redispatch`, `Queue for dispatch`, `Reschedule`, `Edit travel plan`, `Reject`, `Edit rejection`, `Retry customer email`, or empty |
+| `actorId` | Positive administrator user ID |
+| `from`, `to` | Valid `YYYY-MM-DD` dates, inclusive whole Singapore days; omitted bounds are open |
+| `q` | Literal substring, trimmed, at most 120 characters; administrator/customer name, customer email, saved result or request ID |
+| `sort` | `newest` (default) or `oldest` |
+| `page`, `pageSize` | Integers: page 1–100,000 (default 1), size 1–100 (default 25) |
+
+Unknown or malformed parameters, reversed dates, and an action outside its selected
+category return HTTP 400. Queries bind values and treat search `%`/`_` as literal
+characters. Rows sort by operation time then operation ID in the chosen direction.
+The response preserves `{ rows, total, page, pageSize }` and adds `actors[]` with
+`id`, `name`, `status`, `role`, `accessLevel`. Each row adds `actorId`, `actorRole`,
+`actorAccessLevel`, `customerName`, `customerEmail`, `category` and
+`outcome: { label, value }[]`; existing reference/action/time fields remain.
+
+`GET /api/admin/audit/export` uses the same filters and order, exporting every
+match independently of the displayed page. More than 10,000 matches returns 400
+with a request to narrow filters; it never silently truncates. CSV includes UTC
+and Singapore timestamps, current role/customer details, recorded outcomes and
+request IDs. Admin can read the log; only Owner can export. This is an additive,
+read-only extension with no migration. See
+[UI-ARCHITECTURE.md](UI-ARCHITECTURE.md#admin-operations-workspace-update) for URL
+filter behavior and the distinction between stored outcomes and current account
+details; absent historical before-values are not reconstructed.
 
 ## Meeting update: order actions and active-service protection
 

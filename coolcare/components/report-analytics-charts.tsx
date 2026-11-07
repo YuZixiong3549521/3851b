@@ -60,8 +60,8 @@ function DataTable({ title, periods, groupBy, columns }: {
   </details>;
 }
 
-function StackedChart({ title, rows, series, groupBy, monetary = false }: {
-  title: string; rows: ChartRow[]; series: Series[]; groupBy: GroupBy; monetary?: boolean;
+export function StackedChart({ title, rows, series, groupBy, monetary = false, stacked = true }: {
+  title: string; rows: ChartRow[]; series: Series[]; groupBy: GroupBy; monetary?: boolean; stacked?: boolean;
 }) {
   const config: ChartConfig = Object.fromEntries(series.map(item => [item.key, { label: item.label, color: item.colour }]));
   // Keep quarter/year comparisons legible without making the page wider on mobile.
@@ -108,7 +108,7 @@ function StackedChart({ title, rows, series, groupBy, monetary = false }: {
                 const row = rowByPeriod.get(String(value));
                 return <><span>{periodLabel(String(value), groupBy)}{row?.partial ? ' · Partial period' : ''}</span>{row && <span className="mt-1 block font-normal">{day(row.from)}{row.from !== row.to && ` – ${day(row.to)}`}</span>}</>;
               }} />
-            {series.map(item => <Bar key={item.key} dataKey={item.key} name={item.label} stackId="total" fill={item.colour} isAnimationActive={false} />)}
+            {series.map(item => <Bar key={item.key} dataKey={item.key} name={item.label} stackId={stacked ? 'total' : undefined} fill={item.colour} isAnimationActive={false} />)}
           </BarChart>
         </ChartContainer>
       </div>

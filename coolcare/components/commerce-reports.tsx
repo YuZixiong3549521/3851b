@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { BarChart3, CalendarRange, Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { ReportAnalyticsCharts } from '@/components/report-analytics-charts';
+import { ReportAudienceCharts, type ReportAudience } from '@/components/report-audience-charts';
 import type { AnalyticsPeriod, GroupBy } from '@/lib/report-analytics-types';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Button } from '@/components/ui/button';
@@ -15,6 +16,7 @@ import { Section, Metric, Field, Feedback, day, money } from './commerce-shared'
 type Report = {
   filters: { from: string; to: string; dateBasis: 'scheduled' | 'completed'; groupBy: GroupBy; serviceId?: number; serviceGroup?: 'annual'; technicianId?: number };
   analytics: { periods: AnalyticsPeriod[] };
+  audience: ReportAudience;
   summary: { unknownCompletionDates: number; orders: number; completed: number; cancelled: number; returnOrders: number; visits: number; completionRate: number; cancellationRate: number; returnRate: number; completedServiceAmount: number; unknownCompletedPrices: number; rewardDiscounts: number; completedNetServiceAmount: number };
   dailyService: { date: string; completed: number; serviceAmount: number; rewardDiscounts: number; netServiceAmount: number }[];
   periodService: { period: string; completed: number; serviceAmount: number; rewardDiscounts: number; netServiceAmount: number }[];
@@ -86,6 +88,7 @@ export function CommerceReportsPage() {
       <div className="grid gap-3 sm:grid-cols-3"><Metric title="Completed service amount" value={money(data.summary.completedServiceAmount)} /><Metric title="Applied reward discounts" value={money(data.summary.rewardDiscounts)} /><Metric title="Completed service after rewards" value={money(data.summary.completedNetServiceAmount)} /></div>
       <p className="text-sm text-muted-foreground">Service values include recorded repair extras. Applied reward discounts are deducted once per completed order. {data.summary.unknownCompletedPrices > 0 && `${data.summary.unknownCompletedPrices} completed historical order(s) have no recorded price and are excluded from these totals.`}</p>
       <ReportAnalyticsCharts periods={data.analytics.periods} groupBy={data.filters.groupBy} />
+      <ReportAudienceCharts audience={data.audience} periods={data.analytics.periods} groupBy={data.filters.groupBy} dateBasis={data.filters.dateBasis} />
       <div className="grid gap-6 lg:grid-cols-2"><Section title="Service follow-ups"><Metric title="Orders requiring a return" value={`${data.summary.returnOrders} (${data.summary.returnRate}%)`} /><p className="text-sm text-muted-foreground">A return remains part of the original order. Started visits are counted separately from orders. Missing historical visit records are not fabricated.</p></Section><Section title="Annual bundle usage"><div className="grid gap-3 sm:grid-cols-3"><Metric title="Plans in period" value={data.bundles.plans} /><Metric title="Quarterly visits" value={data.bundles.scheduledVisits} /><Metric title="Completed visits" value={data.bundles.completedVisits} /></div><p className="text-sm text-muted-foreground">Plans are distinct annual subscriptions with a quarterly visit in this range; a plan can span several periods. Return visits do not consume another quarterly entitlement.</p></Section></div>
       <Section title="Parts consumption">{data.parts.length ? <div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="sr-only">Parts issued and returned</caption><thead><tr>{['Part', 'Issued', 'Returned', 'Net used'].map(v => <th className="p-3 font-medium" key={v}>{v}</th>)}</tr></thead><tbody>{data.parts.map(r => <tr className="border-t" key={r.partId}><td className="p-3">{r.name} <span className="text-muted-foreground">({r.unit})</span></td><td className="p-3">{r.issued}</td><td className="p-3">{r.returned}</td><td className="p-3">{Number(r.issued) - Number(r.returned)}</td></tr>)}</tbody></table></div> : <p className="text-sm text-muted-foreground">No work-order parts movements in this period.</p>}</Section>
       <Section title="Orders behind this report">

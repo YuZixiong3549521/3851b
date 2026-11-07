@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { Bot, CalendarDays, CalendarPlus, Check, CheckCircle2, ChevronDown, HelpCircle, Mail, Pencil, Sparkles, Wrench } from 'lucide-react';
+import { Bot, CalendarPlus, CheckCircle2, HelpCircle, Mail, MessageCircle, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,7 @@ import { bookingStatusLabel } from '@/components/booking-status';
 import { AnnualBookingSummary } from '@/components/annual-booking-summary';
 import { BookingAddressField } from '@/components/booking-address-field';
 import { BookingRewardSelection } from '@/components/booking-reward-selection';
+import { AssistantFaqChat } from '@/components/assistant-faq-chat';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { bookingConflictMessage } from '@/components/booking-availability-notice';
 import { useBookingAvailability } from '@/lib/use-booking-availability';
@@ -30,7 +31,7 @@ import { homepageIssues } from '@/lib/homepage-offers';
 import type { Address, BookingOptions, CustomerContext } from '@/lib/coolcare-types';
 
 type Screen = 'menu' | AssistantStep | 'success';
-type HelpTopic = 'service' | 'pricing' | 'dates' | 'changes' | null;
+type HelpTopic = 'service' | null;
 const steps: AssistantStep[] = ['service', 'address', 'schedule', 'review'];
 const labels: Record<AssistantStep, string> = { service: 'Service', address: 'Address', schedule: 'Schedule', review: 'Review' };
 const times = ['09:00 AM - 11:00 AM', '11:00 AM - 01:00 PM', '02:00 PM - 04:00 PM', '04:00 PM - 06:00 PM'];
@@ -57,6 +58,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   const store = useAssistantDraft();
   const { draft, record } = store;
   const [screen, setScreen] = useState<Screen>('menu');
+  const [chatOpen, setChatOpen] = useState(true);
   const [context, setContext] = useState<CustomerContext | null>(null);
   const [options, setOptions] = useState<BookingOptions | null>(null);
   const [operation, setOperation] = useState('');
@@ -119,6 +121,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   const canReview = selected.valid && !phoneNumberError(draft.phone) && draft.serviceAddress.trim().length >= 5 && !bookingDateError(draft.preferredDate) && Boolean(draft.timeWindow) && !selectedSlotFull;
   const savedProblem = ['error', 'conflict', 'auth'].includes(store.saveStatus);
   const bookingId = receipt?.id ?? receipt?.bookingId;
+  const chatActive = chatOpen && Boolean(context) && !closeWarning;
 
   function notifyCreated(state: AssistantState) {
     if (state.status === 'completed' && lastNotified.current !== state.draftId) { lastNotified.current = state.draftId; onBookingCreated(); }
@@ -130,6 +133,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
     if (state.status === 'completed') { setScreen('success'); setUncertain(false); setNotice(''); notifyCreated(state); }
   }
   function handleError(reason: unknown) {
+    setChatOpen(false);
     const problem = reason as AssistantError;
     const fields = problem.details?.fieldErrors;
     const messages = fields ? Object.values(fields).flatMap(value => Array.isArray(value) ? value : [value]).filter(Boolean) : [];
@@ -161,6 +165,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
       store.hydrate(nextState, nextContext.customer.userId, defaults);
       setAuthExpired(false); setDraftConflict(false); setUncertain(false); setConflicts([]); setEditingReview(false); setPriceChanged(false); setCloseWarning(false); setDiscardWarning(false); setIssueProposal(null);
       setScreen(nextState?.status === 'completed' ? 'success' : resume && nextState ? nextState.draft.step : 'menu');
+      setChatOpen(!resume && nextState?.status !== 'completed');
       setNotice(nextState?.status === 'completed' ? '' : resume && nextState ? 'Your saved answers have been restored.' : '');
       if (nextState?.status === 'completed') notifyCreated(nextState);
     } catch (reason) { handleError(reason); }
@@ -174,6 +179,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   }
   async function startBooking(reset = false) {
     if (!context || uncertain || confirming.current) return;
+    setChatOpen(false);
     await run('Preparing your booking…', async () => {
       // Finish/reconcile every prior save before resetting the durable draft.
       await store.flush(true);
@@ -190,7 +196,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
       await store.flush(true); setScreen('service');
     });
   }
-  function resumeBooking() { setNotice('Your saved answers have been restored.'); setScreen(record?.draft.step ?? 'service'); }
+  function resumeBooking() { setChatOpen(false); setNotice('Your saved answers have been restored.'); setScreen(record?.draft.step ?? 'service'); }
   async function move(next: AssistantStep) {
     await run('Saving your answers…', async () => {
       setNotice('');
@@ -298,7 +304,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   }
   function closeAssistant() {
     if (store.dirty || store.savingRef.current || uncertain || inFlight.current || confirming.current || addressEditorOpen) {
-      setCloseWarning(true); body.current?.scrollTo({ top: 0 }); return;
+      setChatOpen(false); setCloseWarning(true); body.current?.scrollTo({ top: 0 }); return;
     }
     dismissAssistant();
   }
@@ -317,13 +323,14 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
   }
 
   return <Dialog open={open} onOpenChange={value => { if (value) setOpen(true); else void closeAssistant(); }}>
-    <DialogContent id={dialogId} finalFocus={returnFocus} className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden rounded-3xl p-0 sm:max-w-xl" aria-busy={Boolean(operation)}>
-      <div className="shrink-0 border-b bg-primary/5 px-5 py-4 pr-12">
-        <DialogTitle className="flex items-center gap-2 text-lg font-bold"><Bot className="size-6 text-primary" />CoolCare Assistant</DialogTitle>
-        <DialogDescription className="mt-1">Book a service with guided steps. Your draft stays in your account.</DialogDescription>
-        {context && screen !== 'menu' && screen !== 'success' && <ol className="mt-4 grid grid-cols-4 gap-2" aria-label="Booking progress">{steps.map((step, index) => <li key={step} aria-current={screen === step ? 'step' : undefined} className={'rounded-lg px-1 py-2 text-center text-xs ' + (screen === step ? 'bg-primary font-semibold text-white' : steps.indexOf(screen as AssistantStep) > index ? 'bg-primary/10 text-primary' : 'bg-background text-muted-foreground')}><span className="block text-[10px] opacity-80">Step {index + 1}</span><span className="mt-0.5 block">{labels[step]}</span></li>)}</ol>}
+    <DialogContent id={dialogId} finalFocus={returnFocus} className="flex h-[88dvh] max-h-[800px] flex-col gap-0 overflow-hidden rounded-3xl p-0 shadow-xl sm:top-auto sm:right-6 sm:bottom-6 sm:left-auto sm:h-[min(800px,calc(100dvh-48px))] sm:max-w-lg sm:translate-x-0 sm:translate-y-0" aria-busy={Boolean(operation)}>
+      <div className="shrink-0 border-b bg-background px-4 py-4 pr-12">
+        <div className="flex items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-primary text-primary-foreground"><Bot className="size-6" aria-hidden="true" /></span><div><DialogTitle className="text-base font-bold">CoolCare Assistant</DialogTitle><DialogDescription className="mt-1 text-xs">Guided booking &amp; quick answers</DialogDescription></div></div>
+        {context && <div className="mt-4 flex gap-1 rounded-xl bg-muted p-1" role="group" aria-label="Assistant views"><Button variant={chatActive ? 'default' : 'ghost'} size="sm" className="flex-1 rounded-lg" aria-pressed={chatActive} disabled={Boolean(operation) || closeWarning} onClick={() => setChatOpen(true)}><MessageCircle className="size-4" />Chat &amp; FAQs</Button><Button variant={!chatActive ? 'default' : 'ghost'} size="sm" className="flex-1 rounded-lg" aria-pressed={!chatActive} disabled={Boolean(operation) || closeWarning} onClick={() => setChatOpen(false)}><CalendarPlus className="size-4" />Booking</Button></div>}
+        {context && !chatActive && screen !== 'menu' && screen !== 'success' && <ol className="mt-3 grid grid-cols-4 gap-2" aria-label="Booking progress">{steps.map((step, index) => <li key={step} aria-current={screen === step ? 'step' : undefined} className={'rounded-lg px-1 py-2 text-center text-xs ' + (screen === step ? 'bg-primary font-semibold text-white' : steps.indexOf(screen as AssistantStep) > index ? 'bg-primary/10 text-primary' : 'bg-background text-muted-foreground')}><span className="block text-[10px] opacity-80">Step {index + 1}</span><span className="mt-0.5 block">{labels[step]}</span></li>)}</ol>}
       </div>
-      <div ref={body} className="min-h-0 space-y-4 overflow-y-auto p-5">
+      {context && <AssistantFaqChat key={context.customer.userId} firstName={context.customer.fullName.split(' ')[0]} options={options} active={chatActive} bookingDisabled={locked || savedProblem || addressEditorOpen} hasDraft={Boolean(record && record.status !== 'completed')} onBooking={() => record && record.status !== 'completed' ? resumeBooking() : void startBooking(Boolean(record))} supportHref={supportHref} />}
+      <div ref={body} hidden={chatActive} className={chatActive ? 'hidden' : 'min-h-0 flex-1 space-y-4 overflow-y-auto bg-muted/25 p-4'}>
         {closeWarning && <div role="alert" className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p className="font-semibold">Close the assistant for now?</p><p>{uncertain || confirming.current ? 'Your confirmation request is preserved. Reopen the assistant to check the same result before starting another booking.' : 'Your last saved draft stays in your account. Unsaved booking answers remain in this page while it stays open; refreshing or signing out can discard them.'}</p>{addressEditorOpen && <p>An unfinished new-address form will be closed. Save that address first to keep it, or check Saved addresses if its save was already in progress.</p>}<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setCloseWarning(false)}>Keep editing</Button><Button onClick={dismissAssistant}>Close for now</Button></div></div>}
         {operation && <p role="status" className="text-sm text-muted-foreground">{operation}</p>}
         {(error || savedProblem) && <div role="alert" className="space-y-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
@@ -336,7 +343,7 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
         {notice && <p role="status" className="rounded-xl bg-primary/5 p-3 text-sm text-primary">{notice}</p>}
         {uncertain && <div className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"><p>Your request reference is preserved. Checking the result will not create another booking.</p><Button disabled={Boolean(operation)} onClick={recoverConfirmation}>Check saved booking result</Button></div>}
         {context && <>
-          <div className="rounded-2xl rounded-tl-sm bg-muted p-4 text-sm leading-6" aria-live="polite">{screen === 'menu' && <p className="font-semibold">Hi {context.customer.fullName.split(' ')[0]}!</p>}{prompts[screen]}</div>
+          <div className="rounded-2xl rounded-tl-sm border bg-card p-4 text-sm leading-6 shadow-xs" aria-live="polite">{screen === 'menu' && <p className="font-semibold">Ready when you are.</p>}{prompts[screen]}</div>
           {screen === 'menu' && <div className="grid gap-3">{record && record.status !== 'completed' ? <>
             <div className="rounded-xl border p-4 text-sm"><p className="font-semibold">A booking draft is ready to continue</p><p className="mt-1 text-muted-foreground">{selected.label || 'Service not selected'} · {draft.numberOfUnits} aircon units</p><p className="mt-1 text-xs text-muted-foreground">Last saved {formatDateTime(record.updatedAt)}</p><Button className="mt-3 w-full" onClick={resumeBooking} disabled={locked}>Resume saved booking</Button></div>
             {!discardWarning ? <Button variant="outline" className="h-auto whitespace-normal py-3" onClick={() => setDiscardWarning(true)} disabled={locked}>Discard saved draft and start again</Button> : <div role="alert" className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm"><p className="font-semibold">Replace your saved answers?</p><p>Your service, address, schedule and notes in this draft will be replaced. Existing bookings are unaffected.</p><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={locked} onClick={() => setDiscardWarning(false)}>Keep draft</Button><Button disabled={locked} onClick={() => void startBooking(true)}>Start again</Button></div></div>}
@@ -389,16 +396,13 @@ export function CustomerAssistant({ open, onOpenChange: setOpen, dialogId, retur
           </>}
           {screen !== 'menu' && screen !== 'review' && screen !== 'success' && selected.valid && <details className="rounded-xl border p-3 text-sm"><summary className="cursor-pointer font-medium">Your selected answers</summary><dl className="mt-3 space-y-2 text-xs"><div><dt className="text-muted-foreground">Service</dt><dd>{selected.label} · {draft.numberOfUnits} unit(s) · {formatMoney(selected.estimate)} {annual ? 'per year' : 'per visit'}</dd></div>{draft.serviceAddress && <div><dt className="text-muted-foreground">Address</dt><dd className="break-words">{draft.serviceAddress}</dd></div>}{draft.preferredDate && <div><dt className="text-muted-foreground">Preferred date</dt><dd>{formatDate(draft.preferredDate)} · {formatServiceWindow(draft.timeWindow,selected.durationMinutes)}</dd></div>}</dl></details>}
           {screen !== 'success' && <div className="border-t pt-3">
-            <div className="flex flex-wrap gap-2" aria-label="Booking help">{([{ id: 'pricing', label: 'Prices & inclusions' }, { id: 'dates', label: 'Booking rules' }, { id: 'changes', label: 'Change a request' }] as const).map(topic => <Button key={topic.id} variant="outline" size="sm" aria-expanded={help === topic.id} onClick={() => setHelp(help === topic.id ? null : topic.id)}>{topic.label}<ChevronDown className="size-3" /></Button>)}</div>
+            <Button variant="outline" size="sm" onClick={() => setChatOpen(true)}><MessageCircle className="size-4" />Ask a common question</Button>
             {help === 'service' && <div className="mt-3 space-y-3 rounded-xl bg-muted p-3 text-sm"><p>Choose the closest description. Compatible services and your written notes are kept. Your technician will assess the cause on site.</p><div className="grid grid-cols-2 gap-2">{homepageIssues.map(issue => <Button key={issue.id} variant="outline" disabled={locked} className="h-auto whitespace-normal py-2" onClick={() => chooseIssue(issue.id === 'needs-cleaning' ? 'cleaning' : 'repair', issue.name + ': ' + issue.description)}>{issue.name}</Button>)}</div><Button variant="outline" disabled={locked} className="w-full h-auto whitespace-normal py-2" onClick={() => chooseIssue('annual-cleaning')}>I want quarterly cleaning all year</Button>{issueProposal && <div role="alert" className="space-y-3 rounded-xl border border-amber-300 bg-background p-3"><p>Switch your current service selection to <strong>{issueProposal.label}</strong>? Annual care and one-off services are booked separately. Your written notes will stay.</p><div className="flex flex-wrap gap-2"><Button variant="outline" disabled={locked} onClick={() => setIssueProposal(null)}>Keep current services</Button><Button disabled={locked} onClick={() => chooseIssue(issueProposal.code, issueProposal.note, true)}>Switch service</Button></div></div>}</div>}
-            {help === 'pricing' && <div className="mt-3 space-y-3 rounded-xl bg-muted p-3 text-sm leading-6">{options?.services.filter(service => service.code === 'cleaning' || service.code === 'repair').map(service => <div key={service.serviceId} className="rounded-lg bg-background p-3"><p className="font-semibold">{service.name} · {formatMoney(service.basePrice)} {service.code === 'cleaning' ? 'per unit' : 'minimum diagnostic fee'}</p><p className="mt-1 text-xs text-muted-foreground">{service.code === 'cleaning' ? 'The technician decides the cleaning method after inspection.' : 'Additional labour and parts are quoted by your technician and recorded in the booking.'}</p></div>)}<div className="rounded-lg bg-background p-3"><p className="font-semibold">Annual cleaning bundle</p><p className="mt-1 text-xs text-muted-foreground">Four quarterly cleaning visits. Choose your property type and unit count for the current annual estimate.</p></div>{selected.valid && <p className="font-semibold">{selected.label}: {formatMoney(selected.estimate)} {annual ? 'for all four visits, paid after each service' : 'for this visit'}.</p>}<p className="text-xs text-muted-foreground">The final review checks the current price. Any changed price needs your confirmation again. No payment is collected online.</p></div>}
-            {help === 'dates' && <div className="mt-3 rounded-xl bg-muted p-3 text-sm leading-6">{bookingScheduleNotice} {bookingFrequencyNotice} Annual care includes four visits every three months; later weekend dates move to Monday. All slots await confirmation.</div>}
-            {help === 'changes' && <div className="mt-3 rounded-xl bg-muted p-3 text-sm leading-6">Before submitting, use Edit on the review to change your answers. After booking, eligible visits can be changed from the booking detail page at least 72 hours before the original visit. The new visit must also be at least 72 hours ahead. Annual visits stay within their quarterly window. For help, <a href={supportHref} className="font-medium text-primary underline">email support</a>.</div>}
             <a href={supportHref} className="mt-3 inline-flex items-center gap-2 text-xs font-medium text-primary underline underline-offset-4"><Mail className="size-3" />Contact support</a>
           </div>}
         </>}
       </div>
-      {context && <div className="shrink-0 border-t bg-background p-4">
+      {context && <div hidden={chatActive} className={chatActive ? 'hidden' : 'shrink-0 border-t bg-background p-4'}>
         {record?.status !== 'completed' && <p role="status" className={'mb-3 text-xs ' + (savedProblem ? 'text-red-700' : 'text-muted-foreground')}>{store.saveStatus === 'saving' ? 'Saving your answers to your account…' : store.saveStatus === 'dirty' ? 'Changes waiting to save…' : store.saveStatus === 'saved' ? 'Draft saved to your account. You can resume after signing in.' : store.saveStatus === 'error' ? 'Latest changes are not saved. Retry saving before continuing.' : store.saveStatus === 'conflict' ? 'Another session changed this draft.' : store.saveStatus === 'auth' ? 'Sign in to continue saving.' : 'Start a booking to save your draft.'}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2">
           {screen !== 'menu' && screen !== 'success' && <Button variant="outline" disabled={locked || savedProblem || addressEditorOpen} onClick={() => screen === 'service' ? setScreen('menu') : void move(steps[Math.max(0, steps.indexOf(screen as AssistantStep) - 1)])}>Back</Button>}

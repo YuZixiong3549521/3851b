@@ -143,6 +143,18 @@ also accept the displayed associated booking reference.
 
 The planner displays all seven days with horizontal scrolling on narrow screens and explicitly marks weekends and closed hours. Choosing a slot only stages the appointment form. Dispatch confirmation presents the exact proposed technician, service time, address and travel allowance, then checks the reviewed values under the server transaction. Waiting-dispatch requests retain their customer status and deadline. The operation-log CSV action is Owner-only, while everyday planning, dispatch and failed customer-email retries are available to Admin. See `BOOKING-WORKFLOWS.md` for the API and delivery semantics.
 
+`components/admin-audit-view.tsx` owns `/admin/audit`. Its shared filter definitions
+in `lib/admin-audit-filters.mjs` cover booking reference, category, action,
+administrator, inclusive Singapore calendar dates, text search, order and page size.
+Apply/Reset and pagination retain applied values in the URL for refresh and browser
+Back/Forward. `GET /api/admin/audit` reads successful administrator booking-operation
+receipts, not a general system-event log. Expandable outcomes show only stored result
+fields; earlier values are not invented. Customer details and administrator roles
+are labelled as current account values. Owner-only `GET /api/admin/audit/export`
+exports all matching rows rather than the current page, rejects more than 10,000
+matches and uses the same filters/order. Invalid filters return errors rather than
+silently broadening the results. This read-only extension adds no migration.
+
 The running application uses React on the frontend, Node.js with Express for HTTP APIs, and MySQL for persisted business data. Vinext provides the main frontend routing/build; the technician portal retains its Vite entry point and existing URLs.
 
 `coolcare/` is self-contained: both frontend sources, shared UI, server code, runtime assets and database migrations are tracked here. Setup and builds do not copy files from the old uploaded projects. Those references are ignored locally and absent from new checkouts; see [ORIGINS.md](ORIGINS.md). The optional SQLite importer requires an explicit local source path and is not part of normal startup.
@@ -179,7 +191,24 @@ This navigation update passed 56 main unit tests, 4 technician tests, 52 real-My
 
 ## Customer assistant
 
-Every authenticated customer page exposes **CoolCare Assistant** below Booking History in the sidebar, or **Assistant** as the fifth mobile navigation item. `CoolCareShell` mounts one assistant instance after session verification; both navigation buttons open the same dialog without navigating away or resetting the underlying page. The Dashboard banner retains only Book a service. This is a button-guided React assistant, with no external AI provider or API key, reusing the shared dialog, buttons and fields. Closing still saves the draft first and returns focus to the visible navigation trigger.
+Every authenticated customer page exposes **CoolCare Assistant** below Booking History in the sidebar, or **Assistant** as the fifth mobile navigation item. `CoolCareShell` mounts one assistant instance after session verification; both navigation buttons open the same dialog without navigating away or resetting the underlying page. The Dashboard banner retains only Book a service. This is a button-guided React assistant, with no external AI provider or API key, reusing the shared dialog, buttons and fields. Closing keeps the existing unsaved-work warning and returns focus to the visible navigation trigger.
+
+`AssistantFaqChat` adds a compact, blue-branded conversation pane, anchored at the
+bottom right on desktop and fitted to the phone viewport. **Chat & FAQs** has user
+and assistant bubbles, four quick replies and a labelled native dropdown with twelve
+grouped questions and an Ask button. `lib/assistant-faq.ts` supplies curated answers;
+price answers use the server catalogue loaded for the session and explain that review
+rechecks prices. Topics include service choices, repair extras, scheduling, changes,
+annual visits, points, confirmation and support. Email answers distinguish queued
+notifications from delivery, and support links open the customer's email application.
+There is no simulated free-text AI input or booking-history lookup.
+
+The FAQ and **Booking** panes remain mounted when switching views, preserving draft
+fields and an unfinished new-address form. Questions never invoke draft mutations.
+FAQ exchanges are bounded transient React state keyed to the customer, separate from
+the existing MySQL draft; no new transcript storage or schema migration is required.
+Errors and unsaved-close warnings make the booking pane visible. The original
+review, confirmation, ownership, CSRF and idempotent recovery paths remain in place.
 
 - The assistant focuses on creating bookings. Booking history and existing order details remain available in the customer booking pages.
 - Four compact steps cover service/count, address/contact, schedule and review. Current choices and prices come from `GET /api/customer/booking-options`. Deterministic service guidance, symptom buttons and FAQs help customers choose; a technician still decides the cleaning method. Review offers direct service/address/schedule edits without discarding the other answers.
@@ -316,6 +345,21 @@ quarters, current-quarter days and custom filters are also available. Desktop
 cards form two columns; phone layouts stack them and retain expandable, scrollable
 data tables with the exact figures and dates.
 
+`ReportAudienceCharts` adds completion/customer/rating comparisons and the annual
+visit table at `/admin/reports`. `GET /api/commerce/admin/reports` adds `audience`
+without changing existing fields; `/api/commerce/admin/reports.csv` includes matching
+customer, feedback and visit sections. `server/report-audience.mjs` reads existing
+accounts, bookings, annual entitlements, feedback and captured visit participants.
+No schema migration or synthetic data is required. Definitions stay visible beside
+the charts:
+
+| Display | Definition and date/filter scope |
+| --- | --- |
+| Completed vs not completed | Current state of selected orders. Not completed includes active, awaiting, cancelled, rejected and expired orders. Actual-completion mode selects only Completed orders; use scheduled-date mode for unfinished comparisons. |
+| Customer numbers | New registrations use account creation dates in Singapore and ignore service/technician filters. Customers with bookings uses selected orders and the selected date basis; distinct per period and across the range, so bars/periods are not additive. |
+| Received customer ratings | Latest rating per reviewed visit, grouped by first feedback receipt in Singapore; historical missing receipt audits use the saved feedback timestamp and are counted explicitly. Service/technician filters apply using captured visit team membership. Shared team feedback counts once company-wide. Positive = 4–5 stars, Neutral = 3, Negative = 1–2; unrated visits are excluded. |
+| Annual bundle visit breakdown | One row per matching plan with four separately linked quarterly visits. Completed, awaiting service and closed counts cover the whole plan, including labelled visits outside the report filters. Cancelled/rejected/expired visits are closed; missing records are not fabricated. Return work uses the original quarterly entitlement. |
+
 The additive `analytics.periods` response zero-fills the selected range, flags
 partial calendar periods and counts combined/annual services once. Existing
 `dailyService` and `periodService` responses stay compatible; CSV adds matching
@@ -341,6 +385,20 @@ available for compatibility. The applied service-end date range is explicit,
 unrated visits display **Not yet rated**, and the technician content uses a
 section heading beneath the portal's single page title.
 
+`PerformanceRatingTrend` adds an individual 1–5-star line chart to
+`/admin/performance` and `/technician/index.html#performance`. Admin selects a
+technician; the technician response remains scoped to that user's captured visits.
+The existing `/api/performance/admin` and `/api/performance/technician` responses add
+`ratingTrends`, with month/quarter/year buckets from `server/rating-trend.mjs` and a
+maximum five-year date range. Unlike the received-feedback chart, these averages
+use actual service completion dates in Singapore. Each current review counts once
+per completed visit for each captured participant; an edit replaces its rating.
+Empty buckets are gaps, never zero-star reviews, with sample counts and an accessible
+data table. Earlier/later half comparison requires at least three rated visits in
+each half; it describes the recorded averages without claiming causation or proven
+quality improvement. Internal administrator follow-up notes remain hidden from
+technician and customer payloads.
+
 The interface review also aligns Overview action links with their exact order
 queues, limits the global return panel to the return queue, and opens report order
 links in a labelled new tab so report filters remain intact. Missing administrator
@@ -354,3 +412,17 @@ Technician branding uses CoolCare, and its Today/Upcoming filters use the shared
 Singapore calendar date even on computers in another time zone.
 
 Feature contracts and configurable rules are documented in [COMMERCE-REWARDS.md](COMMERCE-REWARDS.md), [OPTIONAL-FEATURE-PLANS.md](OPTIONAL-FEATURE-PLANS.md) and [OPTIONAL-FEATURE-PERFORMANCE.md](OPTIONAL-FEATURE-PERFORMANCE.md). Backend routes are mounted behind the existing session and CSRF middleware; the normal migration flow preserves existing business data. Demo login and local Mailpit remain available for local development.
+
+## FAQ and analytics regression checks
+
+Run the documented unit, database, TypeScript and both-frontend build checks, then
+inspect affected routes on desktop and a narrow viewport. For the assistant, ask a
+dropdown question, start/resume a booking, switch panes during new-address editing,
+and confirm draft values and close/retry warnings survive. For reports, compare chart
+tables/CSV under scheduled and actual-completion modes, zero-data periods, a plan with
+two completed/two awaiting visits, repeated customers and edited/missing ratings.
+For performance, check period gaps, insufficient review samples, per-technician
+selection and server-enforced ownership. For operations, check combined filters,
+Singapore date boundaries, reset/Back/Forward, safe stored outcomes, pagination and
+the Owner-only all-results CSV. Unit/DB coverage for these definitions complements,
+but does not replace, the browser checks; report the actual executed scope.

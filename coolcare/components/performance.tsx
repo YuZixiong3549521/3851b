@@ -8,6 +8,8 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { EnglishDatePicker } from '@/components/english-date-picker';
 import { englishCalendarDate } from '@/lib/english-date';
 import { formatInstantDateTime } from '@/lib/sg-time';
+import { PerformanceRatingTrend } from '@/components/performance-rating-trend';
+import type { RatingTrend } from '@/lib/rating-trend-types';
 
 type Visit = {
   followUp?: { status: string; note: string; version: number; feedbackVersion: number; updatedBy: string; updatedAt: string; history: { requestId: string; status: string; note: string; actor: string; createdAt: string }[] } | null;
@@ -59,6 +61,7 @@ type Result = {
   settings?: Settings;
   summary?: Summary;
   technicians?: Summary[];
+  ratingTrends?: RatingTrend[];
 };
 type Mutation = (path: string, body: Record<string, unknown>) => Promise<void>;
 
@@ -331,7 +334,7 @@ function PerformanceWorkspace({
             {busy ? 'Loading…' : 'Apply dates'}
           </Button>
           <p className="text-xs text-muted-foreground">
-            Up to 367 days. All dates and times use Singapore time.
+            {role === 'customer' ? 'Up to 367 days.' : 'Up to five years.'} All dates and times use Singapore time.
           </p>
         </form>
       )}
@@ -439,6 +442,7 @@ function PerformanceWorkspace({
                 </table>
               </section>
             )}
+          {role !== 'customer' && <PerformanceRatingTrend trends={data.ratingTrends ?? []} role={role} busy={busy} />}
           <section className="space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <h2 className="text-xl font-semibold">

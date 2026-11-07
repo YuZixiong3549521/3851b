@@ -130,7 +130,7 @@ Filters accept a date range of up to five years, a service and/or a technician.
 defaults to **Quarterly view**, from 1 January of the current year through today
 in Singapore. **Yearly view** shows 1 January two years ago through today.
 **Last year by quarter**, **This quarter by day**, and custom date/grouping
-controls remain available. The four charts share the applied filters:
+controls remain available. The existing charts share the applied filters:
 
 - Completed service value: stacked after-reward value and reward discounts,
   whose total is the recorded completed service amount in SGD.
@@ -167,13 +167,38 @@ selected calendar dates. CSV retains its existing sections and appends order
 activity, service mix and annual bundle period sections from the same analytics
 rows. No schema migration is needed for these read-only reports.
 
+The same JSON response also adds `audience` for customer, feedback and individual
+annual-visit comparisons:
+
+```text
+periods[]: { period, from, to, partial, newCustomers, bookingCustomers,
+             positive, neutral, negative }
+customers: { newInPeriod, withBookings }
+reviews: { total, average: number | null, positive, neutral, negative, fallbackDates }
+annualPlans[]: { seriesId, customerName, address, totalVisits, recordedVisits,
+                 completed, awaiting, closed, selectedVisits, visits[] }
+visits[]: { bookingId, reference, visitNumber, date, status,
+            category: completed | awaiting | closed, included }
+```
+
+`audience.periods` uses the same grouping and clipped dates as `analytics.periods`.
+`customers.withBookings` is distinct across the range, not the sum of period counts.
+The `awaiting` annual count/category includes active work; `included` identifies
+visits matching the applied report filters while plan totals cover all four
+entitlements. `fallbackDates` counts feedback without its original receipt audit.
+Completed/not-completed values derive from `completed` and `orders - completed`
+in `analytics.periods`; no additional order count is invented. CSV appends matching
+completion, customer, received-rating, plan-summary and individual-visit sections.
+See [UI-ARCHITECTURE.md](UI-ARCHITECTURE.md#plans-rewards-reporting-and-performance)
+for each chart's date basis, filtering, deduplication and missing-data definitions.
+
 The selector groups current and historical services without removing old
 records. **Annual Cleaning Bundle** filters actual annual-visit links via
 `serviceGroup=annual`; standalone Cleaning is excluded. Choose either this group
 or a `serviceId`, not both. CSV export uses the same applied filters and includes
 their human-readable labels.
-Order metrics use the current scheduled service date and current status, not
-actual completion dates or historical quarter-end snapshots. Rescheduling,
+Order metrics use the selected scheduled/actual-completion date basis and current
+status, not historical quarter-end snapshots. In scheduled mode, rescheduling,
 including confirmed returns, can move an order into another period. A technician filter selects orders
 assigned to them or with a recorded visit by them. Service-value and parts
 figures remain whole-order totals, not earnings attributed to that technician.
@@ -185,8 +210,8 @@ original order; quarterly bundle usage counts the original entitlements rather
 than return visits.
 
 The monetary figures describe completed service value, reward discounts and net
-service value after those discounts. The daily series uses scheduled service
-dates, the same cohort as the order totals.
+service value after those discounts. The daily series uses the applied date
+basis, the same cohort as the order totals.
 They do not describe receipts, refunds, money received, outstanding payments or
 revenue collected. No historical payment is inferred from a completed booking.
 Work-order parts figures use Singapore stock-movement dates and distinguish
@@ -214,7 +239,7 @@ ownership is enforced on every reservation.
 
 | Method | Route after `/api/commerce` | Purpose |
 | --- | --- | --- |
-| GET | `/admin/reports?from=YYYY-MM-DD&to=YYYY-MM-DD` | Operational counts, service values and source rows; optional `serviceId` or `serviceGroup=annual`, plus `technicianId` |
+| GET | `/admin/reports?from=YYYY-MM-DD&to=YYYY-MM-DD` | Operational counts, service values, analytics and audience rows; optional `dateBasis=scheduled\|completed`, `groupBy=day\|quarter\|year`, `serviceId` or `serviceGroup=annual`, plus `technicianId` |
 | GET | `/admin/reports.csv` with the same filters | CSV export |
 | GET | `/admin/rewards` | Customer rewards management and rule history |
 | GET | `/admin/rewards/:customerId` | Customer wallet, bookings, reservations and points history |

@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { AppError, idSchema } from './inventory.mjs';
 import { sessionUser } from './public-site.mjs';
+import { buildRatingTrends } from './rating-trend.mjs';
 
 const base = {
   requestId: z.uuid(),
@@ -159,7 +160,7 @@ export async function getPerformanceSettings(c) {
     );
   return row;
 }
-function filters(raw) {
+function filters(raw, role) {
   const f = filterSchema.parse(raw);
   const today = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Singapore',
@@ -171,9 +172,10 @@ function filters(raw) {
   f.from ??= new Date(Date.parse(f.to) - 89 * 86400000)
     .toISOString()
     .slice(0, 10);
-  if (f.from > f.to || Date.parse(f.to) - Date.parse(f.from) > 366 * 86400000)
+  const maximumDays = role === 'Customer' ? 366 : 1830;
+  if (f.from > f.to || Date.parse(f.to) - Date.parse(f.from) > maximumDays * 86400000)
     throw new AppError(
-      'Choose a date range of up to 367 days with the start before the end.',
+      role === 'Customer' ? 'Choose a date range of up to 367 days with the start before the end.' : 'Choose a date range of at most five years with the start before the end.',
       400,
     );
   return f;
@@ -206,7 +208,7 @@ const visitSelect = `SELECT p.report_id AS reportId,p.job_id AS jobId,COALESCE(v
 export async function listPerformance(pool, user, raw = {}) {
   if (!['Admin', 'Technician', 'Customer'].includes(user.role))
     throw new AppError('This portal is unavailable.', 403);
-  const f = filters(raw),
+  const f = filters(raw, user.role),
     settings = await getPerformanceSettings(pool);
   // A direct visit link remains usable after the default 90-day window.
   // Role ownership below is still mandatory for every lookup.
@@ -304,6 +306,7 @@ export async function listPerformance(pool, user, raw = {}) {
     settings,
     filters: f,
     summary: summarizePerformance([...new Map(visits.map(v=>[v.reportId,v])).values()], settings),
+    ratingTrends: buildRatingTrends(visits, f),
     technicians: [...technicians.values()].map((t) => ({
       ...t,
       ...summarizePerformance(
